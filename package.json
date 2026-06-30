@@ -1,7 +1,7 @@
 {
   "name": "vr-management",
   "private": true,
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Gestiune stoc fabrica patiserie",
   "author": "Fabrica Patiserie",
   "main": "dist-electron/main.js",
