@@ -65,7 +65,8 @@
       {
         "provider": "github",
         "owner": "Winleaks",
-        "repo": "vr-manager-windows"
+        "repo": "vr-manager-windows",
+        "releaseType": "release"
       }
     ]
   }
