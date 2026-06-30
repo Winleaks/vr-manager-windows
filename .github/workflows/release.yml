@@ -24,7 +24,17 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Build and Publish
-        run: npx vite build && npx electron-builder --win --x64 -p always
+      - name: Build
+        run: npx vite build && npx electron-builder --win --x64 -p never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
