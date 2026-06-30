@@ -1,6 +1,6 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import fs from 'fs';
-import { db } from '../database/db';
+import { db, backupDb, restoreDb, lastBackupTime } from '../database/db';
 
 export function registerSystemHandlers() {
   ipcMain.handle('save-file', async (event, options: { buffer: Uint8Array, defaultPath: string, filters: any[] }) => {
@@ -25,23 +25,46 @@ export function registerSystemHandlers() {
 
   ipcMain.handle('manual-backup', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
-    const dateStr = new Date().toISOString().slice(0, 10);
-    
-    try {
-      const { canceled, filePath } = await dialog.showSaveDialog(win!, {
-        defaultPath: `backup_stoc_${dateStr}.db`,
-        title: 'Salvează Backup Bază de Date',
-        filters: [{ name: 'Bază de Date SQLite', extensions: ['db', 'sqlite'] }]
-      });
+    if (!win) return { success: false };
 
-      if (!canceled && filePath) {
-        await db.backup(filePath);
-        return { success: true, filePath };
-      }
+    const result = await dialog.showSaveDialog(win, {
+      title: 'Salvează Backup Bază de Date',
+      defaultPath: `backup_stoc_${new Date().toISOString().slice(0,10)}.db`,
+      filters: [{ name: 'SQLite Database', extensions: ['db', 'sqlite'] }]
+    });
+
+    if (result.canceled || !result.filePath) {
       return { success: false, canceled: true };
-    } catch (err: any) {
-      console.error('Eroare la creare backup:', err);
-      return { success: false, error: err.message };
     }
+
+    try {
+      await db.backup(result.filePath);
+      return { success: true, path: result.filePath };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('restore-backup', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return { success: false };
+
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Alege Fișierul Backup',
+      filters: [{ name: 'SQLite Database', extensions: ['db', 'sqlite'] }],
+      properties: ['openFile']
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: false, canceled: true };
+    }
+
+    const filePath = result.filePaths[0];
+    const ok = restoreDb(filePath);
+    return { success: ok };
+  });
+
+  ipcMain.handle('get-last-backup-time', () => {
+    return lastBackupTime;
   });
 }

@@ -10,9 +10,11 @@ const dbPath = isDev
   ? path.join(process.cwd(), 'stoc-fabrica.db') 
   : path.join(app.getPath('userData'), 'stoc-fabrica.db')
 
-export const db = new Database(dbPath, { verbose: isDev ? console.log : undefined })
+export let db = new Database(dbPath, { verbose: isDev ? console.log : undefined })
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
+
+export let lastBackupTime: string | null = null;
 
 export function initDb() {
   db.exec(initialSchema)
@@ -38,7 +40,10 @@ export function backupDb() {
   
   try {
     db.backup(backupPath)
-      .then(() => console.log('Backup successful to', backupPath))
+      .then(() => {
+        console.log('Backup successful to', backupPath);
+        lastBackupTime = new Date().toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' });
+      })
       .catch((err: any) => console.error('Backup failed:', err))
   } catch(e) {
     console.error('Backup sync error', e)
@@ -53,6 +58,24 @@ export function closeDb() {
     }
   } catch (e) {
     console.error('Error closing database:', e);
+  }
+}
+
+export function restoreDb(filePath: string) {
+  try {
+    closeDb();
+    fs.copyFileSync(filePath, dbPath);
+    console.log('Database file replaced from backup.');
+    // Re-open DB
+    db = new Database(dbPath, { verbose: isDev ? console.log : undefined });
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
+    return true;
+  } catch (err) {
+    console.error('Failed to restore database:', err);
+    // Try to recover
+    db = new Database(dbPath, { verbose: isDev ? console.log : undefined });
+    return false;
   }
 }
 

@@ -32,14 +32,19 @@ export const api = {
   system: {
     saveFile: (options: { buffer: Uint8Array, defaultPath: string, filters: any[] }) =>
       window.ipcRenderer.invoke('save-file', options),
-    manualBackup: () => window.ipcRenderer.invoke('manual-backup')
+    manualBackup: () => window.ipcRenderer.invoke('manual-backup'),
+    restoreBackup: () => window.ipcRenderer.invoke('restore-backup'),
+    getLastBackupTime: () => window.ipcRenderer.invoke('get-last-backup-time'),
+    onBackupCompleted: (callback: () => void) => window.ipcRenderer.on('backup-completed', callback)
   }
 }
 
 declare global {
   interface Window {
     ipcRenderer: {
-      invoke(channel: string, ...args: any[]): Promise<any>
+      invoke(channel: string, ...args: any[]): Promise<any>;
+      on(channel: string, listener: (...args: any[]) => void): void;
+      off(channel: string, listener: (...args: any[]) => void): void;
     }
   }
 }

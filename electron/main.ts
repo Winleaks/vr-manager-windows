@@ -48,8 +48,14 @@ app.on('before-quit', () => {
 
 app.whenReady().then(() => {
   initDb()
-  // Run an automatic backup on startup
+  // Run an automatic backup on startup and every 10 minutes
   backupDb()
+  setInterval(() => {
+    backupDb();
+    if (win) {
+      win.webContents.send('backup-completed');
+    }
+  }, 10 * 60 * 1000);
   registerRawMaterialHandlers()
   registerFinishedProductHandlers()
   registerRecipeHandlers()
