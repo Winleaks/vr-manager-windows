@@ -44,3 +44,15 @@ export function backupDb() {
     console.error('Backup sync error', e)
   }
 }
+
+export function closeDb() {
+  try {
+    if (db.open) {
+      db.close();
+      console.log('Database connection closed.');
+    }
+  } catch (e) {
+    console.error('Error closing database:', e);
+  }
+}
+

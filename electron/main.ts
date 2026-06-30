@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import path from 'path'
 import { autoUpdater } from 'electron-updater'
-import { initDb, backupDb } from './database/db'
+import { initDb, backupDb, closeDb } from './database/db'
 import { registerRawMaterialHandlers } from './ipc/rawMaterialHandlers'
 import { registerFinishedProductHandlers } from './ipc/finishedProductHandlers'
 import { registerRecipeHandlers } from './ipc/recipeHandlers'
@@ -40,6 +40,10 @@ app.on('window-all-closed', () => {
     app.quit()
     win = null
   }
+})
+
+app.on('before-quit', () => {
+  closeDb();
 })
 
 app.whenReady().then(() => {
