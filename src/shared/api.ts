@@ -35,6 +35,7 @@ export const api = {
     manualBackup: () => window.ipcRenderer.invoke('manual-backup'),
     restoreBackup: () => window.ipcRenderer.invoke('restore-backup'),
     getLastBackupTime: () => window.ipcRenderer.invoke('get-last-backup-time'),
+    checkForUpdates: () => window.ipcRenderer.invoke('check-for-updates'),
     onBackupCompleted: (callback: () => void) => window.ipcRenderer.on('backup-completed', callback)
   }
 }

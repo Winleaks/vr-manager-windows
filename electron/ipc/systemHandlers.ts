@@ -1,5 +1,6 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import fs from 'fs';
+import { autoUpdater } from 'electron-updater';
 import { db, backupDb, restoreDb, lastBackupTime } from '../database/db';
 
 export function registerSystemHandlers() {
@@ -66,5 +67,14 @@ export function registerSystemHandlers() {
 
   ipcMain.handle('get-last-backup-time', () => {
     return lastBackupTime;
+  });
+
+  ipcMain.handle('check-for-updates', async () => {
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      return { success: true, result };
+    } catch (err: any) {
+      return { success: false, error: err.message || err.toString() };
+    }
   });
 }

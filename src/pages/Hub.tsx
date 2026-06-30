@@ -8,8 +8,10 @@ import {
   Users, 
   Box, 
   Trash2,
-  Lock
+  Lock,
+  RefreshCw
 } from 'lucide-react';
+import { api } from '../shared/api';
 
 const modules = [
   {
@@ -93,9 +95,38 @@ export function Hub() {
               Selectează modulul pe care dorești să îl accesezi
             </p>
           </div>
-          <div className="mt-4 md:mt-0 flex items-center space-x-2 text-sm text-slate-400 bg-white px-4 py-2 rounded-full shadow-sm border border-slate-100">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-            <span>Sistem Online</span>
+          <div className="mt-4 md:mt-0 flex items-center space-x-4">
+            <button 
+              onClick={async () => {
+                const btn = document.getElementById('update-btn-icon');
+                if (btn) btn.classList.add('animate-spin');
+                try {
+                  const res = await api.system.checkForUpdates();
+                  if (!res.success) {
+                    alert('Eroare la căutarea update-ului:\n' + res.error);
+                  } else {
+                    // Update successfully checked, the main process will handle dialogs
+                    if (res.result === null) {
+                      // Actually electron-updater returns null if no update is available
+                      // Or it resolves to UpdateCheckResult
+                      alert('Căutarea a fost finalizată. Dacă nu a apărut nicio fereastră, ești la zi sau a apărut o eroare silențioasă.');
+                    }
+                  }
+                } catch (e: any) {
+                  alert('Eroare: ' + e.message);
+                } finally {
+                  if (btn) btn.classList.remove('animate-spin');
+                }
+              }}
+              className="flex items-center gap-2 text-sm text-slate-600 bg-white hover:bg-slate-50 px-4 py-2 rounded-full shadow-sm border border-slate-200 transition-colors"
+            >
+              <RefreshCw id="update-btn-icon" size={16} />
+              Caută Update-uri
+            </button>
+            <div className="flex items-center space-x-2 text-sm text-slate-400 bg-white px-4 py-2 rounded-full shadow-sm border border-slate-100">
+              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+              <span>Sistem Online</span>
+            </div>
           </div>
         </header>
 

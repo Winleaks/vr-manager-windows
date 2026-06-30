@@ -97,3 +97,9 @@ app.whenReady().then(() => {
     }
   })
 })
+
+autoUpdater.on('error', (err) => {
+  if (win) {
+    dialog.showErrorBox('Eroare Update', err == null ? 'unknown' : (err.stack || err).toString());
+  }
+});
