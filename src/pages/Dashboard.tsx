@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { exportToExcel, exportToPDF } from '../utils/exports';
-import { Package, AlertTriangle, TrendingUp, Download, Upload, Clock } from 'lucide-react';
+import { Package, AlertTriangle, TrendingUp, Download } from 'lucide-react';
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -12,21 +12,10 @@ export default function Dashboard() {
 
   const [rawMaterials, setRawMaterials] = useState<any[]>([]);
   const [productions, setProductions] = useState<any[]>([]);
-  const [lastBackup, setLastBackup] = useState<string | null>(null);
 
   useEffect(() => {
     loadDashboardData();
-    fetchLastBackup();
-
-    api.system.onBackupCompleted(() => {
-      fetchLastBackup();
-    });
   }, []);
-
-  const fetchLastBackup = async () => {
-    const time = await api.system.getLastBackupTime();
-    if (time) setLastBackup(time);
-  };
 
   const loadDashboardData = async () => {
     try {
@@ -99,6 +88,8 @@ export default function Dashboard() {
     exportToPDF(headers, data, `Productie_${new Date().toISOString().slice(0, 10)}`, 'Raport Producție');
   };
 
+  const alertItems = rawMaterials.filter((r: any) => r.current_stock <= r.minimum_stock);
+
   return (
     <div className="space-y-8">
       <div className="flex justify-between items-start">
@@ -106,13 +97,6 @@ export default function Dashboard() {
           <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Dashboard & Rapoarte</h1>
           <p className="text-slate-500 mt-2">Privire de ansamblu asupra fabricii și generare rapoarte.</p>
         </div>
-        
-        {lastBackup && (
-          <div className="flex items-center gap-2 bg-blue-50 text-blue-700 px-4 py-2 rounded-xl text-sm font-medium border border-blue-100 shadow-sm">
-            <Clock size={16} />
-            Ultimul backup automat: {lastBackup}
-          </div>
-        )}
       </div>
       
       {/* Statistici */}
@@ -148,6 +132,78 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Alerte Stoc Minim - Lista Produse */}
+      {alertItems.length > 0 ? (
+        <div className="bg-red-50/60 border border-red-200 rounded-2xl p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center font-bold">
+                <AlertTriangle size={20} />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-red-900">Alerte Stoc Minim (Necesită Aprovizionare)</h2>
+                <p className="text-sm text-red-700">Următoarele materii prime au ajuns la stocul minim sau sub acesta:</p>
+              </div>
+            </div>
+            <span className="bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-sm">
+              {alertItems.length} {alertItems.length === 1 ? 'produs' : 'produse'} în alertă
+            </span>
+          </div>
+
+          <div className="bg-white rounded-xl border border-red-100 overflow-hidden shadow-sm">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-red-50/60 text-red-900 border-b border-red-100 text-xs uppercase tracking-wider">
+                  <th className="p-3.5 font-semibold">Materie Primă</th>
+                  <th className="p-3.5 font-semibold">Categorie</th>
+                  <th className="p-3.5 font-semibold text-right">Stoc Curent</th>
+                  <th className="p-3.5 font-semibold text-right">Stoc Minim</th>
+                  <th className="p-3.5 font-semibold">UM</th>
+                  <th className="p-3.5 font-semibold text-center">Deficit</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-red-50 text-sm">
+                {alertItems.map((item, index) => {
+                  const deficit = item.minimum_stock - item.current_stock;
+                  return (
+                    <tr key={index} className="hover:bg-red-50/30 transition-colors">
+                      <td className="p-3.5 font-bold text-slate-800">{item.name}</td>
+                      <td className="p-3.5 text-slate-600">
+                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-xs font-medium">
+                          {item.category_name || '-'}
+                        </span>
+                      </td>
+                      <td className="p-3.5 text-right font-extrabold text-red-600">
+                        {item.current_stock}
+                      </td>
+                      <td className="p-3.5 text-right font-medium text-slate-600">
+                        {item.minimum_stock}
+                      </td>
+                      <td className="p-3.5 text-slate-500 font-medium">{item.unit}</td>
+                      <td className="p-3.5 text-center">
+                        <span className="bg-red-100 text-red-800 font-bold px-2 py-0.5 rounded text-xs">
+                          {deficit > 0 ? `-${deficit.toFixed(2)} ${item.unit}` : 'La limită'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-6 flex items-center gap-4 shadow-sm">
+          <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold flex-shrink-0">
+            <TrendingUp size={24} />
+          </div>
+          <div>
+            <h3 className="text-base font-bold text-emerald-900">Toate stocurile sunt în regulă!</h3>
+            <p className="text-sm text-emerald-700">Nicio materie primă nu se află sub pragul de stoc minim.</p>
+          </div>
+        </div>
+      )}
 
       {/* Rapoarte */}
       <h2 className="text-xl font-bold text-slate-800 pt-4">Generare Rapoarte</h2>
@@ -189,46 +245,6 @@ export default function Dashboard() {
             >
               <Download size={18} /> PDF
             </button>
-          </div>
-        </div>
-
-        {/* Backup Bază de Date */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 md:col-span-2">
-          <div className="flex justify-between items-center">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-800 mb-1">Backup Bază de Date</h3>
-              <p className="text-slate-500 text-sm">Creează o copie de siguranță (backup) a întregii baze de date pentru a preveni pierderea informațiilor. Alege tu folderul unde vrei să o salvezi (ex. pe un stick USB sau Google Drive).</p>
-            </div>
-            <div className="flex flex-col gap-3 ml-6 flex-shrink-0">
-              <button 
-                onClick={async () => {
-                  const res = await api.system.manualBackup();
-                  if (res.success) {
-                    alert(`Backup creat cu succes la:\n${res.path}`);
-                  } else if (!res.canceled) {
-                    alert(`Eroare la creare backup: ${res.error}`);
-                  }
-                }}
-                className="flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
-              >
-                <Download size={18} /> Salvează Backup
-              </button>
-              <button 
-                onClick={async () => {
-                  if (window.confirm('Ești sigur că vrei să încarci un backup? Această acțiune va suprascrie baza de date curentă și programul se va restarta.')) {
-                    const res = await api.system.restoreBackup();
-                    if (res.success) {
-                      window.location.reload();
-                    } else if (!res.canceled) {
-                      alert('A apărut o eroare la restaurarea bazei de date.');
-                    }
-                  }
-                }}
-                className="flex items-center justify-center gap-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-6 py-2.5 rounded-lg font-medium transition-colors shadow-sm"
-              >
-                <Upload size={18} /> Încarcă Bază de Date
-              </button>
-            </div>
           </div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Package, 
@@ -9,7 +9,9 @@ import {
   Box, 
   Trash2,
   Lock,
-  RefreshCw
+  RefreshCw,
+  Settings,
+  Clock
 } from 'lucide-react';
 import { api } from '../shared/api';
 
@@ -77,11 +79,37 @@ const modules = [
     color: 'bg-red-500',
     hoverColor: 'hover:bg-red-600',
     active: false,
+  },
+  {
+    id: 'setari',
+    title: 'Setări & Backup Bază de Date',
+    description: 'Copii de siguranță (pentru tot Hub-ul), actualizări și preferințe.',
+    icon: Settings,
+    color: 'bg-slate-700',
+    hoverColor: 'hover:bg-slate-800',
+    active: true,
+    path: '/setari'
   }
 ];
 
 export function Hub() {
   const navigate = useNavigate();
+  const [lastBackup, setLastBackup] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchLastBackup();
+    const unsubscribe = api.system.onBackupCompleted(() => {
+      fetchLastBackup();
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, []);
+
+  const fetchLastBackup = async () => {
+    const time = await api.system.getLastBackupTime();
+    if (time) setLastBackup(time);
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col p-8 md:p-12">
@@ -96,33 +124,12 @@ export function Hub() {
             </p>
           </div>
           <div className="mt-4 md:mt-0 flex items-center space-x-4">
-            <button 
-              onClick={async () => {
-                const btn = document.getElementById('update-btn-icon');
-                if (btn) btn.classList.add('animate-spin');
-                try {
-                  const res = await api.system.checkForUpdates();
-                  if (!res.success) {
-                    alert('Eroare la căutarea update-ului:\n' + res.error);
-                  } else {
-                    // Update successfully checked, the main process will handle dialogs
-                    if (res.result === null) {
-                      // Actually electron-updater returns null if no update is available
-                      // Or it resolves to UpdateCheckResult
-                      alert('Căutarea a fost finalizată. Dacă nu a apărut nicio fereastră, ești la zi sau a apărut o eroare silențioasă.');
-                    }
-                  }
-                } catch (e: any) {
-                  alert('Eroare: ' + e.message);
-                } finally {
-                  if (btn) btn.classList.remove('animate-spin');
-                }
-              }}
-              className="flex items-center gap-2 text-sm text-slate-600 bg-white hover:bg-slate-50 px-4 py-2 rounded-full shadow-sm border border-slate-200 transition-colors"
-            >
-              <RefreshCw id="update-btn-icon" size={16} />
-              Caută Update-uri
-            </button>
+            {lastBackup && (
+              <div className="flex items-center gap-2 bg-blue-50 text-blue-700 px-4 py-2 rounded-full text-sm font-medium border border-blue-100 shadow-sm">
+                <Clock size={16} />
+                Ultimul backup: {lastBackup}
+              </div>
+            )}
             <div className="flex items-center space-x-2 text-sm text-slate-400 bg-white px-4 py-2 rounded-full shadow-sm border border-slate-100">
               <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
               <span>Sistem Online</span>

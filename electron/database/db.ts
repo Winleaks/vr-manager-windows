@@ -6,9 +6,48 @@ import { initialSchema, seedData } from './schema'
 
 const isDev = !app.isPackaged
 
-const dbPath = isDev 
-  ? path.join(process.cwd(), 'stoc-fabrica.db') 
-  : path.join(app.getPath('userData'), 'stoc-fabrica.db')
+const baseDir = isDev 
+  ? process.cwd() 
+  : path.dirname(app.getPath('exe'))
+
+export const dbFolder = path.join(baseDir, 'baze de date')
+if (!fs.existsSync(dbFolder)) {
+  fs.mkdirSync(dbFolder, { recursive: true })
+}
+
+export const dbPath = path.join(dbFolder, 'bazadedate.db')
+
+// Migrare din locațiile sau denumirile anterioare (pentru a păstra toate datele și stocurile la update)
+if (!fs.existsSync(dbPath)) {
+  const oldNames = [
+    path.join(dbFolder, 'stoc-fabrica.db'),
+    path.join(process.cwd(), 'stoc-fabrica.db'),
+    path.join(app.getPath('userData'), 'stoc-fabrica.db')
+  ]
+  
+  for (const oldPath of oldNames) {
+    if (fs.existsSync(oldPath) && oldPath !== dbPath) {
+      try {
+        fs.copyFileSync(oldPath, dbPath)
+        if (fs.existsSync(`${oldPath}-wal`)) fs.copyFileSync(`${oldPath}-wal`, `${dbPath}-wal`)
+        if (fs.existsSync(`${oldPath}-shm`)) fs.copyFileSync(`${oldPath}-shm`, `${dbPath}-shm`)
+        console.log(`Baza de date a fost mutată/redenumită cu succes în: bazadedate.db`)
+        
+        // Ștergem vechiul fișier cu nume vechi din folderul baze de date pentru a nu lăsa duplicate confuze
+        if (oldPath === path.join(dbFolder, 'stoc-fabrica.db')) {
+          try {
+            fs.unlinkSync(oldPath)
+            if (fs.existsSync(`${oldPath}-wal`)) fs.unlinkSync(`${oldPath}-wal`)
+            if (fs.existsSync(`${oldPath}-shm`)) fs.unlinkSync(`${oldPath}-shm`)
+          } catch (e) { /* ignore */ }
+        }
+        break
+      } catch (e) {
+        console.error('Eroare la migrarea bazei de date:', e)
+      }
+    }
+  }
+}
 
 export let db = new Database(dbPath, { verbose: isDev ? console.log : undefined })
 db.pragma('journal_mode = WAL')
@@ -27,9 +66,7 @@ export function initDb() {
 }
 
 export function backupDb() {
-  const backupDir = isDev
-    ? path.join(process.cwd(), 'backups')
-    : path.join(app.getPath('documents'), 'Patiserie_Backups')
+  const backupDir = path.join(dbFolder, 'backups')
 
   if (!fs.existsSync(backupDir)) {
     fs.mkdirSync(backupDir, { recursive: true })
@@ -42,7 +79,10 @@ export function backupDb() {
     db.backup(backupPath)
       .then(() => {
         console.log('Backup successful to', backupPath);
-        lastBackupTime = new Date().toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' });
+        const now = new Date();
+        const dateFormatted = now.toLocaleDateString('ro-RO', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        const timeFormatted = now.toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' });
+        lastBackupTime = `${dateFormatted} - ${timeFormatted}`;
       })
       .catch((err: any) => console.error('Backup failed:', err))
   } catch(e) {

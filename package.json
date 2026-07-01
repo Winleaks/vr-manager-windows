@@ -1,9 +1,9 @@
 {
-  "name": "vr-management",
+  "name": "vr-management-hub",
   "private": true,
   "version": "0.1.7",
   "description": "Gestiune stoc fabrica patiserie",
-  "author": "Fabrica Patiserie",
+  "author": "Razvan Cristofor",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -50,12 +50,14 @@
   },
   "build": {
     "appId": "com.winleaks.vrmanager",
-    "productName": "VR - Management",
+    "productName": "VR - Management Hub",
+    "copyright": "Copyright © 2026 Razvan Cristofor",
     "directories": {
       "output": "release"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "publisherName": "Razvan Cristofor"
     },
     "nsis": {
       "oneClick": false,

@@ -16,10 +16,15 @@ let win: BrowserWindow | null
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
+if (!app.isPackaged) {
+  process.env['ELECTRON_DISABLE_SECURITY_WARNINGS'] = 'true'
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1200,
     height: 800,
+    title: 'VR - Management Hub',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
