@@ -65,3 +65,23 @@ export function getCategories(type?: string) {
   }
   return db.prepare(query).all()
 }
+
+export function addCategory(name: string, type: string) {
+  const stmt = db.prepare('INSERT INTO categories (name, type) VALUES (?, ?)')
+  return stmt.run(name, type)
+}
+
+export function updateCategory(id: number, name: string) {
+  const stmt = db.prepare('UPDATE categories SET name = ? WHERE id = ?')
+  return stmt.run(name, id)
+}
+
+export function deleteCategory(id: number) {
+  const transaction = db.transaction(() => {
+    db.prepare('UPDATE raw_materials SET category_id = NULL WHERE category_id = ?').run(id)
+    db.prepare('UPDATE finished_products SET category_id = NULL WHERE category_id = ?').run(id)
+    return db.prepare('DELETE FROM categories WHERE id = ?').run(id)
+  })
+  return transaction()
+}
+

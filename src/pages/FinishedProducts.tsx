@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../shared/api';
-import { Plus, Edit, BookOpen, X, Trash2 } from 'lucide-react';
+import { Plus, Edit, BookOpen, X, Trash2, Folder } from 'lucide-react';
+import { CategoryModal } from '../shared/CategoryModal';
 
 export default function FinishedProducts() {
   const [items, setItems] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
 
   // Recipe Modal
@@ -144,13 +146,22 @@ export default function FinishedProducts() {
           <h1 className="text-3xl font-bold text-slate-800">Produse Finite</h1>
           <p className="text-slate-500 mt-1">Gestionare produse finite și rețete</p>
         </div>
-        <button 
-          onClick={() => handleOpenModal()}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors"
-        >
-          <Plus size={20} />
-          Adaugă Produs
-        </button>
+        <div className="flex gap-3">
+          <button 
+            onClick={() => setIsCategoryModalOpen(true)}
+            className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors shadow-sm"
+          >
+            <Folder size={18} className="text-slate-500" />
+            Gestionează Categorii
+          </button>
+          <button 
+            onClick={() => handleOpenModal()}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors shadow-sm"
+          >
+            <Plus size={20} />
+            Adaugă Produs
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -227,7 +238,16 @@ export default function FinishedProducts() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Categorie</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-sm font-medium text-slate-700">Categorie</label>
+                    <button 
+                      type="button"
+                      onClick={() => setIsCategoryModalOpen(true)}
+                      className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-semibold flex items-center gap-1"
+                    >
+                      + categorii
+                    </button>
+                  </div>
                   <select 
                     value={formData.category_id} onChange={e => setFormData({...formData, category_id: e.target.value})}
                     className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
@@ -367,6 +387,16 @@ export default function FinishedProducts() {
           </div>
         </div>
       )}
+
+      <CategoryModal 
+        isOpen={isCategoryModalOpen}
+        onClose={() => {
+          setIsCategoryModalOpen(false);
+          loadData();
+        }}
+        type="finished_product"
+        title="Categorii Produse Finite"
+      />
     </div>
   );
 }

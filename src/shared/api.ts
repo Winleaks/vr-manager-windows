@@ -5,7 +5,10 @@ export const api = {
     update: (id: number, rm: any) => window.ipcRenderer.invoke('update-raw-material', id, rm)
   },
   categories: {
-    get: (type?: string) => window.ipcRenderer.invoke('get-categories', type)
+    get: (type?: string) => window.ipcRenderer.invoke('get-categories', type),
+    add: (name: string, type: string) => window.ipcRenderer.invoke('add-category', name, type),
+    update: (id: number, name: string) => window.ipcRenderer.invoke('update-category', id, name),
+    delete: (id: number) => window.ipcRenderer.invoke('delete-category', id)
   },
   finishedProducts: {
     getAll: () => window.ipcRenderer.invoke('get-finished-products'),

@@ -17,4 +17,17 @@ export function registerRawMaterialHandlers() {
   ipcMain.handle('get-categories', (event, type) => {
     return repo.getCategories(type)
   })
+
+  ipcMain.handle('add-category', (event, name, type) => {
+    return repo.addCategory(name, type)
+  })
+
+  ipcMain.handle('update-category', (event, id, name) => {
+    return repo.updateCategory(id, name)
+  })
+
+  ipcMain.handle('delete-category', (event, id) => {
+    return repo.deleteCategory(id)
+  })
 }
+
