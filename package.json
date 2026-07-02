@@ -51,6 +51,7 @@
   "build": {
     "appId": "com.winleaks.vrmanager",
     "productName": "VR - Management Hub",
+    "artifactName": "VR-Management-Hub-Setup-${version}.${ext}",
     "copyright": "Copyright © 2026 Razvan Cristofor",
     "directories": {
       "output": "release"
