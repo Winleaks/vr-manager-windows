@@ -126,12 +126,53 @@ db.pragma('foreign_keys = ON')
 export let lastBackupTime: string | null = null;
 
 export function initDb() {
+  // 1. Execuția schemei: instrucțiunile CREATE TABLE IF NOT EXISTS creează tabele noi fără a șterge sau altera datele existente!
   db.exec(initialSchema)
   
-  // Seed only if categories is empty
+  // 2. Rularea migrărilor de schemă (pentru actualizări viitoare de structură sau adăugări de coloane noi)
+  runMigrations()
+  
+  // 3. Populate doar dacă nu există categorii (bază de date complet nouă)
   const count = db.prepare('SELECT COUNT(*) as count FROM categories').get() as { count: number }
   if (count.count === 0) {
     db.exec(seedData)
+  }
+}
+
+function runMigrations() {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    const currentRow = db.prepare('SELECT MAX(version) as version FROM schema_migrations').get() as { version: number | null };
+    const currentVersion = currentRow.version || 0;
+
+    // Aici se adaugă în ordine secvențială modificările viitoare (ex. ALTER TABLE pentru a adăuga coloane noi)
+    const migrations: { version: number, description: string, up: () => void }[] = [
+      // {
+      //   version: 1,
+      //   description: "Exemplu: adăugare coloană nouă",
+      //   up: () => { db.exec("ALTER TABLE raw_materials ADD COLUMN test_col TEXT;"); }
+      // }
+    ];
+
+    for (const migration of migrations) {
+      if (migration.version > currentVersion) {
+        console.log(`[MIGRATION] Aplicare migrare v${migration.version}: ${migration.description}...`);
+        const tx = db.transaction(() => {
+          migration.up();
+          db.prepare('INSERT INTO schema_migrations (version) VALUES (?)').run(migration.version);
+        });
+        tx();
+        console.log(`[MIGRATION] Migrarea v${migration.version} aplicată cu succes!`);
+      }
+    }
+  } catch (e) {
+    console.error('[MIGRATION ERROR] Eroare la rularea migrărilor:', e);
   }
 }
 

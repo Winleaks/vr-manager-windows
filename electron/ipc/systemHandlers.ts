@@ -1,18 +1,9 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import fs from 'fs';
 import { autoUpdater } from 'electron-updater';
-import { db, backupDb, restoreDb, lastBackupTime, scanAllDatabases } from '../database/db';
+import { db, backupDb, restoreDb, lastBackupTime } from '../database/db';
 
 export function registerSystemHandlers() {
-  ipcMain.handle('scan-old-databases', async () => {
-    return scanAllDatabases();
-  });
-
-  ipcMain.handle('restore-from-path', async (event, filePath: string) => {
-    const ok = restoreDb(filePath);
-    return { success: ok };
-  });
-
   ipcMain.handle('save-file', async (event, options: { buffer: Uint8Array, defaultPath: string, filters: any[] }) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     

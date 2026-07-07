@@ -58,24 +58,6 @@ export function Settings() {
     }
   };
 
-  const handleScanOldDatabases = async () => {
-    const list = await api.system.scanOldDatabases();
-    if (!list || list.length === 0) {
-      alert('Nu s-au găsit alte baze de date anterioare cu date salvate pe acest calculator.');
-      return;
-    }
-    const best = list[0];
-    const msg = `Am găsit o bază de date anterioară (dinainte de update) cu:\n• ${best.rm} materii prime\n• ${best.fp} produse finite\n• ${best.sm} mișcări de stoc\n\nData ultimei modificări: ${new Date(best.mtime).toLocaleString('ro-RO')}\nCalea: ${best.filePath}\n\nDorești să restaurezi această bază de date acum?`;
-    if (window.confirm(msg)) {
-      const res = await api.system.restoreFromPath(best.filePath);
-      if (res && res.success) {
-        alert('Baza de date anterioară a fost recuperată cu succes!');
-        window.location.reload();
-      } else {
-        alert('Eroare la restaurarea bazei de date.');
-      }
-    }
-  };
 
   const handleCheckUpdates = async () => {
     setIsCheckingUpdate(true);
@@ -187,13 +169,6 @@ export function Settings() {
                 >
                   <Upload size={18} />
                   Încarcă Bază de Date
-                </button>
-                <button 
-                  onClick={handleScanOldDatabases}
-                  className="w-full mt-3 bg-rose-600 hover:bg-rose-700 text-white py-2.5 rounded-lg font-bold transition-colors flex items-center justify-center gap-2 shadow-sm"
-                >
-                  <RefreshCw size={18} />
-                  Caută & Restaurează Baza de Date Anterioară
                 </button>
               </div>
             </div>
