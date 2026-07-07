@@ -24,37 +24,83 @@ export function getAllRawMaterials() {
 }
 
 export function addRawMaterial(rm: RawMaterial) {
-  const stmt = db.prepare(`
-    INSERT INTO raw_materials (name, category_id, unit, current_stock, minimum_stock, supplier_id, notes)
-    VALUES (@name, @category_id, @unit, @current_stock, @minimum_stock, @supplier_id, @notes)
-  `)
-  return stmt.run({
-    name: rm.name,
-    category_id: rm.category_id || null,
-    unit: rm.unit,
-    current_stock: rm.current_stock || 0,
-    minimum_stock: rm.minimum_stock || 0,
-    supplier_id: rm.supplier_id || null,
-    notes: rm.notes || null
+  const transaction = db.transaction(() => {
+    const stmt = db.prepare(`
+      INSERT INTO raw_materials (name, category_id, unit, current_stock, minimum_stock, supplier_id, notes)
+      VALUES (@name, @category_id, @unit, @current_stock, @minimum_stock, @supplier_id, @notes)
+    `)
+    const initialStock = rm.current_stock || 0
+    const result = stmt.run({
+      name: rm.name,
+      category_id: rm.category_id || null,
+      unit: rm.unit,
+      current_stock: initialStock,
+      minimum_stock: rm.minimum_stock || 0,
+      supplier_id: rm.supplier_id || null,
+      notes: rm.notes || null
+    })
+
+    const newId = result.lastInsertRowid
+    if (initialStock > 0) {
+      const reason = rm.notes ? `Stoc inițial (${rm.notes})` : 'Stoc inițial la adăugare materie primă'
+      const adjResult = db.prepare(`
+        INSERT INTO stock_adjustments (raw_material_id, quantity_delta, reason)
+        VALUES (?, ?, ?)
+      `).run(newId, initialStock, reason)
+
+      db.prepare(`
+        INSERT INTO stock_movements (raw_material_id, movement_type, quantity, stock_before, stock_after, reference_type, reference_id, notes)
+        VALUES (?, 'intrare', ?, ?, ?, 'manual', ?, ?)
+      `).run(newId, initialStock, 0, initialStock, adjResult.lastInsertRowid, reason)
+    }
+
+    return result
   })
+
+  return transaction()
 }
 
 export function updateRawMaterial(id: number, rm: RawMaterial) {
-  const stmt = db.prepare(`
-    UPDATE raw_materials 
-    SET name = @name, category_id = @category_id, unit = @unit, minimum_stock = @minimum_stock, 
-        supplier_id = @supplier_id, notes = @notes, updated_at = CURRENT_TIMESTAMP
-    WHERE id = @id
-  `)
-  return stmt.run({
-    id,
-    name: rm.name,
-    category_id: rm.category_id || null,
-    unit: rm.unit,
-    minimum_stock: rm.minimum_stock || 0,
-    supplier_id: rm.supplier_id || null,
-    notes: rm.notes || null
+  const transaction = db.transaction(() => {
+    const oldRow = db.prepare('SELECT current_stock FROM raw_materials WHERE id = ?').get(id) as { current_stock: number } | undefined
+    const stockBefore = oldRow ? oldRow.current_stock : 0
+    const newStock = rm.current_stock !== undefined && rm.current_stock !== null ? Number(rm.current_stock) : stockBefore
+    const delta = newStock - stockBefore
+
+    const stmt = db.prepare(`
+      UPDATE raw_materials 
+      SET name = @name, category_id = @category_id, unit = @unit, current_stock = @current_stock, minimum_stock = @minimum_stock, 
+          supplier_id = @supplier_id, notes = @notes, updated_at = CURRENT_TIMESTAMP
+      WHERE id = @id
+    `)
+    const result = stmt.run({
+      id,
+      name: rm.name,
+      category_id: rm.category_id || null,
+      unit: rm.unit,
+      current_stock: newStock,
+      minimum_stock: rm.minimum_stock || 0,
+      supplier_id: rm.supplier_id || null,
+      notes: rm.notes || null
+    })
+
+    if (oldRow && delta !== 0) {
+      const reason = rm.notes ? `Modificare stoc la editare materie primă (${rm.notes})` : 'Modificare manuală stoc din editare materie primă'
+      const adjResult = db.prepare(`
+        INSERT INTO stock_adjustments (raw_material_id, quantity_delta, reason)
+        VALUES (?, ?, ?)
+      `).run(id, delta, reason)
+
+      db.prepare(`
+        INSERT INTO stock_movements (raw_material_id, movement_type, quantity, stock_before, stock_after, reference_type, reference_id, notes)
+        VALUES (?, 'ajustare', ?, ?, ?, 'manual', ?, ?)
+      `).run(id, Math.abs(delta), stockBefore, newStock, adjResult.lastInsertRowid, reason)
+    }
+
+    return result
   })
+
+  return transaction()
 }
 
 export function getCategories(type?: string) {

@@ -60,8 +60,8 @@ export default function RawMaterials() {
     const payload = {
       ...formData,
       category_id: formData.category_id ? parseInt(formData.category_id) : null,
-      current_stock: parseFloat(formData.current_stock.toString()),
-      minimum_stock: parseFloat(formData.minimum_stock.toString())
+      current_stock: parseFloat(formData.current_stock.toString()) || 0,
+      minimum_stock: parseFloat(formData.minimum_stock.toString()) || 0
     };
 
     try {
@@ -211,7 +211,7 @@ export default function RawMaterials() {
                   <label className="block text-sm font-medium text-slate-700 mb-1">Stoc Curent</label>
                   <input 
                     type="number" step="0.001" required
-                    value={formData.current_stock} onChange={e => setFormData({...formData, current_stock: parseFloat(e.target.value)})}
+                    value={formData.current_stock} onChange={e => setFormData({...formData, current_stock: e.target.value})}
                     className="w-full border border-slate-300 rounded-lg p-2.5 outline-none"
                   />
                 </div>
@@ -219,7 +219,7 @@ export default function RawMaterials() {
                   <label className="block text-sm font-medium text-slate-700 mb-1">Stoc Minim (Alertă)</label>
                   <input 
                     type="number" step="0.001" required
-                    value={formData.minimum_stock} onChange={e => setFormData({...formData, minimum_stock: parseFloat(e.target.value)})}
+                    value={formData.minimum_stock} onChange={e => setFormData({...formData, minimum_stock: e.target.value})}
                     className="w-full border border-slate-300 rounded-lg p-2.5 outline-none"
                   />
                 </div>
