@@ -37,6 +37,8 @@ export const api = {
       window.ipcRenderer.invoke('save-file', options),
     manualBackup: () => window.ipcRenderer.invoke('manual-backup'),
     restoreBackup: () => window.ipcRenderer.invoke('restore-backup'),
+    scanOldDatabases: () => window.ipcRenderer.invoke('scan-old-databases'),
+    restoreFromPath: (filePath: string) => window.ipcRenderer.invoke('restore-from-path', filePath),
     getLastBackupTime: () => window.ipcRenderer.invoke('get-last-backup-time'),
     checkForUpdates: () => window.ipcRenderer.invoke('check-for-updates'),
     onBackupCompleted: (callback: () => void) => window.ipcRenderer.on('backup-completed', callback)
