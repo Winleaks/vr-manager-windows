@@ -76,6 +76,11 @@ export function scanAllDatabases() {
     addTree(path.join(home, 'Desktop'));
     addTree(path.join(home, 'Desktop', 'VR - Management Hub'));
     addTree(path.join(home, 'Downloads'));
+    try {
+      const { getCloudTargetDirectory } = require('./cloudSync');
+      const cloudDir = getCloudTargetDirectory();
+      if (cloudDir) addTree(cloudDir);
+    } catch (e) {}
   } catch (e) {}
 
   const uniquePaths = Array.from(new Set(candidates));
@@ -194,6 +199,12 @@ export function backupDb() {
         const dateFormatted = now.toLocaleDateString('ro-RO', { day: '2-digit', month: '2-digit', year: 'numeric' });
         const timeFormatted = now.toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' });
         lastBackupTime = `${dateFormatted} - ${timeFormatted}`;
+        try {
+          const { saveToCloud } = require('./cloudSync');
+          saveToCloud(true);
+        } catch (errCloud) {
+          console.warn('Silent cloud sync failed:', errCloud);
+        }
       })
       .catch((err: any) => console.error('Backup failed:', err))
   } catch(e) {

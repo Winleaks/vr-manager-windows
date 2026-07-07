@@ -39,9 +39,15 @@ export const api = {
     restoreBackup: () => window.ipcRenderer.invoke('restore-backup'),
     getLastBackupTime: () => window.ipcRenderer.invoke('get-last-backup-time'),
     checkForUpdates: () => window.ipcRenderer.invoke('check-for-updates'),
-    onBackupCompleted: (callback: () => void) => window.ipcRenderer.on('backup-completed', callback)
+    onBackupCompleted: (callback: () => void) => window.ipcRenderer.on('backup-completed', callback),
+    getCloudStatus: () => window.ipcRenderer.invoke('get-cloud-status'),
+    selectCloudFolder: () => window.ipcRenderer.invoke('select-cloud-folder'),
+    saveToCloud: () => window.ipcRenderer.invoke('save-to-cloud'),
+    restoreFromCloud: (filePath?: string) => window.ipcRenderer.invoke('restore-from-cloud', filePath),
+    disconnectCloud: () => window.ipcRenderer.invoke('disconnect-cloud')
   }
 }
+
 
 declare global {
   interface Window {
