@@ -16,8 +16,8 @@ export function generateInvoicePDF(
     invoiceDate: string; 
     client: {
       name: string;
-      cui?: string;
-      regCom?: string;
+      cui?: string; // VAT Number for client
+      regCom?: string; // CRN for client
       address?: string;
       county?: string;
       city?: string;
@@ -38,82 +38,90 @@ export function generateInvoicePDF(
 
   const primaryColor = hexToRgb(settings.invoiceColor || '#4F46E5');
 
-  // --- HEADER: FURNIZOR ---
+  // --- HEADER: ISSUER ---
   doc.setFontSize(14);
   doc.setFont("helvetica", "bold");
-  doc.text("FURNIZOR", 14, 20);
+  doc.text("FROM", 14, 20);
   
   doc.setFontSize(10);
   doc.setFont("helvetica", "normal");
   const issuerName = settings.issuerName || "VATRA ROMANEASCA BAKERY SRL";
-  const issuerCui = settings.issuerCui || "RO12345678";
+  const issuerCrn = settings.issuerCrn || "";
+  const issuerVat = settings.issuerVat || "";
   
-  doc.text(`Denumire: ${issuerName}`, 14, 28);
-  doc.text(`C.I.F.: ${issuerCui}`, 14, 34);
-
-  // Bank details
-  let nextYFurnizor = 40;
-  if (settings.invoiceBankName) {
-    doc.text(`Banca: ${settings.invoiceBankName}`, 14, nextYFurnizor);
+  doc.text(`Company Name: ${issuerName}`, 14, 28);
+  
+  let nextYFurnizor = 34;
+  if (issuerCrn) {
+    doc.text(`CRN: ${issuerCrn}`, 14, nextYFurnizor);
     nextYFurnizor += 6;
   }
-  if (settings.invoiceIban) {
-    doc.text(`IBAN: ${settings.invoiceIban}`, 14, nextYFurnizor);
+  if (issuerVat) {
+    doc.text(`VAT Number: ${issuerVat}`, 14, nextYFurnizor);
+    nextYFurnizor += 6;
+  }
+
+  // Bank details
+  if (settings.invoiceAccountNumber) {
+    doc.text(`Account No: ${settings.invoiceAccountNumber}`, 14, nextYFurnizor);
+    nextYFurnizor += 6;
+  }
+  if (settings.invoiceSortCode) {
+    doc.text(`Sort Code: ${settings.invoiceSortCode}`, 14, nextYFurnizor);
   }
 
   // --- LOGO ---
   if (settings.invoiceLogo) {
     try {
-      // settings.invoiceLogo should be a base64 string
       doc.addImage(settings.invoiceLogo, 'PNG', 85, 12, 40, 40, undefined, 'FAST');
     } catch (e) {
       console.warn("Failed to add logo to PDF:", e);
     }
   }
 
-  // --- HEADER: CUMPARATOR ---
+  // --- HEADER: CUSTOMER ---
   doc.setFontSize(14);
   doc.setFont("helvetica", "bold");
-  doc.text("CUMPARATOR", 130, 20);
+  doc.text("BILL TO", 130, 20);
   
   doc.setFontSize(10);
   doc.setFont("helvetica", "normal");
   
-  doc.text(`Denumire: ${invoiceData.client.name}`, 130, 28, { maxWidth: 65 });
+  doc.text(`Name: ${invoiceData.client.name}`, 130, 28, { maxWidth: 65 });
   
   let currentY = 34;
-  if (invoiceData.client.cui) {
-    doc.text(`C.I.F.: ${invoiceData.client.cui}`, 130, currentY);
+  if (invoiceData.client.cui) { // Mapped as VAT for clients in UK context
+    doc.text(`VAT No: ${invoiceData.client.cui}`, 130, currentY);
     currentY += 6;
   }
-  if (invoiceData.client.regCom) {
-    doc.text(`Reg. Com.: ${invoiceData.client.regCom}`, 130, currentY);
+  if (invoiceData.client.regCom) { // Mapped as CRN for clients
+    doc.text(`CRN: ${invoiceData.client.regCom}`, 130, currentY);
     currentY += 6;
   }
   if (invoiceData.client.address) {
     const addressStr = `${invoiceData.client.address}, ${invoiceData.client.city || ''}, ${invoiceData.client.county || ''}`.replace(/,\s*,/g, ',');
-    doc.text(`Sediul: ${addressStr}`, 130, currentY, { maxWidth: 65 });
+    doc.text(`Address: ${addressStr}`, 130, currentY, { maxWidth: 65 });
   }
 
   // --- FACTURA DETALII ---
   doc.setFontSize(16);
   doc.setFont("helvetica", "bold");
-  doc.text("FACTURA FISCALA", 105, 75, { align: "center" });
+  doc.text("INVOICE", 105, 75, { align: "center" });
 
   doc.setFontSize(11);
   doc.setFont("helvetica", "normal");
-  doc.text(`Seria: ${settings.invoiceSeries || 'FACT'}  Nr: ${invoiceData.invoiceNumber}`, 105, 83, { align: "center" });
-  doc.text(`Data emiterii: ${invoiceData.invoiceDate}`, 105, 89, { align: "center" });
+  doc.text(`Prefix: ${settings.invoiceSeries || 'INV'}  No: ${invoiceData.invoiceNumber}`, 105, 83, { align: "center" });
+  doc.text(`Date: ${invoiceData.invoiceDate}`, 105, 89, { align: "center" });
 
   // --- TABEL PRODUSE ---
-  const tableColumn = ["Nr.", "Denumire Produse / Servicii", "U.M.", "Cantitate", "Pret Unitar\n(RON)", "Valoare\n(RON)"];
+  const tableColumn = ["No.", "Description", "Unit", "Qty", "Unit Price", "Total"];
   const tableRows: any[] = [];
 
   invoiceData.items.forEach((item, index) => {
     const rowData = [
       (index + 1).toString(),
       item.productName,
-      "buc",
+      "pcs",
       item.quantity.toString(),
       item.unitPrice.toFixed(2),
       item.totalPrice.toFixed(2)
@@ -143,14 +151,13 @@ export function generateInvoicePDF(
   
   doc.setFontSize(12);
   doc.setFont("helvetica", "bold");
-  doc.text(`Total de Plata: ${invoiceData.totalAmount.toFixed(2)} RON`, 195, finalY, { align: "right" });
+  doc.text(`Total Amount Due: ${invoiceData.totalAmount.toFixed(2)}`, 195, finalY, { align: "right" });
 
   // --- FOOTER ---
   if (settings.invoiceFooter) {
     doc.setFontSize(8);
     doc.setFont("helvetica", "italic");
     const lines = doc.splitTextToSize(settings.invoiceFooter, 180);
-    // Put footer at the bottom of the page
     const pageHeight = doc.internal.pageSize.height;
     doc.text(lines, 14, pageHeight - 15);
   }

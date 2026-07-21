@@ -62,7 +62,10 @@ export function registerBillingHandlers() {
       invoiceSeries: billingRepo.getAppSetting('invoice_series') || 'FACT',
       invoiceStartNumber: billingRepo.getAppSetting('invoice_start_number') || '1',
       issuerName: billingRepo.getAppSetting('issuer_name') || '',
-      issuerCui: billingRepo.getAppSetting('issuer_cui') || '',
+      issuerCrn: billingRepo.getAppSetting('issuer_crn') || '',
+      issuerVat: billingRepo.getAppSetting('issuer_vat') || '',
+      invoiceAccountNumber: billingRepo.getAppSetting('invoice_account_number') || '',
+      invoiceSortCode: billingRepo.getAppSetting('invoice_sort_code') || '',
       invoiceBankName: billingRepo.getAppSetting('invoice_bank_name') || '',
       invoiceIban: billingRepo.getAppSetting('invoice_iban') || '',
       invoiceFooter: billingRepo.getAppSetting('invoice_footer') || '',
@@ -79,9 +82,10 @@ export function registerBillingHandlers() {
     billingRepo.setAppSetting('invoice_series', data.invoiceSeries);
     billingRepo.setAppSetting('invoice_start_number', data.invoiceStartNumber);
     billingRepo.setAppSetting('issuer_name', data.issuerName);
-    billingRepo.setAppSetting('issuer_cui', data.issuerCui);
-    billingRepo.setAppSetting('invoice_bank_name', data.invoiceBankName);
-    billingRepo.setAppSetting('invoice_iban', data.invoiceIban);
+    billingRepo.setAppSetting('issuer_crn', data.issuerCrn);
+    billingRepo.setAppSetting('issuer_vat', data.issuerVat);
+    billingRepo.setAppSetting('invoice_account_number', data.invoiceAccountNumber);
+    billingRepo.setAppSetting('invoice_sort_code', data.invoiceSortCode);
     billingRepo.setAppSetting('invoice_footer', data.invoiceFooter);
     billingRepo.setAppSetting('invoice_color', data.invoiceColor);
     billingRepo.setAppSetting('invoice_logo', data.invoiceLogo);

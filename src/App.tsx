@@ -9,6 +9,10 @@ import StockMovements from './pages/StockMovements';
 import Dashboard from './pages/Dashboard';
 import { Hub } from './pages/Hub';
 import { Settings as SettingsPage } from './pages/Settings';
+import { SettingsLayout } from './pages/SettingsLayout';
+import { SettingsSystem } from './pages/SettingsSystem';
+import { BillingSettings } from './pages/BillingSettings';
+import { SettingsEntities } from './pages/SettingsEntities';
 import { DailyCash } from './pages/DailyCash';
 import { DailyCashLayout } from './pages/DailyCashLayout';
 import { Banknote } from 'lucide-react';
@@ -85,6 +89,11 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Hub />} />
           <Route path="/setari" element={<SettingsPage />} />
+          <Route path="/setari/*" element={<SettingsLayout />}>
+            <Route path="sistem" element={<SettingsSystem />} />
+            <Route path="facturare" element={<BillingSettings />} />
+            <Route path="personal" element={<SettingsEntities />} />
+          </Route>
           <Route path="/daily-cash/*" element={<DailyCashLayout />} />
           <Route path="/stoc/*" element={<StocLayout />} />
           <Route path="/facturare/*" element={<BillingLayout />} />

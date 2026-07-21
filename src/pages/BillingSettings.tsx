@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Save, Check, Key, Database, Building2, Palette, FileImage, FileText } from 'lucide-react';
+import { Save, Check, Database, Building2, Palette, FileImage } from 'lucide-react';
 import { api } from '../shared/api';
 
 export function BillingSettings() {
@@ -8,12 +8,13 @@ export function BillingSettings() {
     supabaseKey: '',
     supabaseEmail: '',
     supabasePassword: '',
-    invoiceSeries: 'FACT',
+    invoiceSeries: 'INV',
     invoiceStartNumber: '1',
     issuerName: '',
-    issuerCui: '',
-    invoiceBankName: '',
-    invoiceIban: '',
+    issuerCrn: '',
+    issuerVat: '',
+    invoiceAccountNumber: '',
+    invoiceSortCode: '',
     invoiceFooter: '',
     invoiceColor: '#4F46E5',
     invoiceLogo: ''
@@ -57,7 +58,7 @@ export function BillingSettings() {
     if (!file) return;
 
     if (file.size > 1024 * 1024) {
-      alert("Imaginea este prea mare! Alegeți o imagine sub 1MB.");
+      alert("Image is too large! Please choose an image under 1MB.");
       return;
     }
 
@@ -78,13 +79,13 @@ export function BillingSettings() {
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div className="flex items-center justify-between bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
-          <h2 className="text-xl font-bold text-slate-900">Salvare Setări</h2>
+          <h2 className="text-xl font-bold text-slate-900">Salvare Setări (Save Settings)</h2>
           <p className="text-sm text-slate-500">Apasă aici pentru a salva toate modificările de mai jos.</p>
         </div>
         <button
           onClick={handleSave}
           disabled={isSaving}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2 transition-all shadow-md shadow-indigo-200"
+          className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2 transition-all shadow-md shadow-indigo-200 cursor-pointer"
         >
           {showSaved ? <Check size={20} /> : <Save size={20} />}
           {showSaved ? 'Salvat' : 'Salvează Tot'}
@@ -100,27 +101,39 @@ export function BillingSettings() {
               <Building2 size={20} />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-slate-900">Date Companie (Furnizor)</h2>
+              <h2 className="text-lg font-bold text-slate-900">Date Companie (UK Provider)</h2>
               <p className="text-sm text-slate-500">Apar pe facturile generate (partea stângă-sus).</p>
             </div>
           </div>
 
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium text-slate-700">Denumire Firmă</label>
+              <label className="text-sm font-medium text-slate-700">Company Name</label>
               <input type="text" name="issuerName" value={settings.issuerName} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500" />
             </div>
-            <div>
-              <label className="text-sm font-medium text-slate-700">C.I.F. (CUI)</label>
-              <input type="text" name="issuerCui" value={settings.issuerCui} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500" />
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-slate-700">CRN (Company Reg. No)</label>
+                <input type="text" name="issuerCrn" value={settings.issuerCrn} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500" />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-slate-700">VAT Number (Opțional)</label>
+                <input type="text" name="issuerVat" value={settings.issuerVat} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500" />
+              </div>
             </div>
-            <div>
-              <label className="text-sm font-medium text-slate-700">Banca (Opțional)</label>
-              <input type="text" name="invoiceBankName" value={settings.invoiceBankName} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500" />
-            </div>
-            <div>
-              <label className="text-sm font-medium text-slate-700">Cont IBAN (Opțional)</label>
-              <input type="text" name="invoiceIban" value={settings.invoiceIban} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 font-mono text-sm uppercase" />
+            
+            <div className="pt-4 border-t border-slate-100">
+              <h3 className="text-sm font-bold text-slate-800 mb-3">Bank Details (UK)</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-slate-700">Account Number</label>
+                  <input type="text" name="invoiceAccountNumber" value={settings.invoiceAccountNumber} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 font-mono text-sm" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-slate-700">Sort Code</label>
+                  <input type="text" name="invoiceSortCode" value={settings.invoiceSortCode} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 font-mono text-sm" placeholder="XX-XX-XX" />
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -140,11 +153,11 @@ export function BillingSettings() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium text-slate-700">Seria Facturii</label>
+                <label className="text-sm font-medium text-slate-700">Invoice Series Prefix</label>
                 <input type="text" name="invoiceSeries" value={settings.invoiceSeries} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 uppercase font-bold" />
               </div>
               <div>
-                <label className="text-sm font-medium text-slate-700">Următorul Număr</label>
+                <label className="text-sm font-medium text-slate-700">Next Number</label>
                 <input type="number" name="invoiceStartNumber" value={settings.invoiceStartNumber} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 font-mono" />
               </div>
             </div>
@@ -169,7 +182,7 @@ export function BillingSettings() {
                 {settings.invoiceLogo ? (
                   <div className="relative border border-slate-200 rounded-lg p-2 bg-slate-50">
                     <img src={settings.invoiceLogo} alt="Logo" className="h-16 object-contain" />
-                    <button onClick={removeLogo} className="absolute -top-2 -right-2 bg-rose-500 text-white rounded-full w-6 h-6 text-xs font-bold hover:bg-rose-600">×</button>
+                    <button onClick={removeLogo} className="absolute -top-2 -right-2 bg-rose-500 text-white rounded-full w-6 h-6 text-xs font-bold hover:bg-rose-600 cursor-pointer">×</button>
                   </div>
                 ) : (
                   <div className="w-24 h-16 bg-slate-50 border border-dashed border-slate-300 rounded-lg flex items-center justify-center text-slate-400">
@@ -182,7 +195,7 @@ export function BillingSettings() {
                     accept="image/png, image/jpeg" 
                     onChange={handleLogoUpload} 
                     ref={fileInputRef}
-                    className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
+                    className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
                   />
                   <p className="text-xs text-slate-400 mt-1">Recomandat: PNG transparent sub 1MB.</p>
                 </div>
@@ -190,13 +203,13 @@ export function BillingSettings() {
             </div>
 
             <div>
-              <label className="text-sm font-medium text-slate-700 block mb-1">Text Subsol / Termeni (Opțional)</label>
+              <label className="text-sm font-medium text-slate-700 block mb-1">Footer Notes / Terms (Opțional)</label>
               <textarea 
                 name="invoiceFooter" 
                 value={settings.invoiceFooter} 
                 onChange={handleChange} 
                 rows={3}
-                placeholder="Ex: Factura este valabilă fără ștampilă conform legii..."
+                placeholder="Ex: Company registered in England and Wales..."
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 text-sm" 
               />
             </div>
