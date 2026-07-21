@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../shared/api';
+import { SettingsEntities } from './SettingsEntities';
 import { 
   ArrowLeft, 
   Database, 
@@ -375,6 +376,9 @@ export function Settings() {
               )}
             </div>
           </div>
+
+          {/* Secțiunea Șoferi și Angajați */}
+          <SettingsEntities />
 
           {/* Card Backup & Restore */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">

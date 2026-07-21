@@ -158,11 +158,21 @@ function runMigrations() {
 
     // Aici se adaugă în ordine secvențială modificările viitoare (ex. ALTER TABLE pentru a adăuga coloane noi)
     const migrations: { version: number, description: string, up: () => void }[] = [
-      // {
-      //   version: 1,
-      //   description: "Exemplu: adăugare coloană nouă",
-      //   up: () => { db.exec("ALTER TABLE raw_materials ADD COLUMN test_col TEXT;"); }
-      // }
+      {
+        version: 1,
+        description: "Adăugare coloană current_stock la finished_products",
+        up: () => { 
+          // SQLite nu suportă mereu ADD COLUMN cu DEFAULT într-un mod curat dacă tabelul nu e gol, dar vom încerca.
+          try {
+            db.exec("ALTER TABLE finished_products ADD COLUMN current_stock REAL NOT NULL DEFAULT 0;");
+          } catch (e: any) {
+            // Dacă coloana există deja, ignorăm
+            if (!e.message.includes("duplicate column name")) {
+              throw e;
+            }
+          }
+        }
+      }
     ];
 
     for (const migration of migrations) {

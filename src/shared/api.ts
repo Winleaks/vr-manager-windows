@@ -45,6 +45,24 @@ export const api = {
     saveToCloud: () => window.ipcRenderer.invoke('save-to-cloud'),
     restoreFromCloud: (filePath?: string) => window.ipcRenderer.invoke('restore-from-cloud', filePath),
     disconnectCloud: () => window.ipcRenderer.invoke('disconnect-cloud')
+  },
+  drivers: {
+    getAll: () => window.ipcRenderer.invoke('get-drivers'),
+    create: (data: any) => window.ipcRenderer.invoke('create-driver', data),
+    update: (data: any) => window.ipcRenderer.invoke('update-driver', data),
+    toggleActive: (id: number, isActive: boolean) => window.ipcRenderer.invoke('toggle-driver', id, isActive)
+  },
+  employees: {
+    getAll: () => window.ipcRenderer.invoke('get-employees'),
+    create: (data: any) => window.ipcRenderer.invoke('create-employee', data),
+    update: (data: any) => window.ipcRenderer.invoke('update-employee', data),
+    toggleActive: (id: number, isActive: boolean) => window.ipcRenderer.invoke('toggle-employee', id, isActive)
+  },
+  dailyCash: {
+    getActiveDay: () => window.ipcRenderer.invoke('get-active-cash-day'),
+    getTransactions: (dayId: number) => window.ipcRenderer.invoke('get-cash-transactions', dayId),
+    addTransaction: (data: any) => window.ipcRenderer.invoke('add-cash-transaction', data),
+    closeDay: (dayId: number, finalBalance: number) => window.ipcRenderer.invoke('close-cash-day', dayId, finalBalance)
   }
 }
 

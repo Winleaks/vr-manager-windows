@@ -9,6 +9,7 @@ import StockMovements from './pages/StockMovements';
 import Dashboard from './pages/Dashboard';
 import { Hub } from './pages/Hub';
 import { Settings as SettingsPage } from './pages/Settings';
+import { DailyCash } from './pages/DailyCash';
 
 function Sidebar() {
   const location = useLocation();
@@ -76,6 +77,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Hub />} />
         <Route path="/setari" element={<SettingsPage />} />
+        <Route path="/daily-cash" element={<DailyCash />} />
         <Route path="/stoc/*" element={<StocLayout />} />
       </Routes>
     </HashRouter>

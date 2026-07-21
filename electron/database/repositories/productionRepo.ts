@@ -27,6 +27,28 @@ export const productionRepo = {
       const prodResult = insertProduction.run(productId, quantity, date, notes);
       const productionId = prodResult.lastInsertRowid;
 
+      // 2.5 Update Finished Product Stock
+      const updateFinishedProductStock = db.prepare('UPDATE finished_products SET current_stock = current_stock + ? WHERE id = ?');
+      updateFinishedProductStock.run(quantity, productId);
+      
+      const getFinishedProductStock = db.prepare('SELECT current_stock FROM finished_products WHERE id = ?');
+      const fpStockRow = getFinishedProductStock.get(productId) as any;
+      const stockAfterFp = fpStockRow ? fpStockRow.current_stock : quantity;
+      const stockBeforeFp = stockAfterFp - quantity;
+
+      const insertFpMovement = db.prepare(`
+        INSERT INTO finished_product_movements (finished_product_id, movement_type, quantity, stock_before, stock_after, reference_type, reference_id, notes)
+        VALUES (?, 'productie', ?, ?, ?, 'production', ?, ?)
+      `);
+      insertFpMovement.run(
+        productId,
+        quantity,
+        stockBeforeFp,
+        stockAfterFp,
+        productionId,
+        \`Producție #\${productionId}\`
+      );
+
       // 3. Calculate consumption
       const recipeItems = db.prepare(`
         SELECT raw_material_id, quantity 

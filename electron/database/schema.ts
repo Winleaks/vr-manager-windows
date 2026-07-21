@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS finished_products (
   name TEXT NOT NULL UNIQUE,
   category_id INTEGER,
   production_unit TEXT NOT NULL DEFAULT 'buc',
+  current_stock REAL NOT NULL DEFAULT 0,
   notes TEXT,
   is_active BOOLEAN DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -122,6 +123,73 @@ CREATE TABLE IF NOT EXISTS stock_adjustments (
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS finished_product_movements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  finished_product_id INTEGER,
+  movement_type TEXT NOT NULL,
+  quantity REAL NOT NULL,
+  stock_before REAL NOT NULL,
+  stock_after REAL NOT NULL,
+  reference_type TEXT,
+  reference_id INTEGER,
+  notes TEXT,
+  created_by TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(finished_product_id) REFERENCES finished_products(id)
+);
+
+CREATE TABLE IF NOT EXISTS drivers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  phone TEXT,
+  car_details TEXT,
+  is_active BOOLEAN DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS employees (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  role TEXT,
+  is_active BOOLEAN DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS cash_days (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date DATE NOT NULL UNIQUE,
+  opening_balance REAL NOT NULL DEFAULT 0,
+  closing_balance REAL,
+  is_closed BOOLEAN DEFAULT 0,
+  closed_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS cash_transactions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cash_day_id INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  category TEXT NOT NULL,
+  amount REAL NOT NULL,
+  reference_id INTEGER,
+  reference_name TEXT,
+  notes TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(cash_day_id) REFERENCES cash_days(id)
+);
+
+CREATE TABLE IF NOT EXISTS cash_transaction_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  transaction_id INTEGER NOT NULL,
+  finished_product_id INTEGER NOT NULL,
+  quantity REAL NOT NULL,
+  unit_price REAL NOT NULL,
+  FOREIGN KEY(transaction_id) REFERENCES cash_transactions(id),
+  FOREIGN KEY(finished_product_id) REFERENCES finished_products(id)
 );
 `;
 

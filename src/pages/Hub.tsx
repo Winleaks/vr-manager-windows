@@ -29,11 +29,12 @@ const modules = [
   {
     id: 'cash',
     title: 'Daily Cash',
-    description: 'Evidența banilor la zi (În construcție).',
+    description: 'Evidența banilor la zi (Încasări, Vânzări Directe, Plăți).',
     icon: Banknote,
     color: 'bg-emerald-500',
     hoverColor: 'hover:bg-emerald-600',
-    active: false,
+    active: true,
+    path: '/daily-cash'
   },
   {
     id: 'vanzari',
