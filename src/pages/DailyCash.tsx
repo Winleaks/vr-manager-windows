@@ -53,7 +53,7 @@ export function DailyCash() {
 
   const handleCloseDay = async () => {
     if (!activeDay) return;
-    if (window.confirm(\`Ești sigur că vrei să închizi ziua cu soldul final de \${activeDay.current_balance} lei?\`)) {
+    if (window.confirm(`Ești sigur că vrei să închizi ziua cu soldul final de ${activeDay.current_balance} lei?`)) {
       await api.dailyCash.closeDay(activeDay.id, activeDay.current_balance);
       loadData(); // va crea automat o zi nouă pe baza celei închise
     }
@@ -242,7 +242,7 @@ export function DailyCash() {
                           {t.reference_name && <span className="flex items-center gap-1"><User size={12}/> {t.reference_name}</span>}
                         </div>
                       </td>
-                      <td className={\`px-6 py-4 font-bold \${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}\`}>
+                      <td className={`px-6 py-4 font-bold ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
                         {t.type === 'IN' ? '+' : '-'}{t.amount.toFixed(2)} lei
                       </td>
                       <td className="px-6 py-4 text-slate-600">{t.notes}</td>

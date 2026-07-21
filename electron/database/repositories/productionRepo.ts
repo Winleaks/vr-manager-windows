@@ -46,7 +46,7 @@ export const productionRepo = {
         stockBeforeFp,
         stockAfterFp,
         productionId,
-        \`Producție #\${productionId}\`
+        `Producție #${productionId}`
       );
 
       // 3. Calculate consumption

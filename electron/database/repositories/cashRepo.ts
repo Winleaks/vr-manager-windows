@@ -118,7 +118,7 @@ export const cashRepo = {
             stockBefore,
             stockAfter,
             transactionId,
-            \`Vânzare cash (Tranzacția #${transactionId})\`
+            `Vânzare cash (Tranzacția #${transactionId})`
           );
         }
       }

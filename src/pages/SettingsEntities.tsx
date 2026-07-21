@@ -89,14 +89,14 @@ export function SettingsEntities() {
 
           <div className="max-h-60 overflow-y-auto space-y-2 mt-4">
             {drivers.map(d => (
-              <div key={d.id} className={\`flex items-center justify-between p-3 rounded-lg border \${d.is_active ? 'bg-slate-50 border-slate-200' : 'bg-slate-100 border-slate-200 opacity-60'}\`}>
+              <div key={d.id} className={`flex items-center justify-between p-3 rounded-lg border ${d.is_active ? 'bg-slate-50 border-slate-200' : 'bg-slate-100 border-slate-200 opacity-60'}`}>
                 <div>
                   <div className="font-medium text-slate-800">{d.name}</div>
                   <div className="text-xs text-slate-500">{d.phone} • {d.car_details}</div>
                 </div>
                 <button 
                   onClick={() => handleToggleDriver(d.id, d.is_active)}
-                  className={\`p-1.5 rounded-md \${d.is_active ? 'text-emerald-600 hover:bg-emerald-100' : 'text-rose-600 hover:bg-rose-100'}\`}
+                  className={`p-1.5 rounded-md ${d.is_active ? 'text-emerald-600 hover:bg-emerald-100' : 'text-rose-600 hover:bg-rose-100'}`}
                   title={d.is_active ? "Dezactivează" : "Activează"}
                 >
                   {d.is_active ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
@@ -140,14 +140,14 @@ export function SettingsEntities() {
 
           <div className="max-h-60 overflow-y-auto space-y-2 mt-4">
             {employees.map(e => (
-              <div key={e.id} className={\`flex items-center justify-between p-3 rounded-lg border \${e.is_active ? 'bg-slate-50 border-slate-200' : 'bg-slate-100 border-slate-200 opacity-60'}\`}>
+              <div key={e.id} className={`flex items-center justify-between p-3 rounded-lg border ${e.is_active ? 'bg-slate-50 border-slate-200' : 'bg-slate-100 border-slate-200 opacity-60'}`}>
                 <div>
                   <div className="font-medium text-slate-800">{e.name}</div>
                   <div className="text-xs text-slate-500">{e.role}</div>
                 </div>
                 <button 
                   onClick={() => handleToggleEmployee(e.id, e.is_active)}
-                  className={\`p-1.5 rounded-md \${e.is_active ? 'text-emerald-600 hover:bg-emerald-100' : 'text-rose-600 hover:bg-rose-100'}\`}
+                  className={`p-1.5 rounded-md ${e.is_active ? 'text-emerald-600 hover:bg-emerald-100' : 'text-rose-600 hover:bg-rose-100'}`}
                   title={e.is_active ? "Dezactivează" : "Activează"}
                 >
                   {e.is_active ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
