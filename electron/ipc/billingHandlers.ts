@@ -156,7 +156,7 @@ export function registerBillingHandlers() {
         const storeData = ordersByStore.get(storeId);
         
         for (const item of order.order_items || []) {
-          const qty = item.qty_delivered !== null ? item.qty_delivered : item.qty_ordered;
+          const qty = item.qty_delivered ?? item.qty_ordered;
           if (qty > 0) {
             storeData.items.push({
               productName: item.products?.name || 'Produs necunoscut',
