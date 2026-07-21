@@ -5,6 +5,7 @@ import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
 import { format, startOfWeek, endOfWeek, addDays, parseISO } from 'date-fns';
 import { ro } from 'date-fns/locale';
+import { generateInvoicePDF } from '../utils/pdfGenerator';
 
 export function BillingInvoices() {
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -82,7 +83,61 @@ export function BillingInvoices() {
           </div>
           {syncResult.success && syncResult.ordersByStore && (
             <div className="mt-4 space-y-4">
-              <p className="font-medium">Am găsit comenzi pentru {syncResult.ordersByStore.length} magazine.</p>
+              <div className="flex items-center justify-between">
+                <p className="font-medium">Am găsit comenzi pentru {syncResult.ordersByStore.length} magazine.</p>
+                <button 
+                  onClick={async () => {
+                    try {
+                      // 1. Save in local database
+                      const res = await api.billing.createInvoicesFromSync(syncResult.ordersByStore);
+                      if (!res.success) {
+                        alert('Eroare salvare baza de date: ' + res.message);
+                        return;
+                      }
+
+                      // 2. Generate PDF and upload
+                      const settings = await api.billing.getSettings();
+
+                      let successCount = 0;
+                      for (const order of res.updatedOrders) {
+                        const pdfData = {
+                          invoiceNumber: order.assignedInvoiceNumber,
+                          invoiceDate: order.assignedInvoiceDate,
+                          client: {
+                            name: order.store.owner?.company_name || order.store.name,
+                            cui: order.store.owner?.cui,
+                            regCom: order.store.owner?.reg_com,
+                            address: order.store.owner?.address,
+                            county: order.store.owner?.county,
+                            city: order.store.owner?.city
+                          },
+                          items: order.items,
+                          totalAmount: order.items.reduce((acc: number, item: any) => acc + item.totalPrice, 0)
+                        };
+
+                        const buffer = generateInvoicePDF(settings, pdfData);
+                        const filename = `Factura_${settings.invoiceSeries || 'FACT'}_${order.assignedInvoiceNumber}.pdf`;
+
+                        // Salvare local
+                        await api.system.savePdfAuto({ buffer, filename });
+                        
+                        // Upload pe Cloud (invizibil)
+                        await api.system.uploadPdfToCloud(filename, buffer);
+                        
+                        successCount++;
+                      }
+
+                      alert(`Au fost generate și salvate cu succes ${successCount} facturi! (Local în Documents/Facturi Vatra Romaneasca și pe Google Drive)`);
+                      
+                    } catch (e: any) {
+                      alert('Eroare la generare: ' + e.message);
+                    }
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-xl font-medium transition-colors shadow-sm"
+                >
+                  Generează și Salvează Facturi
+                </button>
+              </div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                 {syncResult.ordersByStore.map((data: any, idx: number) => {
@@ -103,10 +158,6 @@ export function BillingInvoices() {
           )}
         </div>
       )}
-
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-center text-slate-500">
-        Aici vor apărea facturile PDF generate după ce salvăm comenzile sincronizate în baza noastră locală.
-      </div>
     </div>
   );
 }

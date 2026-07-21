@@ -35,6 +35,8 @@ export const api = {
   system: {
     saveFile: (options: { buffer: Uint8Array, defaultPath: string, filters: any[] }) =>
       window.ipcRenderer.invoke('save-file', options),
+    savePdfAuto: (options: { buffer: Uint8Array, filename: string }) =>
+      window.ipcRenderer.invoke('save-pdf-auto', options),
     manualBackup: () => window.ipcRenderer.invoke('manual-backup'),
     restoreBackup: () => window.ipcRenderer.invoke('restore-backup'),
     getLastBackupTime: () => window.ipcRenderer.invoke('get-last-backup-time'),
@@ -50,7 +52,8 @@ export const api = {
     connectGoogleDrive: () => window.ipcRenderer.invoke('connect-google-drive'),
     saveToCloud: () => window.ipcRenderer.invoke('save-to-cloud'),
     restoreFromCloud: (filePath?: string) => window.ipcRenderer.invoke('restore-from-cloud', filePath),
-    disconnectCloud: () => window.ipcRenderer.invoke('disconnect-cloud')
+    disconnectCloud: () => window.ipcRenderer.invoke('disconnect-cloud'),
+    uploadPdfToCloud: (filename: string, buffer: Uint8Array) => window.ipcRenderer.invoke('upload-pdf-to-cloud', filename, buffer)
   },
   drivers: {
     getAll: () => window.ipcRenderer.invoke('get-drivers'),
@@ -88,7 +91,8 @@ export const api = {
     getStats: () => window.ipcRenderer.invoke('billing:getStats'),
     getSettings: () => window.ipcRenderer.invoke('billing:getSettings'),
     saveSettings: (data: any) => window.ipcRenderer.invoke('billing:saveSettings', data),
-    syncSupabaseOrders: (startDate: string, endDate: string) => window.ipcRenderer.invoke('billing:syncSupabaseOrders', startDate, endDate)
+    syncSupabaseOrders: (startDate: string, endDate: string) => window.ipcRenderer.invoke('billing:syncSupabaseOrders', startDate, endDate),
+    createInvoicesFromSync: (orders: any[]) => window.ipcRenderer.invoke('billing:createInvoicesFromSync', orders)
   }
 }
 

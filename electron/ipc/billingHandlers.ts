@@ -167,4 +167,38 @@ export function registerBillingHandlers() {
       return { success: false, message: e.message };
     }
   });
+
+  ipcMain.handle('billing:createInvoicesFromSync', async (_event, orders: any[]) => {
+    try {
+      const settings = billingRepo.getSettings();
+      let currentNumber = parseInt(settings.invoiceStartNumber || '1', 10);
+      
+      const today = new Date().toISOString().split('T')[0];
+
+      for (const orderData of orders) {
+        // Find or create local store to link invoice
+        // For simplicity we use storeId = -1 (unlinked) for now, or match it
+        let storeId = -1;
+        
+        const invoiceNumber = currentNumber.toString();
+        const totalAmount = orderData.items.reduce((acc: number, item: any) => acc + item.totalPrice, 0);
+
+        billingRepo.createInvoice(storeId, invoiceNumber, today, totalAmount, orderData.items);
+        
+        // Inject the assigned invoice number into the order object so the frontend can use it for PDF
+        orderData.assignedInvoiceNumber = invoiceNumber;
+        orderData.assignedInvoiceDate = new Date().toLocaleDateString('ro-RO');
+
+        currentNumber++;
+      }
+
+      // Update settings with the next available invoice number
+      settings.invoiceStartNumber = currentNumber.toString();
+      billingRepo.saveSettings(settings);
+
+      return { success: true, updatedOrders: orders };
+    } catch (e: any) {
+      return { success: false, message: e.message };
+    }
+  });
 }

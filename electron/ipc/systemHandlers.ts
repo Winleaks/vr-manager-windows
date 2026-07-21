@@ -25,6 +25,24 @@ export function registerSystemHandlers() {
     }
   });
 
+  ipcMain.handle('save-pdf-auto', async (event, options: { buffer: Uint8Array, filename: string }) => {
+    try {
+      const path = require('path');
+      const { app } = require('electron');
+      const documentsPath = app.getPath('documents');
+      const facturiDir = path.join(documentsPath, 'Facturi Vatra Romaneasca');
+      if (!fs.existsSync(facturiDir)) {
+        fs.mkdirSync(facturiDir, { recursive: true });
+      }
+      const filePath = path.join(facturiDir, options.filename);
+      fs.writeFileSync(filePath, Buffer.from(options.buffer));
+      return { success: true, filePath };
+    } catch (err: any) {
+      console.error('Eroare salvare auto:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('manual-backup', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return { success: false };
@@ -113,6 +131,11 @@ export function registerSystemHandlers() {
 
   ipcMain.handle('disconnect-cloud', async () => {
     return await disconnectCloud();
+  });
+
+  ipcMain.handle('upload-pdf-to-cloud', async (_event, filename: string, buffer: Uint8Array) => {
+    const { uploadPdfToCloud } = require('../database/cloudSync');
+    return await uploadPdfToCloud(filename, buffer);
   });
 }
 

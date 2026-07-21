@@ -267,3 +267,44 @@ export async function restoreFromCloud(fileId?: string): Promise<{ success: bool
     return { success: false, error: e.message };
   }
 }
+
+export async function uploadPdfToCloud(filename: string, buffer: Uint8Array): Promise<{ success: boolean; error?: string }> {
+  if (!loadTokens()) {
+    return { success: false, error: 'Nu ești conectat la Google Drive.' };
+  }
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    
+    // Check if 'Facturi' folder exists
+    const folderSearch = await drive.files.list({
+      q: "name='Facturi' and mimeType='application/vnd.google-apps.folder' and trashed=false",
+      fields: 'files(id)'
+    });
+    
+    let folderId = '';
+    if (folderSearch.data.files && folderSearch.data.files.length > 0) {
+      folderId = folderSearch.data.files[0].id!;
+    } else {
+      const folderRes = await drive.files.create({
+        requestBody: { name: 'Facturi', mimeType: 'application/vnd.google-apps.folder' },
+        fields: 'id'
+      });
+      folderId = folderRes.data.id!;
+    }
+
+    const { Readable } = require('stream');
+    const stream = new Readable();
+    stream.push(buffer);
+    stream.push(null);
+
+    await drive.files.create({
+      requestBody: { name: filename, parents: [folderId] },
+      media: { mimeType: 'application/pdf', body: stream },
+      fields: 'id'
+    });
+    return { success: true };
+  } catch (e: any) {
+    console.error('Upload PDF error:', e);
+    return { success: false, error: e.message };
+  }
+}
