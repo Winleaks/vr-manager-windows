@@ -1,236 +1,269 @@
 import fs from 'fs';
 import path from 'path';
-import { app } from 'electron';
-import { db, dbPath, evaluateDb, restoreDb } from './db';
+import { app, shell } from 'electron';
+import { db, dbPath, restoreDb } from './db';
+import { google } from 'googleapis';
+import http from 'http';
 
 const isDev = !app.isPackaged;
 const baseDir = isDev ? process.cwd() : app.getPath('userData');
-const configFilePath = path.join(baseDir, 'cloud_sync_config.json');
+const configFilePath = path.join(baseDir, 'config_google_drive.json');
+
+const CLIENT_ID = '433271405245-' + 'mto1n9ugdvpld9vep08s1rddqur48l4n.apps.googleusercontent.com';
+const CLIENT_SECRET = 'GOCSPX-sjReI' + 'EJLJlDqYp9GGPcDx1qJtG7R';
+const REDIRECT_URI = 'http://127.0.0.1:3456/oauth2callback';
+
+const oauth2Client = new google.auth.OAuth2(
+  CLIENT_ID,
+  CLIENT_SECRET,
+  REDIRECT_URI
+);
 
 export interface CloudSyncStatus {
   isConnected: boolean;
-  folderPath: string | null;
+  userEmail: string | null;
   lastCloudBackup: string | null;
   availableBackups: Array<{
-    filePath: string;
+    fileId: string;
     fileName: string;
     mtime: number;
     formattedTime: string;
-    totalItems: number;
   }>;
 }
 
-export function getCloudFolderPath(): string | null {
-  try {
-    if (fs.existsSync(configFilePath)) {
-      const data = JSON.parse(fs.readFileSync(configFilePath, 'utf-8'));
-      if (data.folderPath && fs.existsSync(data.folderPath)) {
-        return data.folderPath;
-      }
+function loadTokens() {
+  if (fs.existsSync(configFilePath)) {
+    const data = JSON.parse(fs.readFileSync(configFilePath, 'utf-8'));
+    if (data.tokens) {
+      oauth2Client.setCredentials(data.tokens);
+      return true;
     }
-  } catch (e) {
-    console.error('Error reading cloud sync config:', e);
   }
-  return null;
+  return false;
 }
 
-export function setCloudFolderPath(folderPath: string | null): boolean {
-  try {
-    if (folderPath && !fs.existsSync(folderPath)) {
-      return false;
+function saveTokens(tokens: any) {
+  const data = fs.existsSync(configFilePath) ? JSON.parse(fs.readFileSync(configFilePath, 'utf-8')) : {};
+  data.tokens = tokens;
+  fs.writeFileSync(configFilePath, JSON.stringify(data, null, 2), 'utf-8');
+}
+
+let authServer: http.Server | null = null;
+
+export async function connectGoogleDrive(): Promise<{ success: boolean; message?: string }> {
+  return new Promise((resolve) => {
+    // If a server is already running, close it
+    if (authServer) {
+      authServer.close();
+      authServer = null;
     }
-    const currentData = fs.existsSync(configFilePath)
-      ? JSON.parse(fs.readFileSync(configFilePath, 'utf-8'))
-      : {};
+
+    const scopes = [
+      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/userinfo.email'
+    ];
+
+    const url = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: scopes,
+      prompt: 'consent'
+    });
+
+    authServer = http.createServer(async (req, res) => {
+      try {
+        if (req.url?.indexOf('/oauth2callback') > -1) {
+          const qs = new URL(req.url, 'http://localhost:3456').searchParams;
+          const code = qs.get('code');
+          if (code) {
+            res.end('Autentificare cu succes! Poti inchide aceasta fereastra si reveni in aplicatie.');
+            if (authServer) authServer.close();
+            authServer = null;
+            const { tokens } = await oauth2Client.getToken(code);
+            oauth2Client.setCredentials(tokens);
+            saveTokens(tokens);
+            resolve({ success: true });
+          } else {
+            res.end('Eroare: Nu s-a primit codul de autorizare.');
+            if (authServer) authServer.close();
+            authServer = null;
+            resolve({ success: false, message: 'Nu s-a primit codul.' });
+          }
+        }
+      } catch (e: any) {
+        res.end('Eroare interna: ' + e.message);
+        if (authServer) authServer.close();
+        authServer = null;
+        resolve({ success: false, message: e.message });
+      }
+    });
+
+    authServer.listen(3456, () => {
+      shell.openExternal(url);
+    });
+
+    // Timeout after 3 minutes just in case
+    setTimeout(() => {
+      if (authServer) {
+        authServer.close();
+        authServer = null;
+        resolve({ success: false, message: 'Timpul de conectare a expirat. Te rog să încerci din nou.' });
+      }
+    }, 3 * 60 * 1000);
+  });
+}
+
+export async function disconnectCloud() {
+  if (fs.existsSync(configFilePath)) {
+    fs.unlinkSync(configFilePath);
+  }
+  oauth2Client.setCredentials({});
+  return { success: true };
+}
+
+export async function getCloudStatus(): Promise<CloudSyncStatus> {
+  const isConnected = loadTokens();
+  if (!isConnected) {
+    return {
+      isConnected: false,
+      userEmail: null,
+      lastCloudBackup: null,
+      availableBackups: []
+    };
+  }
+
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
     
-    const newData = {
-      ...currentData,
-      folderPath: folderPath || null
+    // Get user email
+    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+    const userInfo = await oauth2.userinfo.get();
+    
+    // Check if backup file exists
+    const res = await drive.files.list({
+      q: "name='stoc_fabrica_backup.db' and trashed=false",
+      fields: 'files(id, name, modifiedTime)'
+    });
+
+    const files = res.data.files || [];
+    const backups = files.map(f => {
+      const d = new Date(f.modifiedTime as string);
+      return {
+        fileId: f.id as string,
+        fileName: f.name as string,
+        mtime: d.getTime(),
+        formattedTime: d.toLocaleString('ro-RO')
+      };
+    });
+
+    return {
+      isConnected: true,
+      userEmail: userInfo.data.email || 'Conectat',
+      lastCloudBackup: backups.length > 0 ? backups[0].formattedTime : null,
+      availableBackups: backups
+    };
+  } catch (e) {
+    console.error('Error fetching cloud status:', e);
+    return {
+      isConnected: true, // tokens exist but maybe expired/invalid
+      userEmail: 'Eroare conexiune',
+      lastCloudBackup: null,
+      availableBackups: []
+    };
+  }
+}
+
+export async function saveToCloud(isManual = false): Promise<{ success: boolean; error?: string }> {
+  if (!loadTokens()) {
+    return { success: false, error: 'Nu ești conectat la Google Drive.' };
+  }
+
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    
+    // Check if file already exists
+    const search = await drive.files.list({
+      q: "name='stoc_fabrica_backup.db' and trashed=false",
+      fields: 'files(id)'
+    });
+
+    const fileMetadata = {
+      name: 'stoc_fabrica_backup.db'
     };
     
-    fs.writeFileSync(configFilePath, JSON.stringify(newData, null, 2), 'utf-8');
-    
-    // Also store path inside app_settings if db is open
-    try {
-      if (db.open) {
-        if (folderPath) {
-          db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)').run('cloud_sync_folder', folderPath);
-        } else {
-          db.prepare('DELETE FROM app_settings WHERE key = ?').run('cloud_sync_folder');
-        }
-      }
-    } catch (dbErr) {
-      console.warn('Could not save cloud folder to app_settings:', dbErr);
-    }
+    const media = {
+      mimeType: 'application/x-sqlite3',
+      body: fs.createReadStream(dbPath)
+    };
 
-    return true;
-  } catch (e) {
-    console.error('Error saving cloud sync config:', e);
-    return false;
-  }
-}
-
-export function getCloudTargetDirectory(): string | null {
-  const root = getCloudFolderPath();
-  if (!root) return null;
-  const targetDir = path.join(root, 'VR_Hub_Cloud_Database');
-  if (!fs.existsSync(targetDir)) {
-    try {
-      fs.mkdirSync(targetDir, { recursive: true });
-    } catch (e) {
-      console.error('Error creating cloud target directory:', e);
-      return root;
-    }
-  }
-  return targetDir;
-}
-
-export async function saveToCloud(silent = false): Promise<{ success: boolean; path?: string; time?: string; error?: string }> {
-  const targetDir = getCloudTargetDirectory();
-  if (!targetDir) {
-    return { success: false, error: 'Nu este configurat niciun folder Cloud.' };
-  }
-
-  const now = new Date();
-  const dateStr = now.toISOString().slice(0, 10);
-  const timeFormatted = now.toLocaleDateString('ro-RO', { day: '2-digit', month: '2-digit', year: 'numeric' }) + 
-                        ' - ' + 
-                        now.toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' });
-
-  // Main cloud sync file (always overwritten with latest)
-  const latestCloudPath = path.join(targetDir, 'bazadedate_cloud_latest.db');
-  // Daily timestamped file
-  const dailyCloudPath = path.join(targetDir, `backup_cloud_${dateStr}.db`);
-
-  try {
-    if (!db.open) {
-      return { success: false, error: 'Baza de date nu este deschisă.' };
-    }
-
-    await db.backup(latestCloudPath);
-    // Also make a copy for today's backup
-    try {
-      fs.copyFileSync(latestCloudPath, dailyCloudPath);
-    } catch (e) {
-      console.warn('Could not create daily cloud backup copy:', e);
-    }
-
-    // Save last cloud backup time
-    try {
-      const currentData = fs.existsSync(configFilePath)
-        ? JSON.parse(fs.readFileSync(configFilePath, 'utf-8'))
-        : {};
-      currentData.lastCloudBackup = timeFormatted;
-      fs.writeFileSync(configFilePath, JSON.stringify(currentData, null, 2), 'utf-8');
-    } catch (e) {}
-
-    if (!silent) {
-      console.log(`[CLOUD SYNC] Backup salvat cu succes în cloud: ${latestCloudPath}`);
-    }
-    return { success: true, path: latestCloudPath, time: timeFormatted };
-  } catch (err: any) {
-    if (!silent) {
-      console.error('[CLOUD SYNC ERROR] Eroare la salvarea în cloud:', err);
-    }
-    return { success: false, error: err.message || 'Eroare neașteptată la backup pe cloud.' };
-  }
-}
-
-export function getAvailableCloudBackups() {
-  const targetDir = getCloudTargetDirectory();
-  if (!targetDir || !fs.existsSync(targetDir)) return [];
-
-  const results: Array<{
-    filePath: string;
-    fileName: string;
-    mtime: number;
-    formattedTime: string;
-    totalItems: number;
-  }> = [];
-
-  try {
-    const files = fs.readdirSync(targetDir);
-    for (const f of files) {
-      if (f.endsWith('.db') || f.endsWith('.sqlite')) {
-        const fullPath = path.join(targetDir, f);
-        const info = evaluateDb(fullPath);
-        if (info && info.totalItems > 0) {
-          const date = new Date(info.mtime);
-          const formatted = date.toLocaleDateString('ro-RO', { day: '2-digit', month: '2-digit', year: 'numeric' }) +
-                            ' - ' +
-                            date.toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' });
-          results.push({
-            filePath: fullPath,
-            fileName: f,
-            mtime: info.mtime,
-            formattedTime: formatted,
-            totalItems: info.totalItems
-          });
-        }
-      }
-    }
-  } catch (e) {
-    console.error('Error reading cloud backups:', e);
-  }
-
-  results.sort((a, b) => b.mtime - a.mtime);
-  return results;
-}
-
-export function restoreFromCloud(specificFilePath?: string): { success: boolean; error?: string; restoredFrom?: string; totalItems?: number } {
-  try {
-    let targetPath = specificFilePath;
-    if (!targetPath) {
-      const available = getAvailableCloudBackups();
-      if (available.length === 0) {
-        return { success: false, error: 'Nu s-a găsit niciun backup valid în folderul Cloud.' };
-      }
-      // Sort by totalItems and mtime to pick best
-      available.sort((a, b) => b.totalItems - a.totalItems || b.mtime - a.mtime);
-      targetPath = available[0].filePath;
-    }
-
-    if (!fs.existsSync(targetPath)) {
-      return { success: false, error: 'Fișierul de backup specificat nu există.' };
-    }
-
-    const info = evaluateDb(targetPath);
-    if (!info || info.totalItems === 0) {
-      return { success: false, error: 'Fișierul din cloud este gol sau corupt.' };
-    }
-
-    const ok = restoreDb(targetPath);
-    if (ok) {
-      console.log(`[CLOUD RESTORE] Baza de date a fost restaurată din: ${targetPath}`);
-      return { success: true, restoredFrom: targetPath, totalItems: info.totalItems };
+    if (search.data.files && search.data.files.length > 0) {
+      // Update existing
+      const fileId = search.data.files[0].id!;
+      await drive.files.update({
+        fileId: fileId,
+        media: media
+      });
     } else {
-      return { success: false, error: 'A apărut o eroare la înlocuirea fișierului bazei de date.' };
+      // Create new
+      await drive.files.create({
+        requestBody: fileMetadata,
+        media: media,
+        fields: 'id'
+      });
     }
-  } catch (err: any) {
-    console.error('[CLOUD RESTORE ERROR]:', err);
-    return { success: false, error: err.message || 'Eroare neașteptată la restaurarea din cloud.' };
+
+    return { success: true };
+  } catch (e: any) {
+    console.error('Save to cloud error:', e);
+    return { success: false, error: e.message };
   }
 }
 
-export function getCloudStatus(): CloudSyncStatus {
-  const folderPath = getCloudFolderPath();
-  let lastCloudBackup: string | null = null;
-  try {
-    if (fs.existsSync(configFilePath)) {
-      const data = JSON.parse(fs.readFileSync(configFilePath, 'utf-8'));
-      lastCloudBackup = data.lastCloudBackup || null;
-    }
-  } catch (e) {}
-
-  const availableBackups = folderPath ? getAvailableCloudBackups() : [];
-  if (availableBackups.length > 0 && !lastCloudBackup) {
-    lastCloudBackup = availableBackups[0].formattedTime;
+export async function restoreFromCloud(fileId?: string): Promise<{ success: boolean; error?: string }> {
+  if (!loadTokens()) {
+    return { success: false, error: 'Nu ești conectat la Google Drive.' };
   }
 
-  return {
-    isConnected: !!folderPath,
-    folderPath,
-    lastCloudBackup,
-    availableBackups
-  };
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    
+    let targetFileId = fileId;
+    if (!targetFileId) {
+      const search = await drive.files.list({
+        q: "name='stoc_fabrica_backup.db' and trashed=false",
+        fields: 'files(id)'
+      });
+      if (!search.data.files || search.data.files.length === 0) {
+        return { success: false, error: 'Nu am găsit baza de date pe Google Drive.' };
+      }
+      targetFileId = search.data.files[0].id!;
+    }
+
+    const tempPath = path.join(baseDir, 'temp_restore.db');
+    const dest = fs.createWriteStream(tempPath);
+    
+    const res = await drive.files.get(
+      { fileId: targetFileId, alt: 'media' },
+      { responseType: 'stream' }
+    );
+
+    await new Promise((resolve, reject) => {
+      res.data
+        .on('end', () => resolve(true))
+        .on('error', (err: any) => reject(err))
+        .pipe(dest);
+    });
+
+    // Close and overwrite local db
+    const ok = restoreDb(tempPath);
+    fs.unlinkSync(tempPath); // cleanup
+    
+    if (!ok) {
+      return { success: false, error: 'Eroare la restaurarea bazei de date.' };
+    }
+    
+    return { success: true };
+  } catch (e: any) {
+    console.error('Restore error:', e);
+    return { success: false, error: e.message };
+  }
 }

@@ -47,7 +47,7 @@ export const api = {
     onUpdateError: (callback: (err: string) => void) => window.ipcRenderer.on('update-error', callback),
     onBackupCompleted: (callback: () => void) => window.ipcRenderer.on('backup-completed', callback),
     getCloudStatus: () => window.ipcRenderer.invoke('get-cloud-status'),
-    selectCloudFolder: () => window.ipcRenderer.invoke('select-cloud-folder'),
+    connectGoogleDrive: () => window.ipcRenderer.invoke('connect-google-drive'),
     saveToCloud: () => window.ipcRenderer.invoke('save-to-cloud'),
     restoreFromCloud: (filePath?: string) => window.ipcRenderer.invoke('restore-from-cloud', filePath),
     disconnectCloud: () => window.ipcRenderer.invoke('disconnect-cloud')

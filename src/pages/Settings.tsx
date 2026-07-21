@@ -29,16 +29,15 @@ export function Settings() {
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<{
     isConnected: boolean;
-    folderPath: string | null;
+    userEmail: string | null;
     lastCloudBackup: string | null;
     availableBackups: Array<{
-      filePath: string;
+      fileId: string;
       fileName: string;
       mtime: number;
       formattedTime: string;
-      totalItems: number;
     }>;
-  }>({ isConnected: false, folderPath: null, lastCloudBackup: null, availableBackups: [] });
+  }>({ isConnected: false, userEmail: null, lastCloudBackup: null, availableBackups: [] });
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [showBackupList, setShowBackupList] = useState(false);
 
@@ -70,14 +69,14 @@ export function Settings() {
     } catch (e) {}
   };
 
-  const handleSelectCloudFolder = async () => {
+  const handleConnectGoogleDrive = async () => {
     try {
-      const res = await api.system.selectCloudFolder();
+      const res = await api.system.connectGoogleDrive();
       if (res && res.success) {
-        alert('Folderul Cloud a fost conectat cu succes!\nSincronizarea automată a fost activată.');
+        alert('Autentificarea cu Google Drive s-a realizat cu succes!\nSincronizarea automată a fost activată.');
         fetchCloudStatus();
-      } else if (res && !res.canceled) {
-        alert('A apărut o eroare la selectarea folderului.');
+      } else {
+        alert('Eroare la conectare: ' + (res?.message || 'Eroare necunoscută'));
       }
     } catch (e: any) {
       alert('Eroare: ' + e.message);
@@ -244,30 +243,30 @@ export function Settings() {
                       Cum funcționează sincronizarea între calculatoare?
                     </h3>
                     <p className="text-indigo-100/80 text-sm leading-relaxed mb-4">
-                      Dacă dorești să poți deschide programul pe un alt calculator (acasă, la alt birou, după reinstalarea Windows-ului) și să ai instant acces la toate stocurile și rețetele:
+                      Conectează-te la contul de Google Drive pentru a stoca baza de date în siguranță, în cloud, și pentru a o accesa de pe alte dispozitive (ex: de acasă).
                     </p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-indigo-200">
                       <div className="bg-white/5 p-3.5 rounded-lg border border-white/5">
-                        <strong className="text-white block mb-1">1. Folder Cloud</strong>
-                        Asigură-te că ai instalat Google Drive, Microsoft OneDrive sau Dropbox pe calculator.
+                        <strong className="text-white block mb-1">1. Cloud API</strong>
+                        Comunicare securizată, directă cu Google Drive (fără a instala alte aplicații).
                       </div>
                       <div className="bg-white/5 p-3.5 rounded-lg border border-white/5">
-                        <strong className="text-white block mb-1">2. Conectează</strong>
-                        Apasă butonul de mai jos și selectează un folder din Drive / OneDrive dedicat aplicației.
+                        <strong className="text-white block mb-1">2. Autentificare</strong>
+                        Apasă pe conectare, loghează-te în browser și baza de date va fi urcată automat.
                       </div>
                       <div className="bg-white/5 p-3.5 rounded-lg border border-white/5">
-                        <strong className="text-white block mb-1">3. Transfer Automat</strong>
-                        La fiecare 10 minute și la cerere, baza de date va fi copiată pe serverul tău cloud!
+                        <strong className="text-white block mb-1">3. Alt PC</strong>
+                        Pe noul calculator, apasă 'Adu Baza de Date' pentru a prelua fișierul.
                       </div>
                     </div>
                   </div>
 
                   <button 
-                    onClick={handleSelectCloudFolder}
+                    onClick={handleConnectGoogleDrive}
                     className="w-full sm:w-auto px-8 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-blue-500/25 transition-all transform hover:-translate-y-0.5 flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    <Folder className="w-5 h-5" />
-                    Conectează Folder Cloud / OneDrive / Drive
+                    <Cloud className="w-5 h-5" />
+                    Conectează cu Google Drive
                   </button>
                 </div>
               ) : (
@@ -275,11 +274,11 @@ export function Settings() {
                   {/* Folder Conectat Info */}
                   <div className="bg-black/20 border border-white/10 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                     <div className="flex items-center gap-3 overflow-hidden">
-                      <HardDrive className="w-6 h-6 text-indigo-400 flex-shrink-0" />
+                      <Cloud className="w-6 h-6 text-indigo-400 flex-shrink-0" />
                       <div className="overflow-hidden">
-                        <span className="text-xs text-indigo-300 block font-medium">Folder Cloud Conectat:</span>
-                        <span className="text-sm font-mono text-white truncate block" title={cloudStatus.folderPath || ''}>
-                          {cloudStatus.folderPath}
+                        <span className="text-xs text-indigo-300 block font-medium">Cont Google Conectat:</span>
+                        <span className="text-sm font-bold text-white truncate block">
+                          {(cloudStatus as any).userEmail || 'Conectat'}
                         </span>
                       </div>
                     </div>

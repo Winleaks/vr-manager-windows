@@ -28,3 +28,4 @@ release/
 *.db-shm
 *.db-wal
 dist-electron/
+config_google_drive.json

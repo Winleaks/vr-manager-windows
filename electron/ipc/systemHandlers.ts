@@ -2,7 +2,7 @@ import { ipcMain, dialog, BrowserWindow } from 'electron';
 import fs from 'fs';
 import { autoUpdater } from 'electron-updater';
 import { db, backupDb, restoreDb, lastBackupTime } from '../database/db';
-import { getCloudStatus, setCloudFolderPath, saveToCloud, restoreFromCloud } from '../database/cloudSync';
+import { getCloudStatus, connectGoogleDrive, saveToCloud, restoreFromCloud, disconnectCloud } from '../database/cloudSync';
 
 export function registerSystemHandlers() {
   ipcMain.handle('save-file', async (event, options: { buffer: Uint8Array, defaultPath: string, filters: any[] }) => {
@@ -89,44 +89,30 @@ export function registerSystemHandlers() {
     return { success: true };
   });
 
-  ipcMain.handle('get-cloud-status', () => {
-    return getCloudStatus();
+  ipcMain.handle('get-cloud-status', async () => {
+    return await getCloudStatus();
   });
 
-  ipcMain.handle('select-cloud-folder', async (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win) return { success: false };
-
-    const result = await dialog.showOpenDialog(win, {
-      title: 'Alege folderul sincronizat din Cloud (Google Drive, OneDrive sau Dropbox)',
-      properties: ['openDirectory', 'createDirectory']
-    });
-
-    if (result.canceled || result.filePaths.length === 0) {
-      return { success: false, canceled: true };
-    }
-
-    const folderPath = result.filePaths[0];
-    const ok = setCloudFolderPath(folderPath);
-    if (ok) {
+  ipcMain.handle('connect-google-drive', async () => {
+    const res = await connectGoogleDrive();
+    if (res.success) {
       try {
         await saveToCloud(true);
       } catch (e) {}
     }
-    return { success: ok, folderPath };
+    return res;
   });
 
   ipcMain.handle('save-to-cloud', async () => {
     return await saveToCloud(false);
   });
 
-  ipcMain.handle('restore-from-cloud', async (_event, filePath?: string) => {
-    return restoreFromCloud(filePath);
+  ipcMain.handle('restore-from-cloud', async (_event, fileId?: string) => {
+    return await restoreFromCloud(fileId);
   });
 
-  ipcMain.handle('disconnect-cloud', () => {
-    const ok = setCloudFolderPath(null);
-    return { success: ok };
+  ipcMain.handle('disconnect-cloud', async () => {
+    return await disconnectCloud();
   });
 }
 
