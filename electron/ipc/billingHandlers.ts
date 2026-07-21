@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import * as billingRepo from '../database/repositories/billingRepo';
+import { createClient } from '@supabase/supabase-js';
 
 export function registerBillingHandlers() {
   ipcMain.handle('billing:getClients', () => {
@@ -103,7 +104,6 @@ export function registerBillingHandlers() {
         return { success: false, message: "Datele de conectare la Supabase lipsesc în setări." };
       }
 
-      const { createClient } = require('@supabase/supabase-js');
       const supabase = createClient(url, key);
 
       const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
