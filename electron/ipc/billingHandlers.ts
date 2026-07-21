@@ -123,7 +123,7 @@ export function registerBillingHandlers() {
       const token = authData.access_token;
 
       const query = new URLSearchParams();
-      query.append('select', 'id,delivery_date,status,notes,client_store:client_store_id(id,name,address,postcode,client_company(id,name,registration_number,vat_number,address)),order_items(qty_ordered,qty_delivered,unit_price_snapshot,products:product_id(name,unit,category))');
+      query.append('select', 'id,delivery_date,status,notes,client_store:client_store_id(id,name,address,postcode,client_company_id),order_items(qty_ordered,qty_delivered,unit_price_snapshot,products:product_id(name,unit,category))');
       query.append('delivery_date', `gte.${startDate}`);
       query.append('delivery_date', `lte.${endDate}`);
       query.append('status', 'neq.cancelled');
@@ -144,13 +144,42 @@ export function registerBillingHandlers() {
         return { success: true, newInvoices: 0, message: "Nu s-au găsit comenzi livrate în această perioadă." };
       }
 
+      // Extract all unique company IDs
+      const companyIds = new Set<string>();
+      for (const order of orders) {
+        if (order.client_store && order.client_store.client_company_id) {
+          companyIds.add(order.client_store.client_company_id);
+        }
+      }
+
+      // Fetch companies separately
+      let companiesMap = new Map();
+      if (companyIds.size > 0) {
+        const compIdsArray = Array.from(companyIds).map(id => `"${id}"`).join(',');
+        const compRes = await fetch(`${url}/rest/v1/client_company?id=in.(${compIdsArray})&select=id,name,registration_number,vat_number,address`, {
+          method: 'GET',
+          headers: {
+            'apikey': key,
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        if (compRes.ok) {
+          const companies = await compRes.json();
+          for (const c of companies) {
+            companiesMap.set(c.id, c);
+          }
+        }
+      }
+
       const ordersByStore = new Map();
       
       for (const order of orders) {
         if (!order.client_store) continue;
         
         // Auto-sync company & store
-        const companyData = order.client_store.client_company;
+        const companyData = companiesMap.get(order.client_store.client_company_id);
         if (companyData) {
           billingRepo.upsertCompanyFromSupabase(companyData);
           billingRepo.upsertStoreFromSupabase({
