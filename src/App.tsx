@@ -74,15 +74,20 @@ function StocLayout() {
 }
 
 
+import { UpdateModal } from './components/UpdateModal';
+
 export default function App() {
   return (
-    <HashRouter>
-      <Routes>
-        <Route path="/" element={<Hub />} />
-        <Route path="/setari" element={<SettingsPage />} />
-        <Route path="/daily-cash/*" element={<DailyCashLayout />} />
-        <Route path="/stoc/*" element={<StocLayout />} />
-      </Routes>
-    </HashRouter>
+    <>
+      <HashRouter>
+        <Routes>
+          <Route path="/" element={<Hub />} />
+          <Route path="/setari" element={<SettingsPage />} />
+          <Route path="/daily-cash/*" element={<DailyCashLayout />} />
+          <Route path="/stoc/*" element={<StocLayout />} />
+        </Routes>
+      </HashRouter>
+      <UpdateModal />
+    </>
   );
 }

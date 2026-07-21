@@ -79,6 +79,16 @@ export function registerSystemHandlers() {
     }
   });
 
+  ipcMain.handle('start-update-download', () => {
+    autoUpdater.downloadUpdate();
+    return { success: true };
+  });
+
+  ipcMain.handle('install-update', () => {
+    autoUpdater.quitAndInstall(false, true);
+    return { success: true };
+  });
+
   ipcMain.handle('get-cloud-status', () => {
     return getCloudStatus();
   });

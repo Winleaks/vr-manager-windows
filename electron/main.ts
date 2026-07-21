@@ -77,28 +77,31 @@ app.whenReady().then(() => {
   createWindow()
   
   // Verificare Update-uri
-  autoUpdater.autoDownload = true;
+  autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
   
   // Așteptăm 3 secunde după deschidere ca să nu blocăm încărcarea UI-ului
   setTimeout(() => {
-    autoUpdater.checkForUpdatesAndNotify().catch(err => {
+    autoUpdater.checkForUpdates().catch(err => {
       console.log('Eroare la verificarea update-urilor:', err);
     });
   }, 3000);
 
+  autoUpdater.on('update-available', (info) => {
+    if (win) {
+      win.webContents.send('update-available', info);
+    }
+  });
+
+  autoUpdater.on('download-progress', (progressObj) => {
+    if (win) {
+      win.webContents.send('update-progress', progressObj);
+    }
+  });
+
   autoUpdater.on('update-downloaded', (info) => {
     if (win) {
-      dialog.showMessageBox(win, {
-        type: 'info',
-        title: 'Actualizare disponibilă',
-        message: 'O nouă versiune a aplicației a fost descărcată automat în fundal.\n\nVrei să instalezi actualizarea acum și să restartezi programul?',
-        buttons: ['Da, instalează acum', 'Nu, la următoarea deschidere']
-      }).then((result) => {
-        if (result.response === 0) {
-          autoUpdater.quitAndInstall(false, true);
-        }
-      });
+      win.webContents.send('update-downloaded', info);
     }
   });
   
@@ -111,6 +114,6 @@ app.whenReady().then(() => {
 
 autoUpdater.on('error', (err) => {
   if (win) {
-    dialog.showErrorBox('Eroare Update', err == null ? 'unknown' : (err.stack || err).toString());
+    win.webContents.send('update-error', err == null ? 'unknown' : (err.stack || err).toString());
   }
 });
