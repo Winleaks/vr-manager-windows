@@ -190,7 +190,14 @@ export function registerBillingHandlers() {
       const today = new Date().toISOString().split('T')[0];
 
       for (const orderData of orders) {
-        let storeId = -1;
+        const supabaseStoreId = orderData.store?.id;
+        const localStoreId = supabaseStoreId ? billingRepo.getStoreBySupabaseId(supabaseStoreId) : null;
+        
+        if (!localStoreId) {
+          throw new Error(`Magazinul "${orderData.store?.name || 'Necunoscut'}" nu este mapat local. Te rugăm să îl asociezi în secțiunea Personal & Nomenclatoare (Magazine).`);
+        }
+
+        let storeId = localStoreId;
         const invoiceNumber = currentNumber.toString();
         const totalAmount = orderData.items.reduce((acc: number, item: any) => acc + item.totalPrice, 0);
 

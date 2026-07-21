@@ -119,6 +119,13 @@ export function updateStore(id: number, name: string, address: string | null, su
   db.close();
 }
 
+export function getStoreBySupabaseId(supabaseStoreId: string) {
+  const db = getDb();
+  const store = db.prepare('SELECT id FROM stores WHERE supabase_store_id = ?').get(supabaseStoreId) as any;
+  db.close();
+  return store ? store.id : null;
+}
+
 // Invoices
 export function getInvoicesByDateRange(startDate: string, endDate: string) {
   const db = getDb();
