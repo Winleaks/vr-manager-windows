@@ -172,6 +172,19 @@ function runMigrations() {
             }
           }
         }
+      },
+      {
+        version: 2,
+        description: "Adăugare coloană supabase_company_id la companies",
+        up: () => {
+          try {
+            db.exec("ALTER TABLE companies ADD COLUMN supabase_company_id TEXT;");
+          } catch (e: any) {
+            if (!e.message.includes("duplicate column name")) {
+              throw e;
+            }
+          }
+        }
       }
     ];
 

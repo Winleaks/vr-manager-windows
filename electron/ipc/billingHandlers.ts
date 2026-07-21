@@ -40,6 +40,10 @@ export function registerBillingHandlers() {
     return billingRepo.createStore(data.companyId, data.name, data.address, data.supabaseStoreId);
   });
 
+  ipcMain.handle('billing:getAllCompaniesAndStores', () => {
+    return billingRepo.getAllCompaniesAndStores();
+  });
+
   ipcMain.handle('billing:updateStore', (_, data) => {
     billingRepo.updateStore(data.id, data.name, data.address, data.supabaseStoreId, data.isActive);
     return true;
@@ -119,7 +123,7 @@ export function registerBillingHandlers() {
       const token = authData.access_token;
 
       const query = new URLSearchParams();
-      query.append('select', 'id,delivery_date,status,notes,client_store:client_store_id(id,name,address,postcode,owner:owner_id(company_name,full_name)),order_items(qty_ordered,qty_delivered,unit_price_snapshot,products:product_id(name,unit,category))');
+      query.append('select', 'id,delivery_date,status,notes,client_store:client_store_id(id,name,address,postcode,client_company:client_company_id(id,name,registration_number,vat_number,billing_address)),order_items(qty_ordered,qty_delivered,unit_price_snapshot,products:product_id(name,unit,category))');
       query.append('delivery_date', `gte.${startDate}`);
       query.append('delivery_date', `lte.${endDate}`);
       query.append('status', 'neq.cancelled');
@@ -144,6 +148,18 @@ export function registerBillingHandlers() {
       
       for (const order of orders) {
         if (!order.client_store) continue;
+        
+        // Auto-sync company & store
+        const companyData = order.client_store.client_company;
+        if (companyData) {
+          billingRepo.upsertCompanyFromSupabase(companyData);
+          billingRepo.upsertStoreFromSupabase({
+            id: order.client_store.id,
+            name: order.client_store.name,
+            address: order.client_store.address || '',
+            client_company_id: companyData.id
+          });
+        }
         const storeId = order.client_store.id;
         
         if (!ordersByStore.has(storeId)) {
