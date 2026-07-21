@@ -26,12 +26,16 @@ function createWindow() {
     width: 1200,
     height: 800,
     title: 'VR - Management Hub',
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
     },
   })
+  
+  // Remove default menu (File, Edit, View, etc.)
+  win.setMenu(null)
 
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL)

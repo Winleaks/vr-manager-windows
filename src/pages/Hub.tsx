@@ -34,7 +34,7 @@ const modules = [
     color: 'bg-emerald-500',
     hoverColor: 'hover:bg-emerald-600',
     active: true,
-    path: '/daily-cash'
+    path: '/daily-cash/dashboard'
   },
   {
     id: 'vanzari',

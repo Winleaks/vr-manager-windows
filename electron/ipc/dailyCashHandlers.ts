@@ -45,4 +45,10 @@ export function registerDailyCashHandlers() {
   ipcMain.handle('close-cash-day', (_e, dayId, finalBalance) => {
     return cashRepo.closeDay(dayId, finalBalance);
   });
+  ipcMain.handle('get-cash-transactions-by-date', (_e, startDate, endDate, category) => {
+    return cashRepo.getTransactionsByDateRange(startDate, endDate, category);
+  });
+  ipcMain.handle('get-historical-z-reports', (_e, startDate, endDate) => {
+    return cashRepo.getHistoricalZReports(startDate, endDate);
+  });
 }

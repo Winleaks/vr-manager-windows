@@ -10,6 +10,8 @@ import Dashboard from './pages/Dashboard';
 import { Hub } from './pages/Hub';
 import { Settings as SettingsPage } from './pages/Settings';
 import { DailyCash } from './pages/DailyCash';
+import { DailyCashLayout } from './pages/DailyCashLayout';
+import { Banknote } from 'lucide-react';
 
 function Sidebar() {
   const location = useLocation();
@@ -71,13 +73,14 @@ function StocLayout() {
   );
 }
 
+
 export default function App() {
   return (
     <HashRouter>
       <Routes>
         <Route path="/" element={<Hub />} />
         <Route path="/setari" element={<SettingsPage />} />
-        <Route path="/daily-cash" element={<DailyCash />} />
+        <Route path="/daily-cash/*" element={<DailyCashLayout />} />
         <Route path="/stoc/*" element={<StocLayout />} />
       </Routes>
     </HashRouter>

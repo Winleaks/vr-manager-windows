@@ -62,7 +62,11 @@ export const api = {
     getActiveDay: () => window.ipcRenderer.invoke('get-active-cash-day'),
     getTransactions: (dayId: number) => window.ipcRenderer.invoke('get-cash-transactions', dayId),
     addTransaction: (data: any) => window.ipcRenderer.invoke('add-cash-transaction', data),
-    closeDay: (dayId: number, finalBalance: number) => window.ipcRenderer.invoke('close-cash-day', dayId, finalBalance)
+    closeDay: (dayId: number, finalBalance: number) => window.ipcRenderer.invoke('close-cash-day', dayId, finalBalance),
+    getTransactionsByDateRange: (startDate: string, endDate: string, category?: string) => 
+      window.ipcRenderer.invoke('get-cash-transactions-by-date', startDate, endDate, category),
+    getHistoricalZReports: (startDate: string, endDate: string) => 
+      window.ipcRenderer.invoke('get-historical-z-reports', startDate, endDate)
   }
 }
 
