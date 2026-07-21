@@ -22,6 +22,10 @@ export function generateInvoicePDF(
       county?: string;
       city?: string;
     };
+    store?: {
+      name: string;
+      address?: string;
+    };
     items: Array<{
       productName: string;
       quantity: number;
@@ -101,6 +105,19 @@ export function generateInvoicePDF(
   if (invoiceData.client.address) {
     const addressStr = `${invoiceData.client.address}, ${invoiceData.client.city || ''}, ${invoiceData.client.county || ''}`.replace(/,\s*,/g, ',');
     doc.text(`Address: ${addressStr}`, 130, currentY, { maxWidth: 65 });
+    currentY += 10;
+  } else {
+    currentY += 4;
+  }
+  
+  if (invoiceData.store) {
+    doc.setFont("helvetica", "bold");
+    doc.text(`Delivery to: ${invoiceData.store.name}`, 130, currentY, { maxWidth: 65 });
+    doc.setFont("helvetica", "normal");
+    currentY += 5;
+    if (invoiceData.store.address) {
+      doc.text(`Location: ${invoiceData.store.address}`, 130, currentY, { maxWidth: 65 });
+    }
   }
 
   // --- FACTURA DETALII ---

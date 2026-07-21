@@ -55,12 +55,16 @@ export function BillingInvoices() {
         invoiceNumber: currentOrder.assignedInvoiceNumber,
         invoiceDate: currentOrder.assignedInvoiceDate,
         client: {
-          name: currentOrder.store.owner?.company_name || currentOrder.store.name,
-          cui: currentOrder.store.owner?.cui,
-          regCom: currentOrder.store.owner?.reg_com,
-          address: currentOrder.store.owner?.address,
+          name: currentOrder.store.client_company?.name || currentOrder.store.name,
+          cui: currentOrder.store.client_company?.vat_number,
+          regCom: currentOrder.store.client_company?.registration_number,
+          address: currentOrder.store.client_company?.address,
           county: currentOrder.store.owner?.county,
           city: currentOrder.store.owner?.city
+        },
+        store: {
+          name: currentOrder.store.name,
+          address: currentOrder.store.address,
         },
         items: currentOrder.items,
         totalAmount: currentOrder.items.reduce((acc: number, item: any) => acc + item.totalPrice, 0)
