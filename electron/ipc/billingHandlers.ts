@@ -159,6 +159,8 @@ export function registerBillingHandlers() {
             address: order.client_store.address || '',
             client_company_id: companyData.id
           });
+        } else {
+          return { success: false, message: `Magazinul "${order.client_store.name}" există în cloud, dar NU este legat de nicio companie (CUI/Reg.Com) în Supabase! Te rog să îi asociezi o companie pe platforma web înainte de facturare.` };
         }
         const storeId = order.client_store.id;
         
@@ -210,7 +212,7 @@ export function registerBillingHandlers() {
         const localStoreId = supabaseStoreId ? billingRepo.getStoreBySupabaseId(supabaseStoreId) : null;
         
         if (!localStoreId) {
-          throw new Error(`Magazinul "${orderData.store?.name || 'Necunoscut'}" nu este mapat local. Te rugăm să îl asociezi în secțiunea Personal & Nomenclatoare (Magazine).`);
+          throw new Error(`Magazinul "${orderData.store?.name || 'Necunoscut'}" nu a putut fi găsit în baza de date locală (Eroare Mapare Internă). Te rugăm să apeși din nou butonul "Preluare Comenzi" pentru a forța o sincronizare completă a clienților.`);
         }
 
         let storeId = localStoreId;
