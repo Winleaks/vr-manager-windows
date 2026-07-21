@@ -1,0 +1,170 @@
+import { ipcMain } from 'electron';
+import * as billingRepo from '../database/repositories/billingRepo';
+
+export function registerBillingHandlers() {
+  ipcMain.handle('billing:getClients', () => {
+    return billingRepo.getClients();
+  });
+
+  ipcMain.handle('billing:createClient', (_, data) => {
+    return billingRepo.createClient(data.name, data.supabaseClientId);
+  });
+
+  ipcMain.handle('billing:updateClient', (_, data) => {
+    billingRepo.updateClient(data.id, data.name, data.supabaseClientId, data.isActive);
+    return true;
+  });
+
+  ipcMain.handle('billing:getCompanies', (_, clientId) => {
+    return billingRepo.getCompaniesByClientId(clientId);
+  });
+
+  ipcMain.handle('billing:createCompany', (_, data) => {
+    return billingRepo.createCompany(
+      data.clientId, data.name, data.cui, data.regCom, data.address, data.bankAccount, data.bankName
+    );
+  });
+
+  ipcMain.handle('billing:updateCompany', (_, data) => {
+    billingRepo.updateCompany(
+      data.id, data.name, data.cui, data.regCom, data.address, data.bankAccount, data.bankName, data.isActive
+    );
+    return true;
+  });
+
+  ipcMain.handle('billing:getStores', (_, companyId) => {
+    return billingRepo.getStoresByCompanyId(companyId);
+  });
+
+  ipcMain.handle('billing:createStore', (_, data) => {
+    return billingRepo.createStore(data.companyId, data.name, data.address, data.supabaseStoreId);
+  });
+
+  ipcMain.handle('billing:updateStore', (_, data) => {
+    billingRepo.updateStore(data.id, data.name, data.address, data.supabaseStoreId, data.isActive);
+    return true;
+  });
+
+  ipcMain.handle('billing:getInvoices', (_, startDate, endDate) => {
+    return billingRepo.getInvoicesByDateRange(startDate, endDate);
+  });
+
+  ipcMain.handle('billing:getStats', () => {
+    return billingRepo.getBillingStats();
+  });
+
+  ipcMain.handle('billing:getSettings', () => {
+    return {
+      supabaseUrl: billingRepo.getAppSetting('supabase_url') || '',
+      supabaseKey: billingRepo.getAppSetting('supabase_key') || '',
+      supabaseEmail: billingRepo.getAppSetting('supabase_email') || '',
+      supabasePassword: billingRepo.getAppSetting('supabase_password') || '',
+      invoiceSeries: billingRepo.getAppSetting('invoice_series') || 'FACT',
+      invoiceStartNumber: billingRepo.getAppSetting('invoice_start_number') || '1',
+      issuerName: billingRepo.getAppSetting('issuer_name') || '',
+      issuerCui: billingRepo.getAppSetting('issuer_cui') || '',
+    };
+  });
+
+  ipcMain.handle('billing:saveSettings', (_, data) => {
+    billingRepo.setAppSetting('supabase_url', data.supabaseUrl);
+    billingRepo.setAppSetting('supabase_key', data.supabaseKey);
+    billingRepo.setAppSetting('supabase_email', data.supabaseEmail);
+    billingRepo.setAppSetting('supabase_password', data.supabasePassword);
+    billingRepo.setAppSetting('invoice_series', data.invoiceSeries);
+    billingRepo.setAppSetting('invoice_start_number', data.invoiceStartNumber);
+    billingRepo.setAppSetting('issuer_name', data.issuerName);
+    billingRepo.setAppSetting('issuer_cui', data.issuerCui);
+    return true;
+  });
+
+  ipcMain.handle('billing:syncSupabaseOrders', async (_, startDate, endDate) => {
+    try {
+      const url = billingRepo.getAppSetting('supabase_url');
+      const key = billingRepo.getAppSetting('supabase_key');
+      const email = billingRepo.getAppSetting('supabase_email');
+      const password = billingRepo.getAppSetting('supabase_password');
+
+      if (!url || !key || !email || !password) {
+        return { success: false, message: "Datele de conectare la Supabase lipsesc în setări." };
+      }
+
+      const { createClient } = require('@supabase/supabase-js');
+      const supabase = createClient(url, key);
+
+      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      if (authError) {
+        return { success: false, message: `Eroare autentificare Supabase: ${authError.message}` };
+      }
+
+      // Preia comenzile pentru perioada selectata
+      const { data: orders, error: ordersError } = await supabase
+        .from('orders')
+        .select(`
+          id, delivery_date, status, notes,
+          client_store:client_store_id (
+            id, name, address, postcode,
+            owner:owner_id ( company_name, full_name )
+          ),
+          order_items (
+            qty_ordered, qty_delivered, unit_price_snapshot,
+            products:product_id ( name, unit, category )
+          )
+        `)
+        .gte('delivery_date', startDate)
+        .lte('delivery_date', endDate)
+        .neq('status', 'cancelled');
+
+      if (ordersError) {
+        return { success: false, message: `Eroare extragere comenzi: ${ordersError.message}` };
+      }
+
+      if (!orders || orders.length === 0) {
+        return { success: true, newInvoices: 0, message: "Nu s-au găsit comenzi livrate în această perioadă." };
+      }
+
+      // Group orders by store (one invoice per store for the whole week)
+      const ordersByStore = new Map();
+      
+      for (const order of orders) {
+        if (!order.client_store) continue;
+        const storeId = order.client_store.id;
+        
+        if (!ordersByStore.has(storeId)) {
+          ordersByStore.set(storeId, {
+            store: order.client_store,
+            items: []
+          });
+        }
+        
+        const storeData = ordersByStore.get(storeId);
+        
+        // Add items from this order
+        for (const item of order.order_items || []) {
+          const qty = item.qty_delivered !== null ? item.qty_delivered : item.qty_ordered;
+          if (qty > 0) {
+            storeData.items.push({
+              productName: item.products?.name || 'Produs necunoscut',
+              quantity: qty,
+              unitPrice: item.unit_price_snapshot,
+              totalPrice: qty * item.unit_price_snapshot
+            });
+          }
+        }
+      }
+
+      // Match stores with local database
+      const localStores = billingRepo.getStoresByCompanyId(-1); // Or fetch all mapping logic
+      // In a real scenario we need to find the local store_id by supabase_store_id.
+      // For now, we will just return the raw data and let the frontend handle the mapping/creation logic before generating DB invoices.
+      
+      return { 
+        success: true, 
+        message: "Comenzile au fost extrase cu succes din cloud.",
+        ordersByStore: Array.from(ordersByStore.values())
+      };
+    } catch (e: any) {
+      return { success: false, message: e.message };
+    }
+  });
+}

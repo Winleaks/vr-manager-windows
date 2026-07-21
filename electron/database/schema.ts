@@ -191,6 +191,77 @@ CREATE TABLE IF NOT EXISTS cash_transaction_items (
   FOREIGN KEY(transaction_id) REFERENCES cash_transactions(id),
   FOREIGN KEY(finished_product_id) REFERENCES finished_products(id)
 );
+
+CREATE TABLE IF NOT EXISTS clients (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  supabase_client_id TEXT,
+  is_active BOOLEAN DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS companies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  cui TEXT,
+  reg_com TEXT,
+  address TEXT,
+  bank_account TEXT,
+  bank_name TEXT,
+  is_active BOOLEAN DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(client_id) REFERENCES clients(id)
+);
+
+CREATE TABLE IF NOT EXISTS stores (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  address TEXT,
+  supabase_store_id TEXT,
+  is_active BOOLEAN DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(company_id) REFERENCES companies(id)
+);
+
+CREATE TABLE IF NOT EXISTS invoices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  store_id INTEGER NOT NULL,
+  invoice_number TEXT NOT NULL UNIQUE,
+  invoice_date DATE NOT NULL,
+  total_amount REAL NOT NULL DEFAULT 0,
+  paid_amount REAL NOT NULL DEFAULT 0,
+  status TEXT DEFAULT 'unpaid',
+  pdf_path TEXT,
+  notes TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(store_id) REFERENCES stores(id)
+);
+
+CREATE TABLE IF NOT EXISTS invoice_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id INTEGER NOT NULL,
+  product_name TEXT NOT NULL,
+  quantity REAL NOT NULL,
+  unit_price REAL NOT NULL,
+  total_price REAL NOT NULL,
+  FOREIGN KEY(invoice_id) REFERENCES invoices(id)
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id INTEGER NOT NULL,
+  invoice_id INTEGER,
+  amount REAL NOT NULL,
+  payment_date DATE NOT NULL,
+  method TEXT NOT NULL,
+  notes TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(client_id) REFERENCES clients(id),
+  FOREIGN KEY(invoice_id) REFERENCES invoices(id)
+);
 `;
 
 export const seedData = `

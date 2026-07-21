@@ -76,6 +76,8 @@ function StocLayout() {
 
 import { UpdateModal } from './components/UpdateModal';
 
+import { BillingLayout } from './pages/BillingLayout';
+
 export default function App() {
   return (
     <>
@@ -85,6 +87,7 @@ export default function App() {
           <Route path="/setari" element={<SettingsPage />} />
           <Route path="/daily-cash/*" element={<DailyCashLayout />} />
           <Route path="/stoc/*" element={<StocLayout />} />
+          <Route path="/facturare/*" element={<BillingLayout />} />
         </Routes>
       </HashRouter>
       <UpdateModal />

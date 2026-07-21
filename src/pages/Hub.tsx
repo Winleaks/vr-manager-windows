@@ -37,13 +37,14 @@ const modules = [
     path: '/daily-cash/dashboard'
   },
   {
-    id: 'vanzari',
-    title: 'Vânzări Lunare',
-    description: 'Statistici și rapoarte de vânzări (În construcție).',
+    id: 'facturare',
+    title: 'Facturare',
+    description: 'Generare automată a facturilor din platforma Lovable, evidență plăți și restanțieri.',
     icon: TrendingUp,
     color: 'bg-indigo-500',
     hoverColor: 'hover:bg-indigo-600',
-    active: false,
+    active: true,
+    path: '/facturare/dashboard'
   },
   {
     id: 'incasari',

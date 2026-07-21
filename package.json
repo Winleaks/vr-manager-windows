@@ -1,7 +1,7 @@
 {
   "name": "vr-management-hub",
   "private": true,
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "Gestiune stoc fabrica patiserie",
   "author": "Razvan Cristofor",
   "main": "dist-electron/main.js",
@@ -13,6 +13,7 @@
     "release": "npm version patch && git push && git push --tags"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.7",
     "better-sqlite3": "^12.11.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
@@ -22,6 +23,7 @@
     "jspdf-autotable": "^5.0.8",
     "lucide-react": "^1.22.0",
     "react": "^19.2.7",
+    "react-datepicker": "^9.1.0",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.1",
     "tailwind-merge": "^3.6.0",
@@ -33,6 +35,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",
+    "@types/react-datepicker": "^6.2.0",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "autoprefixer": "^10.5.2",

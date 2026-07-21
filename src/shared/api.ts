@@ -73,6 +73,22 @@ export const api = {
       window.ipcRenderer.invoke('get-cash-transactions-by-date', startDate, endDate, category),
     getHistoricalZReports: (startDate: string, endDate: string) => 
       window.ipcRenderer.invoke('get-historical-z-reports', startDate, endDate)
+  },
+  billing: {
+    getClients: () => window.ipcRenderer.invoke('billing:getClients'),
+    createClient: (data: any) => window.ipcRenderer.invoke('billing:createClient', data),
+    updateClient: (data: any) => window.ipcRenderer.invoke('billing:updateClient', data),
+    getCompanies: (clientId: number) => window.ipcRenderer.invoke('billing:getCompanies', clientId),
+    createCompany: (data: any) => window.ipcRenderer.invoke('billing:createCompany', data),
+    updateCompany: (data: any) => window.ipcRenderer.invoke('billing:updateCompany', data),
+    getStores: (companyId: number) => window.ipcRenderer.invoke('billing:getStores', companyId),
+    createStore: (data: any) => window.ipcRenderer.invoke('billing:createStore', data),
+    updateStore: (data: any) => window.ipcRenderer.invoke('billing:updateStore', data),
+    getInvoices: (startDate: string, endDate: string) => window.ipcRenderer.invoke('billing:getInvoices', startDate, endDate),
+    getStats: () => window.ipcRenderer.invoke('billing:getStats'),
+    getSettings: () => window.ipcRenderer.invoke('billing:getSettings'),
+    saveSettings: (data: any) => window.ipcRenderer.invoke('billing:saveSettings', data),
+    syncSupabaseOrders: (startDate: string, endDate: string) => window.ipcRenderer.invoke('billing:syncSupabaseOrders', startDate, endDate)
   }
 }
 

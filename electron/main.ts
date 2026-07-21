@@ -9,6 +9,7 @@ import { registerProductionHandlers } from './ipc/productionHandlers'
 import { registerStockMovementHandlers } from './ipc/stockMovementHandlers'
 import { registerSystemHandlers } from './ipc/systemHandlers'
 import { registerDailyCashHandlers } from './ipc/dailyCashHandlers'
+import { registerBillingHandlers } from './ipc/billingHandlers'
 
 process.env.DIST = path.join(__dirname, '../dist')
 process.env.PUBLIC = app.isPackaged ? process.env.DIST : path.join(process.env.DIST, '../public')
@@ -73,6 +74,7 @@ app.whenReady().then(() => {
   registerStockMovementHandlers()
   registerSystemHandlers()
   registerDailyCashHandlers()
+  registerBillingHandlers()
   
   createWindow()
   
