@@ -119,7 +119,7 @@ export function updateStore(id: number, name: string, address: string | null, su
   db.close();
 }
 
-export function upsertCompanyFromSupabase(companyData: { id: string, name: string, registration_number?: string, vat_number?: string, billing_address?: string }) {
+export function upsertCompanyFromSupabase(companyData: { id: string, name: string, registration_number?: string, vat_number?: string, address?: string }) {
   const db = getDb();
   let localCompany = db.prepare('SELECT id FROM companies WHERE supabase_company_id = ?').get(companyData.id) as any;
   
@@ -139,7 +139,7 @@ export function upsertCompanyFromSupabase(companyData: { id: string, name: strin
       companyData.name, 
       companyData.vat_number || null, 
       companyData.registration_number || null, 
-      companyData.billing_address || null, 
+      companyData.address || null, 
       companyData.id,
       localCompany.id
     );
@@ -162,7 +162,7 @@ export function upsertCompanyFromSupabase(companyData: { id: string, name: strin
       companyData.name,
       companyData.vat_number || null,
       companyData.registration_number || null,
-      companyData.billing_address || null,
+      companyData.address || null,
       companyData.id
     );
     db.close();
