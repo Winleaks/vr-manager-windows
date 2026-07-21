@@ -1,11 +1,19 @@
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
 
+// Helper for converting hex to RGB
+function hexToRgb(hex: string): [number, number, number] {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result
+    ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)]
+    : [79, 70, 229]; // Default Indigo-600
+}
+
 export function generateInvoicePDF(
   settings: any,
   invoiceData: {
     invoiceNumber: string;
-    invoiceDate: string; // "DD.MM.YYYY"
+    invoiceDate: string; 
     client: {
       name: string;
       cui?: string;
@@ -25,8 +33,10 @@ export function generateInvoicePDF(
 ): Uint8Array {
   const doc = new jsPDF();
   
-  // Font sizes & styles
+  // Font styles
   doc.setFont("helvetica");
+
+  const primaryColor = hexToRgb(settings.invoiceColor || '#4F46E5');
 
   // --- HEADER: FURNIZOR ---
   doc.setFontSize(14);
@@ -41,39 +51,59 @@ export function generateInvoicePDF(
   doc.text(`Denumire: ${issuerName}`, 14, 28);
   doc.text(`C.I.F.: ${issuerCui}`, 14, 34);
 
+  // Bank details
+  let nextYFurnizor = 40;
+  if (settings.invoiceBankName) {
+    doc.text(`Banca: ${settings.invoiceBankName}`, 14, nextYFurnizor);
+    nextYFurnizor += 6;
+  }
+  if (settings.invoiceIban) {
+    doc.text(`IBAN: ${settings.invoiceIban}`, 14, nextYFurnizor);
+  }
+
+  // --- LOGO ---
+  if (settings.invoiceLogo) {
+    try {
+      // settings.invoiceLogo should be a base64 string
+      doc.addImage(settings.invoiceLogo, 'PNG', 85, 12, 40, 40, undefined, 'FAST');
+    } catch (e) {
+      console.warn("Failed to add logo to PDF:", e);
+    }
+  }
+
   // --- HEADER: CUMPARATOR ---
   doc.setFontSize(14);
   doc.setFont("helvetica", "bold");
-  doc.text("CUMPARATOR", 120, 20);
+  doc.text("CUMPARATOR", 130, 20);
   
   doc.setFontSize(10);
   doc.setFont("helvetica", "normal");
   
-  doc.text(`Denumire: ${invoiceData.client.name}`, 120, 28, { maxWidth: 75 });
+  doc.text(`Denumire: ${invoiceData.client.name}`, 130, 28, { maxWidth: 65 });
   
   let currentY = 34;
   if (invoiceData.client.cui) {
-    doc.text(`C.I.F.: ${invoiceData.client.cui}`, 120, currentY);
+    doc.text(`C.I.F.: ${invoiceData.client.cui}`, 130, currentY);
     currentY += 6;
   }
   if (invoiceData.client.regCom) {
-    doc.text(`Reg. Com.: ${invoiceData.client.regCom}`, 120, currentY);
+    doc.text(`Reg. Com.: ${invoiceData.client.regCom}`, 130, currentY);
     currentY += 6;
   }
   if (invoiceData.client.address) {
     const addressStr = `${invoiceData.client.address}, ${invoiceData.client.city || ''}, ${invoiceData.client.county || ''}`.replace(/,\s*,/g, ',');
-    doc.text(`Sediul: ${addressStr}`, 120, currentY, { maxWidth: 75 });
+    doc.text(`Sediul: ${addressStr}`, 130, currentY, { maxWidth: 65 });
   }
 
   // --- FACTURA DETALII ---
   doc.setFontSize(16);
   doc.setFont("helvetica", "bold");
-  doc.text("FACTURA FISCALA", 105, 70, { align: "center" });
+  doc.text("FACTURA FISCALA", 105, 75, { align: "center" });
 
   doc.setFontSize(11);
   doc.setFont("helvetica", "normal");
-  doc.text(`Seria: ${settings.invoiceSeries || 'FACT'}  Nr: ${invoiceData.invoiceNumber}`, 105, 78, { align: "center" });
-  doc.text(`Data emiterii: ${invoiceData.invoiceDate}`, 105, 84, { align: "center" });
+  doc.text(`Seria: ${settings.invoiceSeries || 'FACT'}  Nr: ${invoiceData.invoiceNumber}`, 105, 83, { align: "center" });
+  doc.text(`Data emiterii: ${invoiceData.invoiceDate}`, 105, 89, { align: "center" });
 
   // --- TABEL PRODUSE ---
   const tableColumn = ["Nr.", "Denumire Produse / Servicii", "U.M.", "Cantitate", "Pret Unitar\n(RON)", "Valoare\n(RON)"];
@@ -92,37 +122,40 @@ export function generateInvoicePDF(
   });
 
   (doc as any).autoTable({
-    startY: 95,
+    startY: 100,
     head: [tableColumn],
     body: tableRows,
     theme: 'grid',
-    headStyles: { fillColor: [79, 70, 229] }, // Indigo-600
+    headStyles: { fillColor: primaryColor },
     styles: { font: "helvetica", fontSize: 10 },
     columnStyles: {
-      0: { cellWidth: 15, halign: 'center' },
-      1: { cellWidth: 70 },
-      2: { cellWidth: 15, halign: 'center' },
-      3: { cellWidth: 20, halign: 'center' },
-      4: { cellWidth: 30, halign: 'right' },
-      5: { cellWidth: 30, halign: 'right' }
+      0: { halign: 'center', cellWidth: 15 },
+      1: { cellWidth: 80 },
+      2: { halign: 'center', cellWidth: 15 },
+      3: { halign: 'right', cellWidth: 20 },
+      4: { halign: 'right', cellWidth: 25 },
+      5: { halign: 'right', cellWidth: 30 }
     }
   });
 
-  // --- TOTALS ---
+  // --- TOTALURI ---
   const finalY = (doc as any).lastAutoTable.finalY + 10;
   
   doc.setFontSize(12);
   doc.setFont("helvetica", "bold");
-  doc.text("TOTAL DE PLATA:", 135, finalY);
-  doc.text(`${invoiceData.totalAmount.toFixed(2)} RON`, 190, finalY, { align: "right" });
+  doc.text(`Total de Plata: ${invoiceData.totalAmount.toFixed(2)} RON`, 195, finalY, { align: "right" });
 
-  // Semnatura
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "normal");
-  doc.text("Semnatura si stampila\nfurnizorului", 14, finalY + 10);
-  doc.text("Semnatura de primire", 120, finalY + 10);
+  // --- FOOTER ---
+  if (settings.invoiceFooter) {
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "italic");
+    const lines = doc.splitTextToSize(settings.invoiceFooter, 180);
+    // Put footer at the bottom of the page
+    const pageHeight = doc.internal.pageSize.height;
+    doc.text(lines, 14, pageHeight - 15);
+  }
 
-  // Return ca buffer (Uint8Array)
+  // Generate buffer
   const arrayBuffer = doc.output('arraybuffer');
   return new Uint8Array(arrayBuffer);
 }

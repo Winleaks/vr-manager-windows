@@ -63,6 +63,11 @@ export function registerBillingHandlers() {
       invoiceStartNumber: billingRepo.getAppSetting('invoice_start_number') || '1',
       issuerName: billingRepo.getAppSetting('issuer_name') || '',
       issuerCui: billingRepo.getAppSetting('issuer_cui') || '',
+      invoiceBankName: billingRepo.getAppSetting('invoice_bank_name') || '',
+      invoiceIban: billingRepo.getAppSetting('invoice_iban') || '',
+      invoiceFooter: billingRepo.getAppSetting('invoice_footer') || '',
+      invoiceColor: billingRepo.getAppSetting('invoice_color') || '#4F46E5',
+      invoiceLogo: billingRepo.getAppSetting('invoice_logo') || '',
     };
   });
 
@@ -75,6 +80,11 @@ export function registerBillingHandlers() {
     billingRepo.setAppSetting('invoice_start_number', data.invoiceStartNumber);
     billingRepo.setAppSetting('issuer_name', data.issuerName);
     billingRepo.setAppSetting('issuer_cui', data.issuerCui);
+    billingRepo.setAppSetting('invoice_bank_name', data.invoiceBankName);
+    billingRepo.setAppSetting('invoice_iban', data.invoiceIban);
+    billingRepo.setAppSetting('invoice_footer', data.invoiceFooter);
+    billingRepo.setAppSetting('invoice_color', data.invoiceColor);
+    billingRepo.setAppSetting('invoice_logo', data.invoiceLogo);
     return true;
   });
 
@@ -97,7 +107,6 @@ export function registerBillingHandlers() {
         return { success: false, message: `Eroare autentificare Supabase: ${authError.message}` };
       }
 
-      // Preia comenzile pentru perioada selectata
       const { data: orders, error: ordersError } = await supabase
         .from('orders')
         .select(`
@@ -123,7 +132,6 @@ export function registerBillingHandlers() {
         return { success: true, newInvoices: 0, message: "Nu s-au găsit comenzi livrate în această perioadă." };
       }
 
-      // Group orders by store (one invoice per store for the whole week)
       const ordersByStore = new Map();
       
       for (const order of orders) {
@@ -139,7 +147,6 @@ export function registerBillingHandlers() {
         
         const storeData = ordersByStore.get(storeId);
         
-        // Add items from this order
         for (const item of order.order_items || []) {
           const qty = item.qty_delivered !== null ? item.qty_delivered : item.qty_ordered;
           if (qty > 0) {
@@ -153,11 +160,6 @@ export function registerBillingHandlers() {
         }
       }
 
-      // Match stores with local database
-      const localStores = billingRepo.getStoresByCompanyId(-1); // Or fetch all mapping logic
-      // In a real scenario we need to find the local store_id by supabase_store_id.
-      // For now, we will just return the raw data and let the frontend handle the mapping/creation logic before generating DB invoices.
-      
       return { 
         success: true, 
         message: "Comenzile au fost extrase cu succes din cloud.",
@@ -170,31 +172,29 @@ export function registerBillingHandlers() {
 
   ipcMain.handle('billing:createInvoicesFromSync', async (_event, orders: any[]) => {
     try {
-      const settings = billingRepo.getSettings();
-      let currentNumber = parseInt(settings.invoiceStartNumber || '1', 10);
+      // NOTE: getSettings is handled from frontend, here we might not need to manipulate settings or we do it if needed.
+      // Wait, there is a reference to getSettings() here which was wrong in the previous version (billingRepo.getSettings() doesn't exist).
+      // I will fix it since I am looking at it.
+      
+      const invoiceSeries = billingRepo.getAppSetting('invoice_series') || 'FACT';
+      let currentNumber = parseInt(billingRepo.getAppSetting('invoice_start_number') || '1', 10);
       
       const today = new Date().toISOString().split('T')[0];
 
       for (const orderData of orders) {
-        // Find or create local store to link invoice
-        // For simplicity we use storeId = -1 (unlinked) for now, or match it
         let storeId = -1;
-        
         const invoiceNumber = currentNumber.toString();
         const totalAmount = orderData.items.reduce((acc: number, item: any) => acc + item.totalPrice, 0);
 
-        billingRepo.createInvoice(storeId, invoiceNumber, today, totalAmount, orderData.items);
+        billingRepo.createInvoiceWithItems(storeId, invoiceNumber, today, totalAmount, orderData.items);
         
-        // Inject the assigned invoice number into the order object so the frontend can use it for PDF
         orderData.assignedInvoiceNumber = invoiceNumber;
         orderData.assignedInvoiceDate = new Date().toLocaleDateString('ro-RO');
 
         currentNumber++;
       }
 
-      // Update settings with the next available invoice number
-      settings.invoiceStartNumber = currentNumber.toString();
-      billingRepo.saveSettings(settings);
+      billingRepo.setAppSetting('invoice_start_number', currentNumber.toString());
 
       return { success: true, updatedOrders: orders };
     } catch (e: any) {
