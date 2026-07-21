@@ -1,6 +1,5 @@
 import { ipcMain } from 'electron';
 import * as billingRepo from '../database/repositories/billingRepo';
-import { createClient } from '@supabase/supabase-js';
 
 export function registerBillingHandlers() {
   ipcMain.handle('billing:getClients', () => {
@@ -104,32 +103,37 @@ export function registerBillingHandlers() {
         return { success: false, message: "Datele de conectare la Supabase lipsesc în setări." };
       }
 
-      const supabase = createClient(url, key);
-
-      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      if (authError) {
-        return { success: false, message: `Eroare autentificare Supabase: ${authError.message}` };
+      // Native fetch approach to bypass Node/Vite bundling issues with supabase-js
+      const authRes = await fetch(`${url}/auth/v1/token?grant_type=password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': key
+        },
+        body: JSON.stringify({ email, password })
+      });
+      const authData = await authRes.json();
+      if (!authRes.ok) {
+        return { success: false, message: `Eroare autentificare Supabase: ${authData.error_description || authData.msg || authData.message || 'Eroare necunoscută'}` };
       }
+      const token = authData.access_token;
 
-      const { data: orders, error: ordersError } = await supabase
-        .from('orders')
-        .select(`
-          id, delivery_date, status, notes,
-          client_store:client_store_id (
-            id, name, address, postcode,
-            owner:owner_id ( company_name, full_name )
-          ),
-          order_items (
-            qty_ordered, qty_delivered, unit_price_snapshot,
-            products:product_id ( name, unit, category )
-          )
-        `)
-        .gte('delivery_date', startDate)
-        .lte('delivery_date', endDate)
-        .neq('status', 'cancelled');
+      const query = new URLSearchParams();
+      query.append('select', 'id,delivery_date,status,notes,client_store:client_store_id(id,name,address,postcode,owner:owner_id(company_name,full_name)),order_items(qty_ordered,qty_delivered,unit_price_snapshot,products:product_id(name,unit,category))');
+      query.append('delivery_date', `gte.${startDate}`);
+      query.append('delivery_date', `lte.${endDate}`);
+      query.append('status', 'neq.cancelled');
 
-      if (ordersError) {
-        return { success: false, message: `Eroare extragere comenzi: ${ordersError.message}` };
+      const ordersRes = await fetch(`${url}/rest/v1/orders?${query.toString()}`, {
+        headers: {
+          'apikey': key,
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const orders = await ordersRes.json();
+
+      if (!ordersRes.ok) {
+        return { success: false, message: `Eroare extragere comenzi: ${orders.message || orders.details || 'Unknown error'}` };
       }
 
       if (!orders || orders.length === 0) {
