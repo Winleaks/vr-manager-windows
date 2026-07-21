@@ -155,7 +155,7 @@ export function registerBillingHandlers() {
       // Fetch companies separately
       let companiesMap = new Map();
       if (companyIds.size > 0) {
-        const compIdsArray = Array.from(companyIds).map(id => `"${id}"`).join(',');
+        const compIdsArray = Array.from(companyIds).join(',');
         const compRes = await fetch(`${url}/rest/v1/client_company?id=in.(${compIdsArray})&select=id,name,registration_number,vat_number,address`, {
           method: 'GET',
           headers: {
@@ -165,11 +165,14 @@ export function registerBillingHandlers() {
           }
         });
         
-        if (compRes.ok) {
-          const companies = await compRes.json();
-          for (const c of companies) {
-            companiesMap.set(c.id, c);
-          }
+        if (!compRes.ok) {
+          const err = await compRes.json();
+          return { success: false, message: `Eroare extragere companii (API): ${err.message || err.details || 'Unknown error'}` };
+        }
+
+        const companies = await compRes.json();
+        for (const c of companies) {
+          companiesMap.set(c.id, c);
         }
       }
 
