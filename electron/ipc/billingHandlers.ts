@@ -437,86 +437,89 @@ export function registerBillingHandlers() {
       const authData = await authRes.json();
       const token = authData.access_token;
 
-      // 1. Preluăm companiile mamă împreună cu toate magazinele lor aparținătoare (One-to-Many Join invers pe UUID)
-      const compRes = await fetch(`${url}/rest/v1/client_company?select=id,name,registration_number,vat_number,address,email,phone,active,stores:client_store!client_company_id(*)&limit=10000`, {
+      // 1. Extragem TOATE Companiile din Supabase
+      const compRes = await fetch(`${url}/rest/v1/client_company?select=*&limit=10000`, {
         headers: { 
           'apikey': key, 
           'Authorization': `Bearer ${token}`, 
-          'Range': '0-9999',
-          'Prefer': 'count=exact' 
+          'Range': '0-9999'
         }
       });
 
       if (!compRes.ok) {
-        return { success: false, message: "Nu s-au putut extrage companiile din Supabase." };
+        return { success: false, message: "Eroare la extragerea companiilor din Supabase." };
       }
+      const rawCompanies = await compRes.json();
+      const companiesList = Array.isArray(rawCompanies) ? rawCompanies : [];
 
-      const companiesData = await compRes.json();
-      const allCompanies = Array.isArray(companiesData) ? companiesData : [];
+      // Înregistrăm companiile mamă în SQLite și construim harta UUID -> localCompanyId
+      const uuidToLocalCompanyMap = new Map<string, number>();
 
-      for (const comp of allCompanies) {
+      for (const comp of companiesList) {
         if (!comp.id) continue;
         const cleanCompUuid = String(comp.id).trim();
 
-        // Sincronizăm Clientul Mamă
         const localClientId = billingRepo.upsertClientFromSupabase({
           id: cleanCompUuid,
           name: comp.name || 'Client'
         });
 
-        // Sincronizăm Compania Mamă
         const localCompanyId = billingRepo.upsertCompanyFromSupabase({
           id: cleanCompUuid,
           name: comp.name || 'Companie Fără Nume',
-          vat_number: comp.vat_number || '',
-          registration_number: comp.registration_number || '',
+          vat_number: comp.vat_number || comp.cui || '',
+          registration_number: comp.registration_number || comp.reg_com || '',
           address: comp.address || ''
         }, localClientId);
 
-        // Sincronizăm magazinele aparținătoare EXCLUSIV pe compania mamă reală
-        const storesList = Array.isArray(comp.stores) ? comp.stores : [];
-        for (const store of storesList) {
-          if (!store.id) continue;
-          billingRepo.upsertStoreFromSupabase({
-            id: String(store.id).trim(),
-            name: store.name || 'Magazin Fără Nume',
-            address: store.address || '',
-            client_company_id: cleanCompUuid
-          }, localCompanyId);
-        }
+        uuidToLocalCompanyMap.set(cleanCompUuid.toLowerCase(), localCompanyId);
       }
 
-      // 2. Preluăm eventualele magazine neasociate (unde client_company_id IS NULL)
-      const orphanStoresRes = await fetch(`${url}/rest/v1/client_store?select=*&client_company_id=is.null&limit=10000`, {
+      // 2. Extragem TOATE Magazinele din Supabase
+      const storesRes = await fetch(`${url}/rest/v1/client_store?select=*&limit=10000`, {
         headers: { 
           'apikey': key, 
           'Authorization': `Bearer ${token}`, 
-          'Range': '0-9999' 
+          'Range': '0-9999'
         }
       });
 
-      if (orphanStoresRes.ok) {
-        const orphanStores = await orphanStoresRes.json();
-        if (Array.isArray(orphanStores) && orphanStores.length > 0) {
-          const unassignedClientId = billingRepo.upsertClientFromSupabase({ id: 'unassigned_client', name: 'Magazine Fără Companie Mamă' });
-          const unassignedCompId = billingRepo.upsertCompanyFromSupabase({ id: 'unassigned_company', name: 'Magazine Neasociate' }, unassignedClientId);
+      if (!storesRes.ok) {
+        return { success: false, message: "Eroare la extragerea magazinelor din Supabase." };
+      }
+      const rawStores = await storesRes.json();
+      const storesList = Array.isArray(rawStores) ? rawStores : [];
 
-          for (const s of orphanStores) {
-            if (!s.id) continue;
-            billingRepo.upsertStoreFromSupabase({
-              id: String(s.id).trim(),
-              name: s.name || 'Magazin Neasociat',
-              address: s.address || '',
-              client_company_id: ''
-            }, unassignedCompId);
+      let unassignedCompId: number | undefined;
+
+      for (const store of storesList) {
+        if (!store.id) continue;
+        const storeUuid = String(store.id).trim();
+        const parentCompanyUuid = store.client_company_id ? String(store.client_company_id).trim().toLowerCase() : '';
+
+        let targetLocalCompanyId = parentCompanyUuid ? uuidToLocalCompanyMap.get(parentCompanyUuid) : undefined;
+
+        // Dacă magazinul chiar NU ARE client_company_id în Supabase, îl punem la neasociate
+        if (!targetLocalCompanyId) {
+          if (!unassignedCompId) {
+            const unassignedClientId = billingRepo.upsertClientFromSupabase({ id: 'unassigned_client', name: 'Magazine Fără Companie Mamă' });
+            unassignedCompId = billingRepo.upsertCompanyFromSupabase({ id: 'unassigned_company', name: 'Magazine Neasociate' }, unassignedClientId);
           }
+          targetLocalCompanyId = unassignedCompId;
         }
+
+        billingRepo.upsertStoreFromSupabase({
+          id: storeUuid,
+          name: store.name || 'Magazin Fără Nume',
+          address: store.address || '',
+          client_company_id: parentCompanyUuid
+        }, targetLocalCompanyId);
       }
 
-      // Curățăm companiile orfane/vechi create eronat în trecut
+      // Curățăm eventualele companii orfane duplicate din trecut
       billingRepo.cleanupOrphanCompanies();
 
-      return { success: true, message: "Toți clienții, companiile mamă și magazinele au fost sincronizate cu succes!" };
+      return { success: true, message: `Toate cele ${companiesList.length} companii și ${storesList.length} magazine au fost sincronizate cu succes!` };
     } catch (e: any) {
       return { success: false, message: e.message };
     }
