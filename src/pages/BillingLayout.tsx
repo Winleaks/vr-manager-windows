@@ -1,10 +1,11 @@
 import React from 'react';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, FileText, Settings, ArrowLeft, Users, Receipt } from 'lucide-react';
+import { LayoutDashboard, FileText, Settings, ArrowLeft, Users, Receipt, Package } from 'lucide-react';
 import { BillingDashboard } from './BillingDashboard';
 import { BillingClients } from './BillingClients';
 import { BillingInvoices } from './BillingInvoices';
 import { BillingSettings } from './BillingSettings';
+import { BillingProducts } from './BillingProducts';
 
 function Sidebar() {
   const location = useLocation();
@@ -35,6 +36,10 @@ function Sidebar() {
           <Users size={20} />
           Clienți & Entități
         </Link>
+        <Link to="/facturare/produse" className={`flex items-center gap-3 p-3 rounded-lg font-medium transition-colors ${isActive('/facturare/produse') ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
+          <Package size={20} />
+          Produse
+        </Link>
         <Link to="/facturare/setari" className={`flex items-center gap-3 p-3 rounded-lg font-medium transition-colors ${isActive('/facturare/setari') ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
           <Settings size={20} />
           Setări Facturare
@@ -53,6 +58,7 @@ export function BillingLayout() {
           <Route path="/dashboard" element={<BillingDashboard />} />
           <Route path="/facturi" element={<BillingInvoices />} />
           <Route path="/clienti" element={<BillingClients />} />
+          <Route path="/produse" element={<BillingProducts />} />
           <Route path="/setari" element={<BillingSettings />} />
           <Route path="*" element={<div className="p-8">În lucru...</div>} />
         </Routes>

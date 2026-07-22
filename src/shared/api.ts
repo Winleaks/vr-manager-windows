@@ -102,7 +102,10 @@ export const api = {
     getSettings: () => window.ipcRenderer.invoke('billing:getSettings'),
     saveSettings: (data: any) => window.ipcRenderer.invoke('billing:saveSettings', data),
     syncSupabaseOrders: (startDate: string, endDate: string) => window.ipcRenderer.invoke('billing:syncSupabaseOrders', startDate, endDate),
-    createInvoicesFromSync: (orders: any[]) => window.ipcRenderer.invoke('billing:createInvoicesFromSync', orders)
+    createInvoicesFromSync: (orders: any[]) => window.ipcRenderer.invoke('billing:createInvoicesFromSync', orders),
+    getProducts: () => window.ipcRenderer.invoke('billing:getProducts'),
+    syncProducts: () => window.ipcRenderer.invoke('billing:syncProducts'),
+    syncEntities: () => window.ipcRenderer.invoke('billing:syncEntities')
   }
 }
 

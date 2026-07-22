@@ -279,3 +279,29 @@ export function deleteInvoice(invoiceId: number) {
   deleteTransaction();
   return true;
 }
+
+export function getCloudProducts() {
+  return db.prepare('SELECT * FROM cloud_products ORDER BY name').all();
+}
+
+export function upsertProductFromSupabase(product: { id: string, name: string, unit?: string, category?: string, price?: number }) {
+  let localProd = db.prepare('SELECT id FROM cloud_products WHERE supabase_product_id = ?').get(product.id) as any;
+  if (!localProd && product.name) {
+    localProd = db.prepare('SELECT id FROM cloud_products WHERE LOWER(name) = LOWER(?)').get(product.name) as any;
+  }
+
+  if (localProd) {
+    db.prepare(`
+      UPDATE cloud_products
+      SET name = ?, unit = ?, category = ?, price = ?, supabase_product_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(product.name, product.unit || null, product.category || null, product.price || 0, product.id, localProd.id);
+    return localProd.id as number;
+  } else {
+    const info = db.prepare(`
+      INSERT INTO cloud_products (supabase_product_id, name, unit, category, price)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(product.id, product.name, product.unit || null, product.category || null, product.price || 0);
+    return info.lastInsertRowid as number;
+  }
+}

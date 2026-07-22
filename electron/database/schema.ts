@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS companies (
   address TEXT,
   bank_account TEXT,
   bank_name TEXT,
+  supabase_company_id TEXT,
   is_active BOOLEAN DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(client_id) REFERENCES clients(id)
@@ -263,6 +264,17 @@ CREATE TABLE IF NOT EXISTS payments (
   FOREIGN KEY(invoice_id) REFERENCES invoices(id)
 );
 
+CREATE TABLE IF NOT EXISTS cloud_products (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  supabase_product_id TEXT UNIQUE,
+  name TEXT NOT NULL,
+  unit TEXT,
+  category TEXT,
+  price REAL DEFAULT 0,
+  is_active BOOLEAN DEFAULT 1,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- =========================================================================
 -- INDEX-URI STRATEGICE PENTRU PERFORMANȚĂ EXTREMĂ ȘI SCALABILITATE (B-TREE)
 -- =========================================================================
@@ -284,6 +296,7 @@ CREATE INDEX IF NOT EXISTS idx_invoices_store_date ON invoices(store_id, invoice
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice ON invoice_items(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_payments_client ON payments(client_id);
 CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_cloud_products_supabase ON cloud_products(supabase_product_id);
 `;
 
 export const seedData = `

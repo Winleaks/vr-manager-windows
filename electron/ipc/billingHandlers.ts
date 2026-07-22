@@ -344,4 +344,148 @@ export function registerBillingHandlers() {
   ipcMain.handle('billing:deleteInvoice', (_, invoiceId: number) => {
     return billingRepo.deleteInvoice(invoiceId);
   });
+
+  ipcMain.handle('billing:getProducts', () => {
+    return billingRepo.getCloudProducts();
+  });
+
+  ipcMain.handle('billing:syncProducts', async () => {
+    try {
+      const url = billingRepo.getAppSetting('supabase_url');
+      const key = billingRepo.getAppSetting('supabase_key');
+      const email = billingRepo.getAppSetting('supabase_email');
+      const password = billingRepo.getAppSetting('supabase_password');
+
+      if (!url || !key || !email || !password) {
+        return { success: false, message: "Datele de conectare la Supabase lipsesc în setări." };
+      }
+
+      const authRes = await fetch(`${url}/auth/v1/token?grant_type=password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': key },
+        body: JSON.stringify({ email, password })
+      });
+      if (!authRes.ok) return { success: false, message: "Eroare autentificare Supabase." };
+      const authData = await authRes.json();
+      const token = authData.access_token;
+
+      let prodRes = await fetch(`${url}/rest/v1/product?select=*&limit=10000`, {
+        headers: { 'apikey': key, 'Authorization': `Bearer ${token}`, 'Range': '0-9999' }
+      });
+      if (!prodRes.ok) {
+        prodRes = await fetch(`${url}/rest/v1/products?select=*&limit=10000`, {
+          headers: { 'apikey': key, 'Authorization': `Bearer ${token}`, 'Range': '0-9999' }
+        });
+      }
+
+      if (prodRes.ok) {
+        const products = await prodRes.json();
+        if (Array.isArray(products)) {
+          for (const p of products) {
+            billingRepo.upsertProductFromSupabase({
+              id: String(p.id),
+              name: p.name || 'Produs fără nume',
+              unit: p.unit || 'buc',
+              category: p.category || 'Patiserie',
+              price: p.price || p.unit_price || 0
+            });
+          }
+        }
+      }
+
+      return { success: true, message: "Produsele au fost sincronizate cu succes din server." };
+    } catch (e: any) {
+      return { success: false, message: e.message };
+    }
+  });
+
+  ipcMain.handle('billing:syncEntities', async () => {
+    try {
+      const url = billingRepo.getAppSetting('supabase_url');
+      const key = billingRepo.getAppSetting('supabase_key');
+      const email = billingRepo.getAppSetting('supabase_email');
+      const password = billingRepo.getAppSetting('supabase_password');
+
+      if (!url || !key || !email || !password) {
+        return { success: false, message: "Datele de conectare la Supabase lipsesc în setări." };
+      }
+
+      const authRes = await fetch(`${url}/auth/v1/token?grant_type=password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': key },
+        body: JSON.stringify({ email, password })
+      });
+      if (!authRes.ok) return { success: false, message: "Eroare autentificare Supabase." };
+      const authData = await authRes.json();
+      const token = authData.access_token;
+
+      const fetchTableData = async (tableName: string) => {
+        try {
+          const res = await fetch(`${url}/rest/v1/${tableName}?select=*&limit=10000`, {
+            headers: { 'apikey': key, 'Authorization': `Bearer ${token}`, 'Range': '0-9999' }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            return Array.isArray(data) ? data : [];
+          }
+        } catch (e) {}
+        return [];
+      };
+
+      const compList = await fetchTableData('client_company');
+      const compListAlt = compList.length > 0 ? [] : await fetchTableData('client_companies');
+      const allCompanies = [...compList, ...compListAlt];
+
+      const clientList = await fetchTableData('client');
+      const clientListAlt = clientList.length > 0 ? [] : await fetchTableData('clients');
+      const allClients = [...clientList, ...clientListAlt];
+
+      const storeList = await fetchTableData('client_store');
+      const storeListAlt = storeList.length > 0 ? [] : await fetchTableData('client_stores');
+      const allStores = [...storeList, ...storeListAlt];
+
+      const clientsMap = new Map();
+      for (const cl of allClients) {
+        if (cl.id) {
+          clientsMap.set(String(cl.id).trim(), cl);
+          billingRepo.upsertClientFromSupabase({ id: String(cl.id), name: cl.name || 'Client' });
+        }
+      }
+
+      const companiesMap = new Map();
+      for (const c of allCompanies) {
+        if (c.id) {
+          const cleanId = String(c.id).trim();
+          companiesMap.set(cleanId, c);
+          const rawClient = c.client_id ? clientsMap.get(String(c.client_id).trim()) : null;
+          const clientData = rawClient || { id: c.client_id || `client_${c.id}`, name: c.name };
+          const localClientId = billingRepo.upsertClientFromSupabase(clientData);
+
+          billingRepo.upsertCompanyFromSupabase({
+            id: cleanId,
+            name: c.name || 'Companie',
+            vat_number: c.vat_number || c.cui || '',
+            registration_number: c.registration_number || c.reg_com || '',
+            address: c.address || ''
+          }, localClientId);
+        }
+      }
+
+      for (const s of allStores) {
+        if (s.id) {
+          const cleanCompId = String(s.client_company_id || s.company_id || '').trim();
+          billingRepo.upsertStoreFromSupabase({
+            id: String(s.id),
+            name: s.name,
+            address: s.address || '',
+            client_company_id: cleanCompId
+          });
+        }
+      }
+
+      return { success: true, message: "Toți clienții, companiile și magazinele au fost sincronizate cu succes din server." };
+    } catch (e: any) {
+      return { success: false, message: e.message };
+    }
+  });
 }

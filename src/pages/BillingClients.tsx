@@ -6,6 +6,8 @@ export function BillingClients() {
   const [companies, setCompanies] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [syncing, setSyncing] = useState(false);
+
   const fetchCompanies = async () => {
     try {
       setLoading(true);
@@ -15,6 +17,18 @@ export function BillingClients() {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSyncWithServer = async () => {
+    try {
+      setSyncing(true);
+      await api.billing.syncEntities();
+      await fetchCompanies();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -30,11 +44,12 @@ export function BillingClients() {
           <p className="text-slate-500 mt-2">Baza de date cu clienți (companii) și magazinele (punctele de lucru) mapate din Supabase.</p>
         </div>
         <button 
-          onClick={fetchCompanies}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm shadow-indigo-600/30 transition-colors"
+          onClick={handleSyncWithServer}
+          disabled={syncing}
+          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg font-medium shadow-sm shadow-indigo-600/30 transition-colors"
         >
-          <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
-          Reîmprospătează Local
+          <RefreshCw size={18} className={syncing ? "animate-spin" : ""} />
+          Sincronizează cu Serverul
         </button>
       </div>
 
