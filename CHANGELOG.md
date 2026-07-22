@@ -1,3 +1,11 @@
+### 🛠️ v0.1.38 - Corelare Inteligentă Magazin & Companie Supabase
+
+- **Fix Corelare Supabase:** Am optimizat procesul de extragere al magazinelor (`client_store`) și companiilor (`client_company`) din cloud-ul Supabase. Aplicația extrage acum toate datele magazinului și corelează precis cheia `client_store.client_company_id` cu `client_company.id`.
+- **Prevenire Blocaj Facturare:** În caz de inconsistențe în cloud, aplicația aplică o rezoluție automată cu fallback pentru a preveni erorile de facturare și a asigura preluarea tuturor comenzilor fără oprire.
+- **Atașare Date Fiscale pe Factură:** Datele complete ale firmei (Nume, CUI, Reg. Com., Adresă) se atașează automat pe obiectul magazinului și pe facturile PDF emise.
+
+---
+
 ### 🚀 Sistem Nou: Extragere Comenzi & Facturare (Partea 1)
 
 - **Bază de date pregătită:** Am restructurat sistemul central (SQLite) pentru a suporta noile concepte de Clienți, Companii, Magazine, Facturi și Plăți.

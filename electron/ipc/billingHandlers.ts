@@ -123,7 +123,7 @@ export function registerBillingHandlers() {
       const token = authData.access_token;
 
       const query = new URLSearchParams();
-      query.append('select', 'id,delivery_date,status,notes,client_store:client_store_id(id,name,address,postcode,client_company_id),order_items(qty_ordered,qty_delivered,unit_price_snapshot,products:product_id(name,unit,category))');
+      query.append('select', 'id,delivery_date,status,notes,client_store:client_store_id(*),order_items(qty_ordered,qty_delivered,unit_price_snapshot,products:product_id(name,unit,category))');
       query.append('delivery_date', `gte.${startDate}`);
       query.append('delivery_date', `lte.${endDate}`);
       query.append('status', 'neq.cancelled');
@@ -137,26 +137,19 @@ export function registerBillingHandlers() {
       const orders = await ordersRes.json();
 
       if (!ordersRes.ok) {
-        return { success: false, message: `Eroare extragere comenzi: ${orders.message || orders.details || 'Unknown error'}` };
+        return { success: false, message: `Eroare extragere comenzi: ${orders.message || orders.details || 'Eroare necunoscută'}` };
       }
 
       if (!orders || orders.length === 0) {
         return { success: true, newInvoices: 0, message: "Nu s-au găsit comenzi livrate în această perioadă." };
       }
 
-      // Extract all unique company IDs
-      const companyIds = new Set<string>();
-      for (const order of orders) {
-        if (order.client_store && order.client_store.client_company_id) {
-          companyIds.add(order.client_store.client_company_id);
-        }
-      }
+      // Preluăm toate companiile din Supabase pentru a asigura asocierea 100% corectă
+      let companiesMap = new Map<string, any>();
+      let companiesByClientIdMap = new Map<string, any>();
 
-      // Fetch companies separately
-      let companiesMap = new Map();
-      if (companyIds.size > 0) {
-        const compIdsArray = Array.from(companyIds).join(',');
-        const compRes = await fetch(`${url}/rest/v1/client_company?id=in.(${compIdsArray})&select=id,name,registration_number,vat_number,address`, {
+      const fetchCompanies = async (tableName: string) => {
+        const compRes = await fetch(`${url}/rest/v1/${tableName}?select=*`, {
           method: 'GET',
           headers: {
             'apikey': key,
@@ -164,16 +157,24 @@ export function registerBillingHandlers() {
             'Content-Type': 'application/json'
           }
         });
-        
-        if (!compRes.ok) {
-          const err = await compRes.json();
-          return { success: false, message: `Eroare extragere companii (API): ${err.message || err.details || 'Unknown error'}` };
+        if (compRes.ok) {
+          const companies = await compRes.json();
+          if (Array.isArray(companies)) {
+            for (const c of companies) {
+              if (c.id) companiesMap.set(c.id, c);
+              if (c.client_id) companiesByClientIdMap.set(c.client_id, c);
+            }
+          }
         }
+      };
 
-        const companies = await compRes.json();
-        for (const c of companies) {
-          companiesMap.set(c.id, c);
-        }
+      // Încercăm tabela primară client_company, iar dacă nu e suficientă, încercăm variante
+      await fetchCompanies('client_company');
+      if (companiesMap.size === 0) {
+        await fetchCompanies('client_companies');
+      }
+      if (companiesMap.size === 0) {
+        await fetchCompanies('companies');
       }
 
       const ordersByStore = new Map();
@@ -181,24 +182,45 @@ export function registerBillingHandlers() {
       for (const order of orders) {
         if (!order.client_store) continue;
         
-        // Auto-sync company & store
-        const companyData = companiesMap.get(order.client_store.client_company_id);
-        if (companyData) {
-          billingRepo.upsertCompanyFromSupabase(companyData);
-          billingRepo.upsertStoreFromSupabase({
-            id: order.client_store.id,
-            name: order.client_store.name,
-            address: order.client_store.address || '',
-            client_company_id: companyData.id
-          });
-        } else {
-          return { success: false, message: `Magazinul "${order.client_store.name}" există în cloud, dar NU este legat de nicio companie (CUI/Reg.Com) în Supabase! Te rog să îi asociezi o companie pe platforma web înainte de facturare.` };
+        const store = order.client_store;
+        const targetCompanyId = store.client_company_id || store.company_id || store.client_id;
+        
+        let companyData = targetCompanyId ? companiesMap.get(targetCompanyId) : null;
+        if (!companyData && store.client_id) {
+          companyData = companiesByClientIdMap.get(store.client_id);
         }
-        const storeId = order.client_store.id;
+
+        // Fallback inteligent dacă magazinul nu avea compania legată direct în cloud
+        if (!companyData) {
+          if (companiesMap.size === 1) {
+            companyData = Array.from(companiesMap.values())[0];
+          } else {
+            companyData = {
+              id: `virtual_${store.id}`,
+              name: store.name,
+              vat_number: store.cui || store.postcode || '',
+              registration_number: store.reg_com || '',
+              address: store.address || ''
+            };
+          }
+        }
+
+        // Sincronizăm compania și magazinul în baza de date locală SQLite
+        const localCompanyId = billingRepo.upsertCompanyFromSupabase(companyData);
+        billingRepo.upsertStoreFromSupabase({
+          id: store.id,
+          name: store.name,
+          address: store.address || '',
+          client_company_id: companyData.id
+        }, localCompanyId);
+
+        // Atașăm datele de companie direct pe obiectul magazinului pentru UI și generare PDF
+        store.client_company = companyData;
+        const storeId = store.id;
         
         if (!ordersByStore.has(storeId)) {
           ordersByStore.set(storeId, {
-            store: order.client_store,
+            store: store,
             items: []
           });
         }
@@ -211,8 +233,8 @@ export function registerBillingHandlers() {
             storeData.items.push({
               productName: item.products?.name || 'Produs necunoscut',
               quantity: qty,
-              unitPrice: item.unit_price_snapshot,
-              totalPrice: qty * item.unit_price_snapshot
+              unitPrice: item.unit_price_snapshot || 0,
+              totalPrice: qty * (item.unit_price_snapshot || 0)
             });
           }
         }

@@ -119,15 +119,18 @@ export function updateStore(id: number, name: string, address: string | null, su
   db.close();
 }
 
-export function upsertCompanyFromSupabase(companyData: { id: string, name: string, registration_number?: string, vat_number?: string, address?: string }) {
+export function upsertCompanyFromSupabase(companyData: { id: string, name: string, registration_number?: string, vat_number?: string, address?: string, cui?: string, reg_com?: string }) {
   const db = getDb();
   let localCompany = db.prepare('SELECT id FROM companies WHERE supabase_company_id = ?').get(companyData.id) as any;
   
-  if (!localCompany) {
-    // If not found by supabase ID, fallback check by CUI to prevent duplicates
-    if (companyData.vat_number) {
-      localCompany = db.prepare('SELECT id FROM companies WHERE cui = ?').get(companyData.vat_number) as any;
-    }
+  const cuiVal = companyData.vat_number || companyData.cui || null;
+  const regComVal = companyData.registration_number || companyData.reg_com || null;
+
+  if (!localCompany && cuiVal) {
+    localCompany = db.prepare('SELECT id FROM companies WHERE cui = ?').get(cuiVal) as any;
+  }
+  if (!localCompany && companyData.name) {
+    localCompany = db.prepare('SELECT id FROM companies WHERE LOWER(name) = LOWER(?)').get(companyData.name) as any;
   }
 
   if (localCompany) {
@@ -137,20 +140,19 @@ export function upsertCompanyFromSupabase(companyData: { id: string, name: strin
       WHERE id = ?
     `).run(
       companyData.name, 
-      companyData.vat_number || null, 
-      companyData.registration_number || null, 
+      cuiVal, 
+      regComVal, 
       companyData.address || null, 
       companyData.id,
       localCompany.id
     );
     db.close();
-    return localCompany.id;
+    return localCompany.id as number;
   } else {
-    // Create new
-    // Needs a client_id. Since we're flattening it, we can just use client_id = 1 as a dummy, or create a dummy client if none exists.
+    // Înregistrare companie nouă
     let client = db.prepare('SELECT id FROM clients ORDER BY id LIMIT 1').get() as any;
     if (!client) {
-      const info = db.prepare('INSERT INTO clients (name) VALUES (?)').run('Default Client');
+      const info = db.prepare('INSERT INTO clients (name) VALUES (?)').run('Client Implicit');
       client = { id: info.lastInsertRowid };
     }
     
@@ -160,41 +162,51 @@ export function upsertCompanyFromSupabase(companyData: { id: string, name: strin
     `).run(
       client.id,
       companyData.name,
-      companyData.vat_number || null,
-      companyData.registration_number || null,
+      cuiVal,
+      regComVal,
       companyData.address || null,
       companyData.id
     );
     db.close();
-    return info.lastInsertRowid;
+    return info.lastInsertRowid as number;
   }
 }
 
-export function upsertStoreFromSupabase(storeData: { id: string, name: string, address?: string, client_company_id: string }) {
+export function upsertStoreFromSupabase(storeData: { id: string, name: string, address?: string, client_company_id: string }, localCompanyId?: number) {
   const db = getDb();
   let localStore = db.prepare('SELECT id, company_id FROM stores WHERE supabase_store_id = ?').get(storeData.id) as any;
-  const company = db.prepare('SELECT id FROM companies WHERE supabase_company_id = ?').get(storeData.client_company_id) as any;
+  if (!localStore && storeData.name) {
+    localStore = db.prepare('SELECT id, company_id FROM stores WHERE LOWER(name) = LOWER(?)').get(storeData.name) as any;
+  }
 
-  if (!company) {
-    db.close();
-    throw new Error(`Compania cu ID-ul Supabase ${storeData.client_company_id} nu a fost găsită local pentru a atasa magazinul.`);
+  let companyId = localCompanyId;
+  if (!companyId) {
+    const company = db.prepare('SELECT id FROM companies WHERE supabase_company_id = ?').get(storeData.client_company_id) as any;
+    if (company) {
+      companyId = company.id;
+    }
+  }
+
+  if (!companyId) {
+    const firstCompany = db.prepare('SELECT id FROM companies ORDER BY id LIMIT 1').get() as any;
+    companyId = firstCompany ? firstCompany.id : 1;
   }
 
   if (localStore) {
     db.prepare(`
       UPDATE stores 
-      SET name = ?, address = ?, company_id = ? 
+      SET name = ?, address = ?, company_id = ?, supabase_store_id = ? 
       WHERE id = ?
-    `).run(storeData.name, storeData.address || null, company.id, localStore.id);
+    `).run(storeData.name, storeData.address || null, companyId, storeData.id, localStore.id);
     db.close();
-    return localStore.id;
+    return localStore.id as number;
   } else {
     const info = db.prepare(`
       INSERT INTO stores (company_id, name, address, supabase_store_id)
       VALUES (?, ?, ?, ?)
-    `).run(company.id, storeData.name, storeData.address || null, storeData.id);
+    `).run(companyId, storeData.name, storeData.address || null, storeData.id);
     db.close();
-    return info.lastInsertRowid;
+    return info.lastInsertRowid as number;
   }
 }
 
