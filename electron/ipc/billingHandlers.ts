@@ -144,19 +144,21 @@ export function registerBillingHandlers() {
         return { success: true, newInvoices: 0, message: "Nu s-au găsit comenzi livrate în această perioadă." };
       }
 
-      // Preluăm toate companiile și clienții din Supabase pentru a asigura asocierea 100% corectă
+      // Preluăm toate companiile și clienții din Supabase fără limitare de paginare (Range 0-9999)
       let companiesMap = new Map<string, any>();
       let companiesByClientIdMap = new Map<string, any>();
       let clientsMap = new Map<string, any>();
 
       const fetchTableData = async (tableName: string) => {
         try {
-          const res = await fetch(`${url}/rest/v1/${tableName}?select=*`, {
+          const res = await fetch(`${url}/rest/v1/${tableName}?select=*&limit=10000`, {
             method: 'GET',
             headers: {
               'apikey': key,
               'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
+              'Content-Type': 'application/json',
+              'Range': '0-9999',
+              'Prefer': 'count=exact'
             }
           });
           if (res.ok) {
@@ -172,8 +174,16 @@ export function registerBillingHandlers() {
       const allCompanies = [...compList, ...compListAlt];
       
       for (const c of allCompanies) {
-        if (c.id) companiesMap.set(String(c.id), c);
-        if (c.client_id) companiesByClientIdMap.set(String(c.client_id), c);
+        if (c.id) {
+          const cleanId = String(c.id).trim();
+          companiesMap.set(cleanId, c);
+          companiesMap.set(cleanId.toLowerCase(), c);
+        }
+        if (c.client_id) {
+          const cleanClientId = String(c.client_id).trim();
+          companiesByClientIdMap.set(cleanClientId, c);
+          companiesByClientIdMap.set(cleanClientId.toLowerCase(), c);
+        }
       }
 
       const clientList = await fetchTableData('client');
@@ -181,7 +191,11 @@ export function registerBillingHandlers() {
       const allClients = [...clientList, ...clientListAlt];
       
       for (const cl of allClients) {
-        if (cl.id) clientsMap.set(String(cl.id), cl);
+        if (cl.id) {
+          const cleanId = String(cl.id).trim();
+          clientsMap.set(cleanId, cl);
+          clientsMap.set(cleanId.toLowerCase(), cl);
+        }
       }
 
       const ordersByStore = new Map();
@@ -190,12 +204,14 @@ export function registerBillingHandlers() {
         if (!order.client_store) continue;
         
         const store = order.client_store;
-        const targetCompanyId = String(store.client_company_id || store.company_id || store.client_id || '');
+        const targetCompanyId = String(store.client_company_id || store.company_id || store.client_id || '').trim();
         
-        let companyData = store.client_company || (targetCompanyId ? companiesMap.get(targetCompanyId) : null);
+        let companyData = store.client_company || 
+          (targetCompanyId ? (companiesMap.get(targetCompanyId) || companiesMap.get(targetCompanyId.toLowerCase())) : null);
         
         if (!companyData && store.client_id) {
-          companyData = companiesByClientIdMap.get(String(store.client_id));
+          const cleanClientId = String(store.client_id).trim();
+          companyData = companiesByClientIdMap.get(cleanClientId) || companiesByClientIdMap.get(cleanClientId.toLowerCase());
         }
 
         // Căutare după potrivire nume dacă nu s-a găsit prin ID
