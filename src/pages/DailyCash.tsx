@@ -4,34 +4,44 @@ import {
   TrendingUp, 
   TrendingDown, 
   Truck,
-  User
+  User,
+  Trash2
 } from 'lucide-react';
 import { useCashStore } from '../store/cashStore';
 import { DateRangePicker } from '../components/DateRangePicker';
 import { api } from '../shared/api';
 
 export function DailyCash() {
-  const { activeDay, dateFilter, setDateFilter, transactions: storeTransactions } = useCashStore();
+  const { activeDay, dateFilter, setDateFilter, transactions: storeTransactions, fetchActiveDay } = useCashStore();
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
+  const reloadData = async () => {
+    setLoading(true);
+    try {
+      const result = await api.dailyCash.getTransactionsByDateRange(
+        dateFilter.startDate, 
+        dateFilter.endDate
+      );
+      setData(result);
+      if (fetchActiveDay) fetchActiveDay();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const result = await api.dailyCash.getTransactionsByDateRange(
-          dateFilter.startDate, 
-          dateFilter.endDate
-        );
-        setData(result);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
-  }, [dateFilter, storeTransactions]); // Re-fetch if new transactions are added
+    reloadData();
+  }, [dateFilter, storeTransactions]);
+
+  const handleDeleteTransaction = async (id: number) => {
+    if (window.confirm('Ești sigur că vrei să ștergi această tranzacție din registru?')) {
+      await api.dailyCash.deleteTransaction(id);
+      reloadData();
+    }
+  };
 
   // Aggregations based on fetched data
   const totalIn = data.filter(t => t.type === 'IN').reduce((sum, t) => sum + t.amount, 0);
@@ -122,12 +132,13 @@ export function DailyCash() {
                     <th className="px-6 py-4 font-medium">Categorie / Detalii</th>
                     <th className="px-6 py-4 font-medium text-right">Suma</th>
                     <th className="px-6 py-4 font-medium">Note</th>
+                    <th className="px-6 py-4 font-medium text-right">Acțiuni</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {data.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-6 py-8 text-center text-slate-500">Nicio tranzacție înregistrată.</td>
+                      <td colSpan={6} className="px-6 py-8 text-center text-slate-500">Nicio tranzacție înregistrată.</td>
                     </tr>
                   ) : (
                     data.map(t => (
@@ -159,6 +170,15 @@ export function DailyCash() {
                           {t.type === 'IN' ? '+' : '-'}{t.amount.toFixed(2)} £
                         </td>
                         <td className="px-6 py-4 text-slate-600">{t.notes}</td>
+                        <td className="px-6 py-4 text-right">
+                          <button
+                            onClick={() => handleDeleteTransaction(t.id)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            title="Șterge tranzacția"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
                       </tr>
                     ))
                   )}

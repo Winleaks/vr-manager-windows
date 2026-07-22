@@ -51,4 +51,7 @@ export function registerDailyCashHandlers() {
   ipcMain.handle('get-historical-z-reports', (_e, startDate, endDate) => {
     return cashRepo.getHistoricalZReports(startDate, endDate);
   });
+  ipcMain.handle('delete-cash-transaction', (_e, transactionId) => {
+    return cashRepo.deleteTransaction(transactionId);
+  });
 }

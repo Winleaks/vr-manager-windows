@@ -324,8 +324,9 @@ export function registerBillingHandlers() {
         const invoiceNumber = currentNumber.toString();
         const totalAmount = orderData.items.reduce((acc: number, item: any) => acc + item.totalPrice, 0);
 
-        billingRepo.createInvoiceWithItems(storeId, invoiceNumber, today, totalAmount, orderData.items);
+        const createdId = billingRepo.createInvoiceWithItems(storeId, invoiceNumber, today, totalAmount, orderData.items);
         
+        orderData.assignedInvoiceId = createdId;
         orderData.assignedInvoiceNumber = invoiceNumber;
         orderData.assignedInvoiceDate = new Date().toLocaleDateString('ro-RO');
 
@@ -338,5 +339,9 @@ export function registerBillingHandlers() {
     } catch (e: any) {
       return { success: false, message: e.message };
     }
+  });
+
+  ipcMain.handle('billing:deleteInvoice', (_, invoiceId: number) => {
+    return billingRepo.deleteInvoice(invoiceId);
   });
 }

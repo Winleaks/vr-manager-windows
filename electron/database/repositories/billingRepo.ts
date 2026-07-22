@@ -269,3 +269,13 @@ export function getBillingStats() {
     totalUnpaid: result?.total_unpaid || 0
   };
 }
+
+export function deleteInvoice(invoiceId: number) {
+  const deleteTransaction = db.transaction(() => {
+    db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
+    db.prepare('DELETE FROM payments WHERE invoice_id = ?').run(invoiceId);
+    db.prepare('DELETE FROM invoices WHERE id = ?').run(invoiceId);
+  });
+  deleteTransaction();
+  return true;
+}

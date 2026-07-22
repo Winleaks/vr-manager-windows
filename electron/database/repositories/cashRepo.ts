@@ -163,5 +163,20 @@ export const cashRepo = {
     });
 
     return transaction();
+  },
+
+  deleteTransaction: (transactionId: number) => {
+    const runDelete = db.transaction(() => {
+      // 1. Preluăm item-ele tranzacției dacă a existat o scădere de stoc pentru produse finite
+      const items = db.prepare('SELECT * FROM cash_transaction_items WHERE transaction_id = ?').all(transactionId) as any[];
+      for (const item of items) {
+        db.prepare('UPDATE finished_products SET current_stock = current_stock + ? WHERE id = ?').run(item.quantity, item.finished_product_id);
+      }
+      db.prepare('DELETE FROM finished_product_movements WHERE reference_type = "cash_transaction" AND reference_id = ?').run(transactionId);
+      db.prepare('DELETE FROM cash_transaction_items WHERE transaction_id = ?').run(transactionId);
+      db.prepare('DELETE FROM cash_transactions WHERE id = ?').run(transactionId);
+    });
+    runDelete();
+    return true;
   }
 };

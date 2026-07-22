@@ -80,7 +80,9 @@ export const api = {
     getTransactionsByDateRange: (startDate: string, endDate: string, category?: string) => 
       window.ipcRenderer.invoke('get-cash-transactions-by-date', startDate, endDate, category),
     getHistoricalZReports: (startDate: string, endDate: string) => 
-      window.ipcRenderer.invoke('get-historical-z-reports', startDate, endDate)
+      window.ipcRenderer.invoke('get-historical-z-reports', startDate, endDate),
+    deleteTransaction: (transactionId: number) => 
+      window.ipcRenderer.invoke('delete-cash-transaction', transactionId)
   },
   billing: {
     getClients: () => window.ipcRenderer.invoke('billing:getClients'),
@@ -95,6 +97,7 @@ export const api = {
     getAllCompaniesAndStores: () => window.ipcRenderer.invoke('billing:getAllCompaniesAndStores'),
     getInvoices: (startDate: string, endDate: string) => window.ipcRenderer.invoke('billing:getInvoices', startDate, endDate),
     generateInvoice: (data: any) => window.ipcRenderer.invoke('billing:generateInvoice', data),
+    deleteInvoice: (invoiceId: number) => window.ipcRenderer.invoke('billing:deleteInvoice', invoiceId),
     getStats: () => window.ipcRenderer.invoke('billing:getStats'),
     getSettings: () => window.ipcRenderer.invoke('billing:getSettings'),
     saveSettings: (data: any) => window.ipcRenderer.invoke('billing:saveSettings', data),

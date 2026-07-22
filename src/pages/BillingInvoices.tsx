@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Calendar, DownloadCloud, Loader2, CheckCircle, AlertTriangle, FileText, Printer, Building2 } from 'lucide-react';
+import { Calendar, DownloadCloud, Loader2, CheckCircle, AlertTriangle, FileText, Printer, Building2, Trash2 } from 'lucide-react';
 import { api } from '../shared/api';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
@@ -13,6 +13,26 @@ export function BillingInvoices() {
   const [isGeneratingAll, setIsGeneratingAll] = useState(false);
   const [generatingOrderId, setGeneratingOrderId] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<any>(null);
+
+  const handleDeleteInvoice = async (data: any) => {
+    if (window.confirm(`Ești sigur că vrei să ștergi factura #${data.assignedInvoiceNumber} generată pentru magazinul "${data.store.name}"?`)) {
+      if (data.assignedInvoiceId) {
+        await api.billing.deleteInvoice(data.assignedInvoiceId);
+      }
+      setSyncResult((prev: any) => ({
+        ...prev,
+        ordersByStore: prev.ordersByStore.map((o: any) => {
+          if (o.store.id === data.store.id) {
+            const copy = { ...o };
+            delete copy.assignedInvoiceNumber;
+            delete copy.assignedInvoiceId;
+            return copy;
+          }
+          return o;
+        })
+      }));
+    }
+  };
 
   const weekStart = startOfWeek(selectedDate, { weekStartsOn: 1 });
   const weekEnd = endOfWeek(selectedDate, { weekStartsOn: 1 });
@@ -205,24 +225,36 @@ export function BillingInvoices() {
                           </div>
                         </div>
                         
-                        <button
-                          onClick={() => handleGenerateIndividual(data)}
-                          disabled={isDoing}
-                          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                            isGenerated 
-                              ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' 
-                              : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
-                          }`}
-                        >
-                          {isDoing ? (
-                            <Loader2 size={16} className="animate-spin" />
-                          ) : isGenerated ? (
-                            <Printer size={16} />
-                          ) : (
-                            <FileText size={16} />
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleGenerateIndividual(data)}
+                            disabled={isDoing}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                              isGenerated 
+                                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' 
+                                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
+                            }`}
+                          >
+                            {isDoing ? (
+                              <Loader2 size={16} className="animate-spin" />
+                            ) : isGenerated ? (
+                              <Printer size={16} />
+                            ) : (
+                              <FileText size={16} />
+                            )}
+                            {isGenerated ? 'Retipărește' : 'Generează'}
+                          </button>
+
+                          {isGenerated && (
+                            <button
+                              onClick={() => handleDeleteInvoice(data)}
+                              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                              title="Șterge factura"
+                            >
+                              <Trash2 size={16} />
+                            </button>
                           )}
-                          {isGenerated ? 'Retipărește' : 'Generează'}
-                        </button>
+                        </div>
                       </div>
                     </div>
                   );
