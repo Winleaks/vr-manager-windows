@@ -20,14 +20,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-          cache: 'npm'
 
       - name: Install Dependencies
-        run: npm install --include=dev
+        run: npm install
 
-      - name: Build and Publish Electron App
-        run: |
-          npx vite build
-          npx electron-builder --win --x64 -p always
+      - name: Build Vite Frontend & Electron Main
+        run: npx vite build
+
+      - name: Rebuild Native Dependencies for Electron
+        run: npx electron-builder install-app-deps
+
+      - name: Package and Publish App
+        run: npx electron-builder --win --x64 -p always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
