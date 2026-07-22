@@ -1,7 +1,7 @@
 {
   "name": "vr-management-hub",
   "private": true,
-  "version": "0.1.41",
+  "version": "0.1.42",
   "description": "Gestiune stoc fabrica patiserie",
   "author": "Razvan Cristofor",
   "main": "dist-electron/main.js",
