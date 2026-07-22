@@ -123,7 +123,7 @@ export function registerBillingHandlers() {
       const token = authData.access_token;
 
       const query = new URLSearchParams();
-      query.append('select', 'id,delivery_date,status,notes,client_store:client_store_id(*),order_items(qty_ordered,qty_delivered,unit_price_snapshot,products:product_id(name,unit,category))');
+      query.append('select', 'id,delivery_date,status,notes,client_store:client_store_id(*,client_company:client_company_id(*)),order_items(qty_ordered,qty_delivered,unit_price_snapshot,products:product_id(name,unit,category))');
       query.append('delivery_date', `gte.${startDate}`);
       query.append('delivery_date', `lte.${endDate}`);
       query.append('status', 'neq.cancelled');
