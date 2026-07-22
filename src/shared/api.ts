@@ -54,7 +54,11 @@ export const api = {
     saveToCloud: () => window.ipcRenderer.invoke('save-to-cloud'),
     restoreFromCloud: (filePath?: string) => window.ipcRenderer.invoke('restore-from-cloud', filePath),
     disconnectCloud: () => window.ipcRenderer.invoke('disconnect-cloud'),
-    uploadPdfToCloud: (filename: string, buffer: Uint8Array) => window.ipcRenderer.invoke('upload-pdf-to-cloud', filename, buffer)
+    uploadPdfToCloud: (filename: string, buffer: Uint8Array) => window.ipcRenderer.invoke('upload-pdf-to-cloud', filename, buffer),
+    getSyncStatus: () => window.ipcRenderer.invoke('get-sync-status'),
+    initRealtimeSync: () => window.ipcRenderer.invoke('init-realtime-sync'),
+    onSyncStatusChanged: (callback: (status: any) => void) => window.ipcRenderer.on('sync-status-changed', callback),
+    onRealtimeDataUpdated: (callback: (data: any) => void) => window.ipcRenderer.on('realtime-data-updated', callback)
   },
   drivers: {
     getAll: () => window.ipcRenderer.invoke('get-drivers'),

@@ -185,6 +185,10 @@ export async function saveToCloud(isManual = false): Promise<{ success: boolean;
   }
 
   try {
+    const { evaluateDb } = require('./db');
+    const localInfo = evaluateDb(dbPath);
+    const localScore = localInfo ? localInfo.totalItems : 0;
+
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
     
     // Check if file already exists
@@ -192,6 +196,12 @@ export async function saveToCloud(isManual = false): Promise<{ success: boolean;
       q: "name='stoc_fabrica_backup.db' and trashed=false",
       fields: 'files(id)'
     });
+
+    // Protecție: Dacă salvarea este automată pe fundal și baza locală este goală/nouă, dar pe cloud există deja un backup, nu suprascriem!
+    if (!isManual && localScore <= 5 && search.data.files && search.data.files.length > 0) {
+      console.log('[CLOUD SYNC] Salvarea automată a fost ignorată pentru a proteja backup-ul existent din Google Drive.');
+      return { success: true };
+    }
 
     const fileMetadata = {
       name: 'stoc_fabrica_backup.db'

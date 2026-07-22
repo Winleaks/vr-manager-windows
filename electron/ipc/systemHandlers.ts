@@ -112,13 +112,7 @@ export function registerSystemHandlers() {
   });
 
   ipcMain.handle('connect-google-drive', async () => {
-    const res = await connectGoogleDrive();
-    if (res.success) {
-      try {
-        await saveToCloud(true);
-      } catch (e) {}
-    }
-    return res;
+    return await connectGoogleDrive();
   });
 
   ipcMain.handle('save-to-cloud', async () => {
@@ -136,6 +130,17 @@ export function registerSystemHandlers() {
   ipcMain.handle('upload-pdf-to-cloud', async (_event, filename: string, buffer: Uint8Array) => {
     const { uploadPdfToCloud } = require('../database/cloudSync');
     return await uploadPdfToCloud(filename, buffer);
+  });
+
+  ipcMain.handle('get-sync-status', () => {
+    const { getSyncStatus } = require('../database/realtimeSync');
+    return getSyncStatus();
+  });
+
+  ipcMain.handle('init-realtime-sync', async () => {
+    const { initRealtimeSync } = require('../database/realtimeSync');
+    await initRealtimeSync();
+    return true;
   });
 }
 
