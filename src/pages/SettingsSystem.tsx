@@ -13,7 +13,9 @@ import {
   FolderSync,
   AlertCircle,
   Trash2,
-  Sliders
+  Sliders,
+  Copy,
+  CheckCircle
 } from 'lucide-react';
 
 export function SettingsSystem() {
@@ -32,20 +34,25 @@ export function SettingsSystem() {
   }>({ isConnected: false, userEmail: null, lastCloudBackup: null, availableBackups: [] });
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [showBackupList, setShowBackupList] = useState(false);
+  const [authUrlModal, setAuthUrlModal] = useState<string | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   useEffect(() => {
     fetchLastBackup();
     fetchCloudStatus();
 
-    const unsubscribe = api.system.onBackupCompleted(() => {
+    const unsubscribeBackup = api.system.onBackupCompleted(() => {
       fetchLastBackup();
       fetchCloudStatus();
     });
 
+    const unsubscribeAuthUrl = api.system.onGoogleAuthUrl((url: string) => {
+      setAuthUrlModal(url);
+    });
+
     return () => {
-      if (typeof unsubscribe === 'function') {
-        unsubscribe();
-      }
+      if (typeof unsubscribeBackup === 'function') unsubscribeBackup();
+      if (typeof unsubscribeAuthUrl === 'function') unsubscribeAuthUrl();
     };
   }, []);
 
@@ -425,6 +432,52 @@ export function SettingsSystem() {
           </button>
         </div>
       </div>
+
+      {/* Modal Conectare Google Drive / Selecție Link & Copiere */}
+      {authUrlModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-indigo-600 mb-4">
+              <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
+                <Cloud size={24} />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">Conectare Google Drive</h3>
+                <p className="text-slate-500 text-xs mt-0.5">Alege cum dorești să deschizi conectarea</p>
+              </div>
+            </div>
+
+            <p className="text-slate-600 text-sm mb-4 leading-relaxed">
+              Link-ul de conectare a fost generat. Poți deschide browser-ul implicit sau poți <strong>copia link-ul</strong> pentru a-l lipi în browser-ul tău preferat (Chrome, Edge, Brave, Firefox etc.).
+            </p>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-5 font-mono text-xs text-slate-600 break-all max-h-24 overflow-y-auto">
+              {authUrlModal}
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(authUrlModal);
+                  setCopiedLink(true);
+                  setTimeout(() => setCopiedLink(false), 3000);
+                }}
+                className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 px-4 rounded-xl transition-colors shadow-sm"
+              >
+                {copiedLink ? <CheckCircle size={18} /> : <Copy size={18} />}
+                {copiedLink ? 'Link copiat pe Clipboard! Lipește-l în browser' : 'Copiază Link-ul (Lipește-l în orice browser)'}
+              </button>
+
+              <button
+                onClick={() => setAuthUrlModal(null)}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium py-2.5 px-4 rounded-xl transition-colors text-sm"
+              >
+                Închide Fereastra
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

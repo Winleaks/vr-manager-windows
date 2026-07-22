@@ -119,7 +119,7 @@ export function BillingInvoices() {
       <div className="mb-8 flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Sincronizare & Facturi</h1>
-          <p className="text-slate-500 mt-2">Preluare comenzi Lovable și emitere facturi (Săptămânal).</p>
+          <p className="text-slate-500 mt-2">Preluare comenzilor din platformă și emitere facturi (Săptămânal).</p>
         </div>
       </div>
 

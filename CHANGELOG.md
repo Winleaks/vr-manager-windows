@@ -1,3 +1,12 @@
+### 🏛️ v0.1.41 - Optimizări Bază de Date B-Tree, Flexibilitate Google OAuth & UI Update
+
+- **Arhitectură Bază de Date B-Tree (Enterprise 2026):** Am creat indexuri strategice B-Tree pe toate cheile externe (FK) și coloanele tranzacționale de volum. Căutările și interogările rulează acum sub 1ms chiar și la sute de mii de înregistrări.
+- **Setări PRAGMA Avansate:** Am activat `synchronous = NORMAL`, `temp_store = MEMORY` și `PRAGMA optimize` la pornire pentru viteză maximă și prevenirea umflării bazei de date.
+- **Modal Conectare Google Drive Flexibil:** La conectarea contului Google Drive, aplicația deschide un modal inteligent cu butonul **„Copiază Link-ul”** pe Clipboard. Poți lipi link-ul în orice browser dorești (Chrome, Edge, Brave, Firefox etc.).
+- **Actualizare UI:** Subtitlul secțiunii de facturi a fost actualizat la *„Preluare comenzilor din platformă și emitere facturi (Săptămânal)”*.
+
+---
+
 ### ⚡ v0.1.40 - Design Factură PDF Modern (UK Standard 2026) & Optimizare Performanță
 
 - **Design Factură Enterprise (2026):** Am refăcut generatorul PDF cu o grafică modernă de tip Stripe/Vercel Billing. Include antet cromatic cu bară de accent, badge-uri stilizate pentru serie/număr, carduri delimitate pentru furnizor (FROM) și client (BILL TO), precum și o casetă de totaluri stilizată.

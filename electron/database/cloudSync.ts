@@ -99,6 +99,13 @@ export async function connectGoogleDrive(): Promise<{ success: boolean; message?
 
     authServer.listen(3456, () => {
       shell.openExternal(url);
+      try {
+        const { BrowserWindow } = require('electron');
+        const windows = BrowserWindow.getAllWindows();
+        if (windows.length > 0) {
+          windows[0].webContents.send('google-auth-url', url);
+        }
+      } catch (e) {}
     });
 
     // Timeout after 3 minutes just in case

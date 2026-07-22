@@ -127,17 +127,25 @@ if (currentScore <= 50) {
 export let db = new Database(dbPath, { verbose: isDev ? console.log : undefined })
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
+db.pragma('synchronous = NORMAL')
+db.pragma('temp_store = MEMORY')
+db.pragma('busy_timeout = 5000')
 
 export let lastBackupTime: string | null = null;
 
 export function initDb() {
-  // 1. Execuția schemei: instrucțiunile CREATE TABLE IF NOT EXISTS creează tabele noi fără a șterge sau altera datele existente!
+  // 1. Execuția schemei și a indecșilor B-Tree
   db.exec(initialSchema)
   
-  // 2. Rularea migrărilor de schemă (pentru actualizări viitoare de structură sau adăugări de coloane noi)
+  // 2. Rularea migrărilor de schemă
   runMigrations()
   
-  // 3. Populate doar dacă nu există categorii (bază de date complet nouă)
+  // 3. Optimizarea planificatorului de interogări SQLite
+  try {
+    db.pragma('optimize')
+  } catch (e) {}
+
+  // 4. Populate doar dacă nu există categorii (bază de date complet nouă)
   const count = db.prepare('SELECT COUNT(*) as count FROM categories').get() as { count: number }
   if (count.count === 0) {
     db.exec(seedData)

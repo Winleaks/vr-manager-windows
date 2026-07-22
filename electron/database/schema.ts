@@ -262,6 +262,28 @@ CREATE TABLE IF NOT EXISTS payments (
   FOREIGN KEY(client_id) REFERENCES clients(id),
   FOREIGN KEY(invoice_id) REFERENCES invoices(id)
 );
+
+-- =========================================================================
+-- INDEX-URI STRATEGICE PENTRU PERFORMANȚĂ EXTREMĂ ȘI SCALABILITATE (B-TREE)
+-- =========================================================================
+CREATE INDEX IF NOT EXISTS idx_raw_materials_supplier ON raw_materials(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_raw_materials_category ON raw_materials(category_id);
+CREATE INDEX IF NOT EXISTS idx_finished_products_category ON finished_products(category_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_items_recipe ON recipe_items(recipe_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_items_raw_material ON recipe_items(raw_material_id);
+CREATE INDEX IF NOT EXISTS idx_productions_product_date ON productions(finished_product_id, production_date);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_raw_material ON stock_movements(raw_material_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_finished_product_movements_fp ON finished_product_movements(finished_product_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_cash_transactions_day ON cash_transactions(cash_day_id);
+CREATE INDEX IF NOT EXISTS idx_cash_transaction_items_tx ON cash_transaction_items(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_companies_supabase ON companies(supabase_company_id);
+CREATE INDEX IF NOT EXISTS idx_companies_cui ON companies(cui);
+CREATE INDEX IF NOT EXISTS idx_stores_company ON stores(company_id);
+CREATE INDEX IF NOT EXISTS idx_stores_supabase ON stores(supabase_store_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_store_date ON invoices(store_id, invoice_date);
+CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice ON invoice_items(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_payments_client ON payments(client_id);
+CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id);
 `;
 
 export const seedData = `
