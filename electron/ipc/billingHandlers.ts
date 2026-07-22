@@ -145,10 +145,6 @@ export function registerBillingHandlers() {
       }
 
       // Preluăm toate companiile și clienții din Supabase fără limitare de paginare (Range 0-9999)
-      let companiesMap = new Map<string, any>();
-      let companiesByClientIdMap = new Map<string, any>();
-      let clientsMap = new Map<string, any>();
-
       const fetchTableData = async (tableName: string) => {
         try {
           const res = await fetch(`${url}/rest/v1/${tableName}?select=*&limit=10000`, {
@@ -170,103 +166,61 @@ export function registerBillingHandlers() {
       };
 
       const compList = await fetchTableData('client_company');
-      const compListAlt = compList.length > 0 ? [] : await fetchTableData('client_companies');
-      const allCompanies = [...compList, ...compListAlt];
-      
-      for (const c of allCompanies) {
+      const uuidToCompanyMap = new Map<string, any>();
+      for (const c of compList) {
         if (c.id) {
-          const cleanId = String(c.id).trim();
-          companiesMap.set(cleanId, c);
-          companiesMap.set(cleanId.toLowerCase(), c);
-        }
-        if (c.client_id) {
-          const cleanClientId = String(c.client_id).trim();
-          companiesByClientIdMap.set(cleanClientId, c);
-          companiesByClientIdMap.set(cleanClientId.toLowerCase(), c);
+          const cleanId = String(c.id).trim().toLowerCase();
+          uuidToCompanyMap.set(cleanId, c);
         }
       }
 
-      const clientList = await fetchTableData('client');
-      const clientListAlt = clientList.length > 0 ? [] : await fetchTableData('clients');
-      const allClients = [...clientList, ...clientListAlt];
-      
-      for (const cl of allClients) {
-        if (cl.id) {
-          const cleanId = String(cl.id).trim();
-          clientsMap.set(cleanId, cl);
-          clientsMap.set(cleanId.toLowerCase(), cl);
-        }
-      }
-
+      let unassignedCompId: number | undefined;
       const ordersByStore = new Map();
       
       for (const order of orders) {
         if (!order.client_store) continue;
         
         const store = order.client_store;
-        const targetCompanyId = String(store.client_company_id || store.company_id || store.client_id || '').trim();
-        
-        let companyData = store.client_company || 
-          (targetCompanyId ? (companiesMap.get(targetCompanyId) || companiesMap.get(targetCompanyId.toLowerCase())) : null);
-        
-        if (!companyData && store.client_id) {
-          const cleanClientId = String(store.client_id).trim();
-          companyData = companiesByClientIdMap.get(cleanClientId) || companiesByClientIdMap.get(cleanClientId.toLowerCase());
-        }
+        const parentCompanyUuid = store.client_company_id ? String(store.client_company_id).trim().toLowerCase() : 
+                                 (store.client_company?.id ? String(store.client_company.id).trim().toLowerCase() : '');
 
-        // Căutare după potrivire nume dacă nu s-a găsit prin ID
-        if (!companyData && store.company_name) {
-          companyData = Array.from(companiesMap.values()).find(
-            c => c.name && c.name.toLowerCase() === String(store.company_name).toLowerCase()
-          );
-        }
+        let realCompany = parentCompanyUuid ? uuidToCompanyMap.get(parentCompanyUuid) : null;
+        let localCompanyId: number;
 
-        // Fallback inteligent dacă magazinul nu avea compania legată direct în cloud
-        if (!companyData) {
-          const fallbackName = store.company_name || store.client_company_name || (allCompanies.length === 1 ? allCompanies[0].name : null);
-          if (fallbackName) {
-            companyData = {
-              id: `virtual_${store.id}`,
-              name: fallbackName,
-              vat_number: store.vat_number || store.vat || store.cui || '',
-              registration_number: store.registration_number || store.crn || store.reg_com || '',
-              address: store.address || ''
-            };
-          } else {
-            companyData = {
-              id: `virtual_${store.id}`,
-              name: store.name,
-              vat_number: store.vat_number || store.vat || store.cui || '',
-              registration_number: store.registration_number || store.crn || store.reg_com || '',
-              address: store.address || ''
-            };
+        if (realCompany) {
+          // Sincronizăm Clientul și Compania Mamă reală în baza locală
+          const localClientId = billingRepo.upsertClientFromSupabase({
+            id: String(realCompany.id).trim(),
+            name: realCompany.name || 'Client'
+          });
+
+          localCompanyId = billingRepo.upsertCompanyFromSupabase({
+            id: String(realCompany.id).trim(),
+            name: realCompany.name || 'Companie Fără Nume',
+            vat_number: realCompany.vat_number || realCompany.cui || '',
+            registration_number: realCompany.registration_number || realCompany.reg_com || '',
+            address: realCompany.address || ''
+          }, localClientId);
+
+          store.client_company = realCompany;
+        } else {
+          // Magazin fără companie mamă asociată (client_company_id IS NULL)
+          if (!unassignedCompId) {
+            const unassignedClientId = billingRepo.upsertClientFromSupabase({ id: 'unassigned_client', name: 'Magazine Fără Companie Mamă' });
+            unassignedCompId = billingRepo.upsertCompanyFromSupabase({ id: 'unassigned_company', name: 'Magazine Neasociate' }, unassignedClientId);
           }
+          localCompanyId = unassignedCompId;
+          store.client_company = { name: 'Magazine Neasociate', vat_number: '', registration_number: '', address: '' };
         }
 
-        // 1. Sincronizăm Clientul în baza locală
-        const rawClient = store.client_id ? clientsMap.get(String(store.client_id)) : null;
-        const clientData = rawClient || { id: store.client_id || `client_${store.id}`, name: companyData.name || store.name };
-        const localClientId = billingRepo.upsertClientFromSupabase(clientData);
-
-        // 2. Sincronizăm Compania în baza locală
-        const localCompanyId = billingRepo.upsertCompanyFromSupabase({
-          id: String(companyData.id || `comp_${store.id}`),
-          name: companyData.name || store.company_name || store.name,
-          vat_number: companyData.vat_number || companyData.cui || store.vat_number || '',
-          registration_number: companyData.registration_number || companyData.reg_com || store.registration_number || '',
-          address: companyData.address || store.address || ''
-        }, localClientId);
-
-        // 3. Sincronizăm Magazinul în baza locală
+        // Sincronizăm Magazinul în baza locală sub compania sa mamă reală
         billingRepo.upsertStoreFromSupabase({
-          id: String(store.id),
+          id: String(store.id).trim(),
           name: store.name,
           address: store.address || '',
-          client_company_id: String(companyData.id || `comp_${store.id}`)
+          client_company_id: parentCompanyUuid
         }, localCompanyId);
 
-        // Atașăm datele de companie direct pe obiectul magazinului pentru UI și generare PDF
-        store.client_company = companyData;
         const storeId = store.id;
         
         if (!ordersByStore.has(storeId)) {
