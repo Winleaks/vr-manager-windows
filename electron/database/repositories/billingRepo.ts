@@ -117,13 +117,6 @@ export function upsertCompanyFromSupabase(companyData: { id: string, name: strin
   const cuiVal = companyData.vat_number || companyData.cui || null;
   const regComVal = companyData.registration_number || companyData.reg_com || null;
 
-  if (!localCompany && cuiVal) {
-    localCompany = db.prepare('SELECT id FROM companies WHERE cui = ?').get(cuiVal) as any;
-  }
-  if (!localCompany && companyData.name) {
-    localCompany = db.prepare('SELECT id FROM companies WHERE LOWER(name) = LOWER(?)').get(companyData.name) as any;
-  }
-
   if (localCompany) {
     db.prepare(`
       UPDATE companies 
@@ -163,9 +156,6 @@ export function upsertCompanyFromSupabase(companyData: { id: string, name: strin
 
 export function upsertStoreFromSupabase(storeData: { id: string, name: string, address?: string, client_company_id: string }, localCompanyId?: number) {
   let localStore = db.prepare('SELECT id, company_id FROM stores WHERE supabase_store_id = ?').get(storeData.id) as any;
-  if (!localStore && storeData.name) {
-    localStore = db.prepare('SELECT id, company_id FROM stores WHERE LOWER(name) = LOWER(?)').get(storeData.name) as any;
-  }
 
   let companyId = localCompanyId;
   if (!companyId && storeData.client_company_id) {
@@ -180,8 +170,12 @@ export function upsertStoreFromSupabase(storeData: { id: string, name: string, a
   }
 
   if (!companyId) {
-    const firstCompany = db.prepare('SELECT id FROM companies ORDER BY id LIMIT 1').get() as any;
-    companyId = firstCompany ? firstCompany.id : 1;
+    let unassignedComp = db.prepare("SELECT id FROM companies WHERE supabase_company_id = 'unassigned_company'").get() as any;
+    if (!unassignedComp) {
+      const info = db.prepare("INSERT INTO companies (client_id, name, supabase_company_id) VALUES (1, 'Magazine Neasociate', 'unassigned_company')").run();
+      unassignedComp = { id: info.lastInsertRowid };
+    }
+    companyId = unassignedComp.id;
   }
 
   if (localStore) {
