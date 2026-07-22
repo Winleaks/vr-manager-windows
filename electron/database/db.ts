@@ -95,29 +95,14 @@ export function scanAllDatabases() {
   return results;
 }
 
-// Migrare/restaurare automată la pornire: dacă baza curentă are <= 5 articole
-const currentInfo = evaluateDb(dbPath);
-const currentScore = currentInfo ? currentInfo.totalItems : 0;
-
-if (currentScore <= 50) {
+// Migrare automată la prima pornire (doar dacă baza de date nu există deloc pe disc)
+if (!fs.existsSync(dbPath)) {
   const found = scanAllDatabases();
-  const best = found.find(f => path.resolve(f.filePath) !== path.resolve(dbPath) && f.totalItems > currentScore);
+  const best = found.find(f => path.resolve(f.filePath) !== path.resolve(dbPath) && f.totalItems > 5);
   if (best) {
     try {
-      console.log(`[MIGRARE AUTOMATĂ] Am găsit baza de date anterioară: ${best.filePath} (Scor: ${best.totalItems}). O restaurăm în: ${dbPath}`);
-      if (fs.existsSync(dbPath)) {
-        fs.copyFileSync(dbPath, path.join(dbFolder, `backup_pre_migration_${Date.now()}.db`));
-      }
+      console.log(`[MIGRARE AUTOMATĂ] Am găsit o bază de date anterioară pe disc: ${best.filePath}. O restaurăm în: ${dbPath}`);
       fs.copyFileSync(best.filePath, dbPath);
-      if (fs.existsSync(`${best.filePath}-wal`)) fs.copyFileSync(`${best.filePath}-wal`, `${dbPath}-wal`);
-      if (fs.existsSync(`${best.filePath}-shm`)) fs.copyFileSync(`${best.filePath}-shm`, `${dbPath}-shm`);
-      if (fs.existsSync(`${dbPath}-wal`) && !fs.existsSync(`${best.filePath}-wal`)) {
-        try { fs.unlinkSync(`${dbPath}-wal`); } catch (e) {}
-      }
-      if (fs.existsSync(`${dbPath}-shm`) && !fs.existsSync(`${best.filePath}-shm`)) {
-        try { fs.unlinkSync(`${dbPath}-shm`); } catch (e) {}
-      }
-      console.log('Restaurare automată finalizată cu succes!');
     } catch (e) {
       console.error('Eroare la restaurarea automată:', e);
     }
@@ -257,17 +242,33 @@ export function closeDb() {
 export function restoreDb(filePath: string) {
   try {
     closeDb();
+    
+    // Curățăm jurnalele WAL și SHM vechi pentru a nu anula datele proaspăt restaurate
+    if (fs.existsSync(`${dbPath}-wal`)) {
+      try { fs.unlinkSync(`${dbPath}-wal`); } catch (e) {}
+    }
+    if (fs.existsSync(`${dbPath}-shm`)) {
+      try { fs.unlinkSync(`${dbPath}-shm`); } catch (e) {}
+    }
+
     fs.copyFileSync(filePath, dbPath);
-    console.log('Database file replaced from backup.');
-    // Re-open DB
+    console.log('Database file replaced from backup successfully.');
+    
+    // Re-deschidere conexiune Singleton DB cu toate setările optime
     db = new Database(dbPath, { verbose: isDev ? console.log : undefined });
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
+    db.pragma('synchronous = NORMAL');
+    db.pragma('temp_store = MEMORY');
+    db.pragma('busy_timeout = 5000');
     return true;
   } catch (err) {
     console.error('Failed to restore database:', err);
-    // Try to recover
-    db = new Database(dbPath, { verbose: isDev ? console.log : undefined });
+    try {
+      db = new Database(dbPath, { verbose: isDev ? console.log : undefined });
+      db.pragma('journal_mode = WAL');
+      db.pragma('foreign_keys = ON');
+    } catch (e) {}
     return false;
   }
 }

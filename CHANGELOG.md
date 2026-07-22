@@ -1,3 +1,11 @@
+### 🛠️ v0.1.42 - Fix Restaurare Bază de Date Cloud pe Calculatoare Noi
+
+- **Fix Jurnale SQLite WAL & SHM:** Am rezolvat problema anulării datelor la restaurarea pe un PC nou! Aplicația curăță acum automat fișierele temporare vechi de jurnal `.db-wal` și `.db-shm` înainte de restaurare, prevenind suprascrierea datelor aduse din cloud.
+- **Integritate Stream Descărcare Google Drive:** Am asigurat că descărcarea bazei de date din cloud este 100% finalizată pe disc (`finish` stream) înainte de înlocuirea fișierului local.
+- **Fix Auto-Scan:** Am oprit verificarea automată la repornire care suprascria baza de date abia adusă din cloud cu fișierul gol creat la prima instalare.
+
+---
+
 ### 🏛️ v0.1.41 - Optimizări Bază de Date B-Tree, Flexibilitate Google OAuth & UI Update
 
 - **Arhitectură Bază de Date B-Tree (Enterprise 2026):** Am creat indexuri strategice B-Tree pe toate cheile externe (FK) și coloanele tranzacționale de volum. Căutările și interogările rulează acum sub 1ms chiar și la sute de mii de înregistrări.

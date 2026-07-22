@@ -254,10 +254,10 @@ export async function restoreFromCloud(fileId?: string): Promise<{ success: bool
     );
 
     await new Promise((resolve, reject) => {
-      res.data
-        .on('end', () => resolve(true))
-        .on('error', (err: any) => reject(err))
-        .pipe(dest);
+      dest.on('finish', () => resolve(true));
+      dest.on('error', (err: any) => reject(err));
+      res.data.on('error', (err: any) => reject(err));
+      res.data.pipe(dest);
     });
 
     // Close and overwrite local db
