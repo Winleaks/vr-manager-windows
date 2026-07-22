@@ -168,11 +168,15 @@ export function upsertStoreFromSupabase(storeData: { id: string, name: string, a
   }
 
   let companyId = localCompanyId;
-  if (!companyId) {
+  if (!companyId && storeData.client_company_id) {
     const company = db.prepare('SELECT id FROM companies WHERE supabase_company_id = ?').get(storeData.client_company_id) as any;
     if (company) {
       companyId = company.id;
     }
+  }
+
+  if (!companyId && localStore) {
+    companyId = localStore.company_id;
   }
 
   if (!companyId) {
@@ -196,7 +200,19 @@ export function upsertStoreFromSupabase(storeData: { id: string, name: string, a
   }
 }
 
+export function cleanupOrphanCompanies() {
+  try {
+    db.prepare(`
+      DELETE FROM companies 
+      WHERE id NOT IN (SELECT DISTINCT company_id FROM stores)
+        AND (cui IS NULL OR cui = '')
+        AND (reg_com IS NULL OR reg_com = '')
+    `).run();
+  } catch(e) {}
+}
+
 export function getAllCompaniesAndStores() {
+  cleanupOrphanCompanies();
   const companies = db.prepare('SELECT * FROM companies ORDER BY name').all() as any[];
   const stores = db.prepare('SELECT * FROM stores ORDER BY name').all() as any[];
 

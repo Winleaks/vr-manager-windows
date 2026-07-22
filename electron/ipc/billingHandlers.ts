@@ -492,14 +492,35 @@ export function registerBillingHandlers() {
       for (const s of allStores) {
         if (s.id) {
           const cleanCompId = String(s.client_company_id || s.company_id || '').trim();
+          let localCompanyId: number | undefined;
+
+          if (cleanCompId) {
+            const rawCompany = companiesMap.get(cleanCompId) || companiesMap.get(cleanCompId.toLowerCase());
+            if (rawCompany) {
+              const rawClient = rawCompany.client_id ? clientsMap.get(String(rawCompany.client_id).trim()) : null;
+              const clientData = rawClient || { id: rawCompany.client_id || `client_${rawCompany.id}`, name: rawCompany.name };
+              const localClientId = billingRepo.upsertClientFromSupabase(clientData);
+
+              localCompanyId = billingRepo.upsertCompanyFromSupabase({
+                id: String(rawCompany.id),
+                name: rawCompany.name || 'Companie',
+                vat_number: rawCompany.vat_number || rawCompany.cui || '',
+                registration_number: rawCompany.registration_number || rawCompany.reg_com || '',
+                address: rawCompany.address || ''
+              }, localClientId);
+            }
+          }
+
           billingRepo.upsertStoreFromSupabase({
             id: String(s.id),
             name: s.name,
             address: s.address || '',
             client_company_id: cleanCompId
-          });
+          }, localCompanyId);
         }
       }
+
+      billingRepo.cleanupOrphanCompanies();
 
       return { success: true, message: "Toți clienții, companiile și magazinele au fost sincronizate cu succes din server." };
     } catch (e: any) {
