@@ -437,26 +437,6 @@ export function registerBillingHandlers() {
       const authData = await authRes.json();
       const token = authData.access_token;
 
-  ipcMain.handle('billing:syncEntities', async () => {
-    try {
-      const url = billingRepo.getAppSetting('supabase_url');
-      const key = billingRepo.getAppSetting('supabase_key');
-      const email = billingRepo.getAppSetting('supabase_email');
-      const password = billingRepo.getAppSetting('supabase_password');
-
-      if (!url || !key || !email || !password) {
-        return { success: false, message: "Datele de conectare la Supabase lipsesc în setări." };
-      }
-
-      const authRes = await fetch(`${url}/auth/v1/token?grant_type=password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': key },
-        body: JSON.stringify({ email, password })
-      });
-      if (!authRes.ok) return { success: false, message: "Eroare autentificare Supabase." };
-      const authData = await authRes.json();
-      const token = authData.access_token;
-
       // 1. Preluăm companiile mamă împreună cu toate magazinele lor aparținătoare (One-to-Many Join invers pe UUID)
       const compRes = await fetch(`${url}/rest/v1/client_company?select=id,name,registration_number,vat_number,address,email,phone,active,stores:client_store!client_company_id(*)&limit=10000`, {
         headers: { 
