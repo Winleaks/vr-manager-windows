@@ -89,7 +89,29 @@ export function updateStore(id: number, name: string, address: string | null, su
   stmt.run(name, address, supabaseStoreId, isActive ? 1 : 0, id);
 }
 
-export function upsertCompanyFromSupabase(companyData: { id: string, name: string, registration_number?: string, vat_number?: string, address?: string, cui?: string, reg_com?: string }) {
+export function upsertClientFromSupabase(clientData: { id: string, name: string }) {
+  let localClient = db.prepare('SELECT id FROM clients WHERE supabase_client_id = ?').get(clientData.id) as any;
+  if (!localClient && clientData.name) {
+    localClient = db.prepare('SELECT id FROM clients WHERE LOWER(name) = LOWER(?)').get(clientData.name) as any;
+  }
+
+  if (localClient) {
+    db.prepare(`
+      UPDATE clients 
+      SET name = ?, supabase_client_id = ?, updated_at = CURRENT_TIMESTAMP 
+      WHERE id = ?
+    `).run(clientData.name, clientData.id, localClient.id);
+    return localClient.id as number;
+  } else {
+    const info = db.prepare(`
+      INSERT INTO clients (name, supabase_client_id)
+      VALUES (?, ?)
+    `).run(clientData.name, clientData.id);
+    return info.lastInsertRowid as number;
+  }
+}
+
+export function upsertCompanyFromSupabase(companyData: { id: string, name: string, registration_number?: string, vat_number?: string, address?: string, cui?: string, reg_com?: string, client_id?: string }, localClientId?: number) {
   let localCompany = db.prepare('SELECT id FROM companies WHERE supabase_company_id = ?').get(companyData.id) as any;
   
   const cuiVal = companyData.vat_number || companyData.cui || null;
