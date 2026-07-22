@@ -178,6 +178,16 @@ function runMigrations() {
             }
           }
         }
+      },
+      {
+        version: 3,
+        description: "Adăugare coloane complete produse (name_ro, variant_label, price_standard, available)",
+        up: () => {
+          try { db.exec("ALTER TABLE cloud_products ADD COLUMN name_ro TEXT;"); } catch (e) {}
+          try { db.exec("ALTER TABLE cloud_products ADD COLUMN variant_label TEXT;"); } catch (e) {}
+          try { db.exec("ALTER TABLE cloud_products ADD COLUMN price_standard REAL DEFAULT 0;"); } catch (e) {}
+          try { db.exec("ALTER TABLE cloud_products ADD COLUMN available BOOLEAN DEFAULT 1;"); } catch (e) {}
+        }
       }
     ];
 

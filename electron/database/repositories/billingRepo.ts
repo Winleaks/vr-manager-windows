@@ -284,24 +284,54 @@ export function getCloudProducts() {
   return db.prepare('SELECT * FROM cloud_products ORDER BY name').all();
 }
 
-export function upsertProductFromSupabase(product: { id: string, name: string, unit?: string, category?: string, price?: number }) {
+export function upsertProductFromSupabase(product: {
+  id: string,
+  name: string,
+  name_ro?: string,
+  variant_label?: string,
+  unit?: string,
+  category?: string,
+  price_standard?: number,
+  available?: boolean
+}) {
   let localProd = db.prepare('SELECT id FROM cloud_products WHERE supabase_product_id = ?').get(product.id) as any;
   if (!localProd && product.name) {
     localProd = db.prepare('SELECT id FROM cloud_products WHERE LOWER(name) = LOWER(?)').get(product.name) as any;
   }
 
+  const availVal = product.available === false ? 0 : 1;
+
   if (localProd) {
     db.prepare(`
       UPDATE cloud_products
-      SET name = ?, unit = ?, category = ?, price = ?, supabase_product_id = ?, updated_at = CURRENT_TIMESTAMP
+      SET name = ?, name_ro = ?, variant_label = ?, unit = ?, category = ?, price_standard = ?, available = ?, supabase_product_id = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(product.name, product.unit || null, product.category || null, product.price || 0, product.id, localProd.id);
+    `).run(
+      product.name,
+      product.name_ro || null,
+      product.variant_label || null,
+      product.unit || null,
+      product.category || null,
+      product.price_standard || 0,
+      availVal,
+      product.id,
+      localProd.id
+    );
     return localProd.id as number;
   } else {
     const info = db.prepare(`
-      INSERT INTO cloud_products (supabase_product_id, name, unit, category, price)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(product.id, product.name, product.unit || null, product.category || null, product.price || 0);
+      INSERT INTO cloud_products (supabase_product_id, name, name_ro, variant_label, unit, category, price_standard, available)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      product.id,
+      product.name,
+      product.name_ro || null,
+      product.variant_label || null,
+      product.unit || null,
+      product.category || null,
+      product.price_standard || 0,
+      availVal
+    );
     return info.lastInsertRowid as number;
   }
 }

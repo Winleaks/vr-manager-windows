@@ -168,10 +168,20 @@ export function generateInvoicePDF(
   const tableRows: any[] = [];
 
   invoiceData.items.forEach((item, index) => {
+    let mainTitle = item.productName || 'Produs';
+    if (item.variant_label) {
+      mainTitle += ` [${item.variant_label}]`;
+    }
+    
+    let descriptionText = mainTitle;
+    if (item.name_ro) {
+      descriptionText += `\n${item.name_ro}`;
+    }
+
     tableRows.push([
       (index + 1).toString(),
-      item.productName,
-      "pcs",
+      descriptionText,
+      item.unit || "buc",
       item.quantity.toString(),
       item.unitPrice.toFixed(2),
       item.totalPrice.toFixed(2)

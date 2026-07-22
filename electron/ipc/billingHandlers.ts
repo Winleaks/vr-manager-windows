@@ -123,7 +123,7 @@ export function registerBillingHandlers() {
       const token = authData.access_token;
 
       const query = new URLSearchParams();
-      query.append('select', 'id,delivery_date,status,notes,client_store:client_store_id(*,client_company:client_company_id(*)),order_items(qty_ordered,qty_delivered,unit_price_snapshot,products:product_id(name,unit,category))');
+      query.append('select', 'id,delivery_date,status,notes,client_store:client_store_id(*,client_company:client_company_id(*)),order_items(qty_ordered,qty_delivered,unit_price_snapshot,products:product_id(*))');
       query.append('delivery_date', `gte.${startDate}`);
       query.append('delivery_date', `lte.${endDate}`);
       query.append('status', 'neq.cancelled');
@@ -281,8 +281,23 @@ export function registerBillingHandlers() {
         for (const item of order.order_items || []) {
           const qty = item.qty_delivered ?? item.qty_ordered;
           if (qty > 0) {
+            if (item.products?.name) {
+              billingRepo.upsertProductFromSupabase({
+                id: String(item.product_id || item.products.id || item.products.name),
+                name: item.products.name,
+                name_ro: item.products.name_ro || '',
+                variant_label: item.products.variant_label || '',
+                unit: item.products.unit || 'buc',
+                category: item.products.category || 'Patiserie',
+                price_standard: item.products.price_standard || item.products.price || item.unit_price_snapshot || 0,
+                available: item.products.available !== false
+              });
+            }
+
             storeData.items.push({
               productName: item.products?.name || 'Produs necunoscut',
+              name_ro: item.products?.name_ro || '',
+              variant_label: item.products?.variant_label || '',
               quantity: qty,
               unitPrice: item.unit_price_snapshot || 0,
               totalPrice: qty * (item.unit_price_snapshot || 0)
@@ -385,9 +400,12 @@ export function registerBillingHandlers() {
             billingRepo.upsertProductFromSupabase({
               id: String(p.id),
               name: p.name || 'Produs fără nume',
+              name_ro: p.name_ro || '',
+              variant_label: p.variant_label || '',
               unit: p.unit || 'buc',
               category: p.category || 'Patiserie',
-              price: p.price || p.unit_price || 0
+              price_standard: p.price_standard ?? p.price ?? p.unit_price ?? 0,
+              available: p.available !== false
             });
           }
         }

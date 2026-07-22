@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../shared/api';
-import { Package, RefreshCw, AlertCircle, Tag } from 'lucide-react';
+import { Package, RefreshCw, CheckCircle, XCircle, Tag } from 'lucide-react';
 
 export function BillingProducts() {
   const [products, setProducts] = useState<any[]>([]);
@@ -60,7 +60,7 @@ export function BillingProducts() {
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 text-center">
           <Package size={48} className="mx-auto text-slate-300 mb-4" />
           <h3 className="text-lg font-bold text-slate-700 mb-2">Niciun produs găsit</h3>
-          <p className="text-slate-500 max-w-md mx-auto mb-6">Nu există produse în baza de date locală. Apasă pe butonul de mai sus pentru a le descărca direct de pe server.</p>
+          <p className="text-slate-500 max-w-md mx-auto mb-6">Nu există produse în baza de date locală. Apasă pe butonul de mai jos pentru a le descărca direct de pe server.</p>
           <button 
             onClick={handleSyncWithServer}
             disabled={syncing}
@@ -83,10 +83,12 @@ export function BillingProducts() {
             <table className="w-full text-sm text-left">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
-                  <th className="px-6 py-4 font-medium">Denumire Produs</th>
-                  <th className="px-6 py-4 font-medium">Categorie</th>
-                  <th className="px-6 py-4 font-medium">Unitate Măsură</th>
-                  <th className="px-6 py-4 font-medium text-right">Preț Referință</th>
+                  <th className="px-6 py-4 font-medium">Name (Engleză)</th>
+                  <th className="px-6 py-4 font-medium">Romanian Name (Nume RO)</th>
+                  <th className="px-6 py-4 font-medium">Variant Label</th>
+                  <th className="px-6 py-4 font-medium">Unitate (Unit)</th>
+                  <th className="px-6 py-4 font-medium text-right">Standard Price</th>
+                  <th className="px-6 py-4 font-medium text-center">Available</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -95,17 +97,35 @@ export function BillingProducts() {
                     <td className="px-6 py-4 font-bold text-slate-800">
                       {p.name}
                     </td>
-                    <td className="px-6 py-4">
-                      <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-md text-xs font-medium">
-                        <Tag size={12} />
-                        {p.category || 'General'}
-                      </span>
+                    <td className="px-6 py-4 text-slate-600 italic">
+                      {p.name_ro || '—'}
                     </td>
-                    <td className="px-6 py-4 text-slate-600">
+                    <td className="px-6 py-4">
+                      {p.variant_label ? (
+                        <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md text-xs font-semibold">
+                          <Tag size={12} />
+                          {p.variant_label}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-slate-600 font-mono">
                       {p.unit || 'buc'}
                     </td>
-                    <td className="px-6 py-4 font-bold text-right text-emerald-600">
-                      {p.price ? `£${Number(p.price).toFixed(2)}` : '—'}
+                    <td className="px-6 py-4 font-bold text-right text-emerald-600 font-mono">
+                      {p.price_standard ? `£${Number(p.price_standard).toFixed(2)}` : '—'}
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      {p.available !== 0 && p.available !== false ? (
+                        <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full text-xs font-bold">
+                          <CheckCircle size={14} /> Da
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 bg-rose-100 text-rose-700 px-2.5 py-1 rounded-full text-xs font-bold">
+                          <XCircle size={14} /> Nu
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}

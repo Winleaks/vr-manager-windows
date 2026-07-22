@@ -268,10 +268,12 @@ CREATE TABLE IF NOT EXISTS cloud_products (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   supabase_product_id TEXT UNIQUE,
   name TEXT NOT NULL,
+  name_ro TEXT,
+  variant_label TEXT,
   unit TEXT,
   category TEXT,
-  price REAL DEFAULT 0,
-  is_active BOOLEAN DEFAULT 1,
+  price_standard REAL DEFAULT 0,
+  available BOOLEAN DEFAULT 1,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
