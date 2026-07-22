@@ -24,14 +24,22 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Build Vite Frontend & Electron Main
+      - name: Build App Assets
         run: npx vite build
 
-      - name: Rebuild Native Dependencies for Electron
-        run: npx electron-builder install-app-deps
+      - name: Build Electron Windows Package
+        run: npx electron-builder --win --x64 -p never
 
-      - name: Package and Publish App
-        run: npx electron-builder --win --x64 -p always
+      - name: Publish Release to GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: CHANGELOG.md
+          files: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          draft: false
+          prerelease: false
+          make_latest: true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
