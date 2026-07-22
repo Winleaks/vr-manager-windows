@@ -60,8 +60,8 @@ export function BillingClients() {
                   <div>
                     <h3 className="font-bold text-slate-900 text-lg leading-tight">{company.name}</h3>
                     <div className="text-sm text-slate-500 mt-1 flex flex-col gap-0.5">
-                      {company.cui && <span>CUI: <span className="font-medium text-slate-700">{company.cui}</span></span>}
-                      {company.reg_com && <span>Reg. Com: <span className="font-medium text-slate-700">{company.reg_com}</span></span>}
+                      {company.cui && <span>VAT No: <span className="font-medium text-slate-700 font-mono">{company.cui}</span></span>}
+                      {company.reg_com && <span>CRN: <span className="font-medium text-slate-700 font-mono">{company.reg_com}</span></span>}
                     </div>
                   </div>
                 </div>

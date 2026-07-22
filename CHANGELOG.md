@@ -1,3 +1,11 @@
+### 🛠️ v0.1.39 - Optimizare UI UK: Nume Companie Magazin, VAT No & CRN
+
+- **Fix Afișare Companie Magazin:** Am corectat proprietatea citită pe frontend (`data.store.client_company?.name`) astfel încât numele companiei să apară corect pentru fiecare magazin în lista de comenzi, în loc de *„Companie neasociată”*.
+- **Terminologie Specifică UK (VAT No & CRN):** Am înlocuit termenii românești CUI și Reg. Com. cu termenii uzuali din Marea Britanie: **VAT No** (VAT Registration Number) și **CRN** (Company Registration Number).
+- **Fix Cod Poștal pe VAT:** Am eliminat orice fallback ce aloca eronat codul poștal al magazinului în câmpul de VAT Number.
+
+---
+
 ### 🛠️ v0.1.38 - Corelare Inteligentă Magazin & Companie Supabase
 
 - **Fix Corelare Supabase:** Am optimizat procesul de extragere al magazinelor (`client_store`) și companiilor (`client_company`) din cloud-ul Supabase. Aplicația extrage acum toate datele magazinului și corelează precis cheia `client_store.client_company_id` cu `client_company.id`.

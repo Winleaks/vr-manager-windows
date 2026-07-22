@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Calendar, DownloadCloud, Loader2, CheckCircle, AlertTriangle, FileText, Printer } from 'lucide-react';
+import { Calendar, DownloadCloud, Loader2, CheckCircle, AlertTriangle, FileText, Printer, Building2 } from 'lucide-react';
 import { api } from '../shared/api';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
@@ -56,9 +56,9 @@ export function BillingInvoices() {
         invoiceDate: currentOrder.assignedInvoiceDate,
         client: {
           name: currentOrder.store.client_company?.name || currentOrder.store.name,
-          cui: currentOrder.store.client_company?.vat_number,
-          regCom: currentOrder.store.client_company?.registration_number,
-          address: currentOrder.store.client_company?.address,
+          cui: currentOrder.store.client_company?.vat_number || currentOrder.store.client_company?.cui,
+          regCom: currentOrder.store.client_company?.registration_number || currentOrder.store.client_company?.reg_com,
+          address: currentOrder.store.client_company?.address || currentOrder.store.address,
           county: currentOrder.store.owner?.county,
           city: currentOrder.store.owner?.city
         },
@@ -190,7 +190,15 @@ export function BillingInvoices() {
                             {data.store.name}
                             {isGenerated && <span className="bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5 rounded-full">FACT {data.assignedInvoiceNumber}</span>}
                           </div>
-                          <div className="text-sm text-slate-500 mb-2">{data.store.owner?.company_name || 'Companie neasociată'}</div>
+                          <div className="text-sm text-slate-600 mb-2 flex items-center gap-1.5 flex-wrap">
+                            <Building2 size={14} className="text-indigo-500" />
+                            <span className="font-medium text-slate-800">{data.store.client_company?.name || data.store.company_name || 'Companie neasociată'}</span>
+                            {(data.store.client_company?.vat_number || data.store.client_company?.cui) && (
+                              <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-mono font-medium">
+                                VAT: {data.store.client_company?.vat_number || data.store.client_company?.cui}
+                              </span>
+                            )}
+                          </div>
                           <div className="text-sm text-slate-600 mb-2">{data.items.length} produse comandate</div>
                           <div className="font-semibold text-slate-700 border-t border-slate-100 pt-2 mt-2">
                             Total calculat: {total.toFixed(2)} GBP

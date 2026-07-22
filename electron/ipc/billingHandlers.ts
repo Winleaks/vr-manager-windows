@@ -198,8 +198,8 @@ export function registerBillingHandlers() {
             companyData = {
               id: `virtual_${store.id}`,
               name: store.name,
-              vat_number: store.cui || store.postcode || '',
-              registration_number: store.reg_com || '',
+              vat_number: store.vat_number || store.vat || store.cui || '',
+              registration_number: store.registration_number || store.crn || store.reg_com || '',
               address: store.address || ''
             };
           }
