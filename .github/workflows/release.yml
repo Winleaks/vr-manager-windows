@@ -25,21 +25,9 @@ jobs:
       - name: Install Dependencies
         run: npm install --include=dev
 
-      - name: Build Electron App
+      - name: Build and Publish Electron App
         run: |
           npx vite build
-          npx electron-builder --win --x64
+          npx electron-builder --win --x64 -p always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          body_path: CHANGELOG.md
-          files: |
-            release/*.exe
-            release/*.blockmap
-            release/latest.yml
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
