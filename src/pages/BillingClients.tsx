@@ -218,8 +218,8 @@ export function BillingClients() {
               <div>
                 <h1 className="text-3xl font-bold text-slate-900">{company.name}</h1>
                 <div className="flex items-center gap-4 text-sm text-slate-500 mt-1 flex-wrap">
-                  {company.cui && <span>VAT No: <span className="font-semibold text-slate-800 font-mono">{company.cui}</span></span>}
-                  {company.reg_com && <span>CRN: <span className="font-semibold text-slate-800 font-mono">{company.reg_com}</span></span>}
+                  {company.cui && <span>VAT No: <span className="font-semibold text-slate-800">{company.cui}</span></span>}
+                  {company.reg_com && <span>CRN: <span className="font-semibold text-slate-800">{company.reg_com}</span></span>}
                   <span>{stores.length} magazine arondate</span>
                 </div>
               </div>
@@ -241,13 +241,13 @@ export function BillingClients() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Facturat</span>
-            <div className="text-2xl font-bold text-slate-900 mt-2 font-mono">£{stats.totalInvoiced.toFixed(2)}</div>
+            <div className="text-2xl font-bold text-slate-900 mt-2">£{stats.totalInvoiced.toFixed(2)}</div>
             <span className="text-xs text-slate-400 mt-2">{invoices.length} facturi emise</span>
           </div>
 
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Încasat</span>
-            <div className="text-2xl font-bold text-emerald-600 mt-2 font-mono">£{stats.totalPaid.toFixed(2)}</div>
+            <div className="text-2xl font-bold text-emerald-600 mt-2">£{stats.totalPaid.toFixed(2)}</div>
             <span className="text-xs text-slate-400 mt-2">{payments.length} plăti înregistrate</span>
           </div>
 
@@ -255,7 +255,7 @@ export function BillingClients() {
             stats.totalUnpaid > 0 ? 'bg-rose-50/50 border-rose-200' : 'bg-white border-slate-200'
           }`}>
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Restanță Totală Curentă</span>
-            <div className={`text-2xl font-bold mt-2 font-mono ${stats.totalUnpaid > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
+            <div className={`text-2xl font-bold mt-2 ${stats.totalUnpaid > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
               £{stats.totalUnpaid.toFixed(2)}
             </div>
             <span className="text-xs text-slate-500 mt-2">{unpaidInvoices.length} facturi neachitate</span>
@@ -268,7 +268,7 @@ export function BillingClients() {
               <span className="text-xs font-semibold text-indigo-700 uppercase tracking-wider">Sold Credit / Avans</span>
               <ShieldCheck size={16} className="text-indigo-600" />
             </div>
-            <div className="text-2xl font-bold text-indigo-700 mt-2 font-mono">£{stats.creditBalance.toFixed(2)}</div>
+            <div className="text-2xl font-bold text-indigo-700 mt-2">£{stats.creditBalance.toFixed(2)}</div>
             <span className="text-xs text-indigo-600 mt-2 font-medium">
               {stats.creditBalance > 0 ? 'Disponibil pentru facturi viitoare' : 'Niciun avans existent'}
             </span>
@@ -358,9 +358,9 @@ export function BillingClients() {
                               <td className="py-3.5 px-4 font-bold text-slate-900">FACT #{inv.invoice_number}</td>
                               <td className="py-3.5 px-4 text-slate-600">{inv.invoice_date}</td>
                               <td className="py-3.5 px-4 font-semibold text-slate-800">{inv.store_name}</td>
-                              <td className="py-3.5 px-4 font-mono font-medium">£{inv.total_amount.toFixed(2)}</td>
-                              <td className="py-3.5 px-4 font-mono text-emerald-600">£{inv.paid_amount.toFixed(2)}</td>
-                              <td className="py-3.5 px-4 font-mono font-bold text-rose-600">£{due.toFixed(2)}</td>
+                              <td className="py-3.5 px-4 font-medium">£{inv.total_amount.toFixed(2)}</td>
+                              <td className="py-3.5 px-4 text-emerald-600 font-semibold">£{inv.paid_amount.toFixed(2)}</td>
+                              <td className="py-3.5 px-4 font-bold text-rose-600">£{due.toFixed(2)}</td>
                               <td className="py-3.5 px-4 text-right">
                                 <button
                                   onClick={() => handleOpenPaymentModal(inv)}
@@ -403,7 +403,7 @@ export function BillingClients() {
                           <td className="py-3.5 px-4 font-bold text-slate-900">FACT #{inv.invoice_number}</td>
                           <td className="py-3.5 px-4 text-slate-600">{inv.invoice_date}</td>
                           <td className="py-3.5 px-4 font-semibold text-slate-800">{inv.store_name}</td>
-                          <td className="py-3.5 px-4 font-mono font-bold">£{inv.total_amount.toFixed(2)}</td>
+                          <td className="py-3.5 px-4 font-bold">£{inv.total_amount.toFixed(2)}</td>
                           <td className="py-3.5 px-4">
                             <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${
                               isPaid ? 'bg-emerald-100 text-emerald-800' : isPartial ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
@@ -451,7 +451,7 @@ export function BillingClients() {
                         {payments.map((p: any) => (
                           <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
                             <td className="py-3.5 px-4 font-semibold text-slate-700">{p.payment_date}</td>
-                            <td className="py-3.5 px-4 font-mono font-bold text-emerald-600">£{p.amount.toFixed(2)}</td>
+                            <td className="py-3.5 px-4 font-bold text-emerald-600">£{p.amount.toFixed(2)}</td>
                             <td className="py-3.5 px-4">
                               <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-bold ${
                                 p.method === 'cash' ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'
@@ -462,7 +462,7 @@ export function BillingClients() {
                             </td>
                             <td className="py-3.5 px-4 font-semibold text-slate-800">
                               {p.bank_name ? (
-                                <span className="bg-slate-100 px-2 py-0.5 rounded text-xs text-slate-700 border border-slate-200 font-mono">
+                                <span className="bg-slate-100 px-2 py-0.5 rounded text-xs text-slate-700 border border-slate-200">
                                   {p.bank_name}
                                 </span>
                               ) : '—'}
