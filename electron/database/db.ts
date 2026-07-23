@@ -197,6 +197,14 @@ function runMigrations() {
           try { db.exec("ALTER TABLE payments ADD COLUMN company_id INTEGER;"); } catch (e) {}
           try { db.exec("ALTER TABLE payments ADD COLUMN bank_name TEXT;"); } catch (e) {}
         }
+      },
+      {
+        version: 5,
+        description: "Adăugare coloane phone la companies și stores",
+        up: () => {
+          try { db.exec("ALTER TABLE companies ADD COLUMN phone TEXT;"); } catch (e) {}
+          try { db.exec("ALTER TABLE stores ADD COLUMN phone TEXT;"); } catch (e) {}
+        }
       }
     ];
 

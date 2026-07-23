@@ -87,14 +87,19 @@ export function registerBillingHandlers() {
       invoiceSeries: billingRepo.getAppSetting('invoice_series') || 'FACT',
       invoiceStartNumber: billingRepo.getAppSetting('invoice_start_number') || '1',
       issuerName: billingRepo.getAppSetting('issuer_name') || '',
+      issuerAddress: billingRepo.getAppSetting('issuer_address') || '',
       issuerCrn: billingRepo.getAppSetting('issuer_crn') || '',
       issuerVat: billingRepo.getAppSetting('issuer_vat') || '',
+      invoiceBankName1: billingRepo.getAppSetting('invoice_bank_name_1') || billingRepo.getAppSetting('invoice_bank_name') || '',
       invoiceAccountNumber: billingRepo.getAppSetting('invoice_account_number') || '',
       invoiceSortCode: billingRepo.getAppSetting('invoice_sort_code') || '',
-      invoiceBankName: billingRepo.getAppSetting('invoice_bank_name') || '',
-      invoiceIban: billingRepo.getAppSetting('invoice_iban') || '',
+      invoiceBankName2: billingRepo.getAppSetting('invoice_bank_name_2') || '',
+      invoiceAccountNumber2: billingRepo.getAppSetting('invoice_account_number_2') || '',
+      invoiceSortCode2: billingRepo.getAppSetting('invoice_sort_code_2') || '',
       invoiceFooter: billingRepo.getAppSetting('invoice_footer') || '',
       invoiceColor: billingRepo.getAppSetting('invoice_color') || '#4F46E5',
+      invoiceAlternateRowColor: billingRepo.getAppSetting('invoice_alternate_row_color') || '#4F46E5',
+      invoiceAlternateRowOpacity: billingRepo.getAppSetting('invoice_alternate_row_opacity') !== null ? Number(billingRepo.getAppSetting('invoice_alternate_row_opacity')) : 5,
       invoiceLogo: billingRepo.getAppSetting('invoice_logo') || '',
     };
   });
@@ -107,12 +112,19 @@ export function registerBillingHandlers() {
     billingRepo.setAppSetting('invoice_series', data.invoiceSeries);
     billingRepo.setAppSetting('invoice_start_number', data.invoiceStartNumber);
     billingRepo.setAppSetting('issuer_name', data.issuerName);
+    billingRepo.setAppSetting('issuer_address', data.issuerAddress);
     billingRepo.setAppSetting('issuer_crn', data.issuerCrn);
     billingRepo.setAppSetting('issuer_vat', data.issuerVat);
+    billingRepo.setAppSetting('invoice_bank_name_1', data.invoiceBankName1);
     billingRepo.setAppSetting('invoice_account_number', data.invoiceAccountNumber);
     billingRepo.setAppSetting('invoice_sort_code', data.invoiceSortCode);
+    billingRepo.setAppSetting('invoice_bank_name_2', data.invoiceBankName2);
+    billingRepo.setAppSetting('invoice_account_number_2', data.invoiceAccountNumber2);
+    billingRepo.setAppSetting('invoice_sort_code_2', data.invoiceSortCode2);
     billingRepo.setAppSetting('invoice_footer', data.invoiceFooter);
     billingRepo.setAppSetting('invoice_color', data.invoiceColor);
+    billingRepo.setAppSetting('invoice_alternate_row_color', data.invoiceAlternateRowColor);
+    billingRepo.setAppSetting('invoice_alternate_row_opacity', data.invoiceAlternateRowOpacity?.toString());
     billingRepo.setAppSetting('invoice_logo', data.invoiceLogo);
     return true;
   });

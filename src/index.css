@@ -52,3 +52,27 @@
     font-weight: 600;
   }
 }
+
+/* Evidențiere verde pentru TOATE zilele de LUNI din calendar */
+.react-datepicker__day.day-monday-highlight {
+  color: #047857 !important; /* emerald-700 */
+  font-weight: 800 !important;
+  background-color: #d1fae5 !important; /* emerald-100 */
+  border: 1px solid #6ee7b7 !important; /* emerald-300 */
+  border-radius: 6px !important;
+}
+
+/* Evidențiere verde plin pentru săptămâna selectată (Luni - Duminică) */
+.react-datepicker__day.custom-week-highlight {
+  background-color: #10b981 !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  border-radius: 6px !important;
+  border: none !important;
+}
+
+.react-datepicker__day.custom-week-highlight:hover {
+  background-color: #059669 !important;
+}
+
+

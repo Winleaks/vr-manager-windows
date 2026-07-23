@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Calendar, Loader2, FileText, Printer, Building2, Trash2, ShoppingBag, RefreshCw } from 'lucide-react';
+import { Calendar, Loader2, FileText, Printer, Building2, Trash2, ShoppingBag, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../shared/api';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
@@ -16,7 +16,44 @@ export function BillingOrders() {
 
   const weekStart = startOfWeek(selectedDate, { weekStartsOn: 1 });
   const weekEnd = endOfWeek(selectedDate, { weekStartsOn: 1 });
-  const dateRangeStr = `${format(weekStart, 'dd MMM', { locale: ro })} - ${format(weekEnd, 'dd MMM yyyy', { locale: ro })}`;
+
+  const handlePrevWeek = () => {
+    const newDate = new Date(selectedDate);
+    newDate.setDate(newDate.getDate() - 7);
+    setSelectedDate(newDate);
+  };
+
+  const handleNextWeek = () => {
+    const newDate = new Date(selectedDate);
+    newDate.setDate(newDate.getDate() + 7);
+    setSelectedDate(newDate);
+  };
+
+  const handleCurrentWeek = () => {
+    setSelectedDate(new Date());
+  };
+
+  const getDayClassName = (date: Date) => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    const start = new Date(weekStart);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(weekEnd);
+    end.setHours(0, 0, 0, 0);
+
+    const classes = [];
+
+    if (d.getDay() === 1) {
+      classes.push('day-monday-highlight');
+    }
+
+    if (d.getTime() >= start.getTime() && d.getTime() <= end.getTime()) {
+      classes.push('custom-week-highlight');
+    }
+
+    return classes.join(' ');
+  };
+
 
   const handleSync = async () => {
     setIsSyncing(true);
@@ -162,7 +199,8 @@ export function BillingOrders() {
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
-      <div className="mb-8 flex items-center justify-between">
+      {/* Header Standard Pagină */}
+      <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center">
@@ -170,32 +208,71 @@ export function BillingOrders() {
             </div>
             <h1 className="text-3xl font-bold text-slate-900">Sincronizare Comenzi</h1>
           </div>
-          
-          <div className="flex items-center gap-4 mt-6">
-            <div className="relative">
-              <DatePicker
-                selected={selectedDate}
-                onChange={(date) => date && setSelectedDate(date)}
-                dateFormat="dd MMM yyyy"
-                locale={ro}
-                className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-slate-800 font-medium cursor-pointer hover:border-slate-300 outline-none"
-              />
-            </div>
-            <div className="flex items-center gap-2 text-sm text-slate-500 bg-slate-50 px-4 py-2 rounded-xl border border-slate-200">
-              <Calendar size={16} className="text-slate-400" />
-              <span>Săptămâna: <strong className="text-slate-800">{format(weekStart, 'dd MMM')} - {format(weekEnd, 'dd MMM yyyy')}</strong></span>
-            </div>
-          </div>
+          <p className="text-slate-500 mt-2">Selectează săptămâna dorită și sincronizează comenzile din cloud pentru generarea facturilor.</p>
         </div>
 
         <button
           onClick={handleSync}
           disabled={isSyncing}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-6 py-2.5 rounded-xl shadow-sm transition-colors flex items-center gap-2"
+          className="bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 disabled:opacity-50 text-white font-semibold px-6 py-2.5 rounded-xl shadow-sm transition-colors flex items-center gap-2 self-start md:self-auto"
         >
           {isSyncing ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
-          {isSyncing ? 'Se sincronizează...' : 'Sincronizează Comenzi'}
+          <span>{isSyncing ? 'Se sincronizează...' : 'Sincronizează Comenzi'}</span>
         </button>
+      </div>
+
+      {/* Card Filtrare Săptămână (stil unitar cu celelalte pagini, compact) */}
+      <div className="bg-white p-4 px-6 rounded-2xl border border-slate-200 shadow-sm mb-8">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 mr-1">
+            <Calendar size={18} className="text-slate-400" />
+            <span className="text-sm font-semibold text-slate-700">Filtrează după Săptămână:</span>
+          </div>
+
+          <button
+            onClick={handleCurrentWeek}
+            className="px-4 py-2 text-sm font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors"
+          >
+            Săptămâna Curentă
+          </button>
+
+          <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1 shadow-sm">
+            <button
+              onClick={handlePrevWeek}
+              className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-lg transition-colors"
+              title="Săptămâna anterioară"
+            >
+              <ChevronLeft size={18} />
+            </button>
+
+            <div className="relative flex items-center px-3 py-1">
+              <DatePicker
+                selected={selectedDate}
+                onChange={(date: Date | null) => date && setSelectedDate(date)}
+                dateFormat="dd MMM yyyy"
+                locale={ro}
+                calendarStartDay={1}
+                dayClassName={getDayClassName}
+                className="bg-transparent text-slate-800 font-semibold text-sm outline-none cursor-pointer"
+                customInput={
+                  <button className="flex items-center gap-1.5 font-bold text-slate-800 text-sm hover:text-indigo-600 transition-colors">
+                    <span>
+                      Luni, {format(weekStart, 'dd MMM', { locale: ro })} - Duminică, {format(weekEnd, 'dd MMM yyyy', { locale: ro })}
+                    </span>
+                  </button>
+                }
+              />
+            </div>
+
+            <button
+              onClick={handleNextWeek}
+              className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-lg transition-colors"
+              title="Săptămâna următoare"
+            >
+              <ChevronRight size={18} />
+            </button>
+          </div>
+        </div>
       </div>
 
       {syncResult && (

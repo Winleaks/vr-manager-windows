@@ -11,12 +11,19 @@ export function BillingSettings() {
     invoiceSeries: 'INV',
     invoiceStartNumber: '1',
     issuerName: '',
+    issuerAddress: '',
     issuerCrn: '',
     issuerVat: '',
+    invoiceBankName1: '',
     invoiceAccountNumber: '',
     invoiceSortCode: '',
+    invoiceBankName2: '',
+    invoiceAccountNumber2: '',
+    invoiceSortCode2: '',
     invoiceFooter: '',
     invoiceColor: '#4F46E5',
+    invoiceAlternateRowColor: '#4F46E5',
+    invoiceAlternateRowOpacity: 5,
     invoiceLogo: ''
   });
   const [isSaving, setIsSaving] = useState(false);
@@ -111,6 +118,12 @@ export function BillingSettings() {
               <label className="text-sm font-medium text-slate-700">Company Name</label>
               <input type="text" name="issuerName" value={settings.issuerName} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500" />
             </div>
+
+            <div>
+              <label className="text-sm font-medium text-slate-700">Company Address (Adresă Emitent)</label>
+              <input type="text" name="issuerAddress" value={settings.issuerAddress} onChange={handleChange} placeholder="Ex: 123 High Street, London, UK" className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 text-sm" />
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-sm font-medium text-slate-700">CRN (Company Reg. No)</label>
@@ -122,16 +135,40 @@ export function BillingSettings() {
               </div>
             </div>
             
-            <div className="pt-4 border-t border-slate-100">
-              <h3 className="text-sm font-bold text-slate-800 mb-3">Bank Details (UK)</h3>
+            {/* Cont Bancar Principal */}
+            <div className="pt-4 border-t border-slate-100 space-y-3">
+              <h3 className="text-sm font-bold text-slate-800">Cont Bancar Principal (Bank Account 1)</h3>
+              <div>
+                <label className="text-xs font-medium text-slate-600">Nume Bancă (Bank Name)</label>
+                <input type="text" name="invoiceBankName1" value={settings.invoiceBankName1} onChange={handleChange} placeholder="Ex: Barclays / Revolut Business" className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none focus:border-indigo-500 text-sm" />
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm font-medium text-slate-700">Account Number</label>
-                  <input type="text" name="invoiceAccountNumber" value={settings.invoiceAccountNumber} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 font-mono text-sm" />
+                  <label className="text-xs font-medium text-slate-600">Account Number</label>
+                  <input type="text" name="invoiceAccountNumber" value={settings.invoiceAccountNumber} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none focus:border-indigo-500 font-mono text-sm" />
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-700">Sort Code</label>
-                  <input type="text" name="invoiceSortCode" value={settings.invoiceSortCode} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 font-mono text-sm" placeholder="XX-XX-XX" />
+                  <label className="text-xs font-medium text-slate-600">Sort Code</label>
+                  <input type="text" name="invoiceSortCode" value={settings.invoiceSortCode} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none focus:border-indigo-500 font-mono text-sm" placeholder="XX-XX-XX" />
+                </div>
+              </div>
+            </div>
+
+            {/* Cont Bancar Secundar */}
+            <div className="pt-3 border-t border-slate-100 space-y-3">
+              <h3 className="text-sm font-bold text-slate-800">Cont Bancar Secundar (Bank Account 2 - Opțional)</h3>
+              <div>
+                <label className="text-xs font-medium text-slate-600">Nume Bancă 2 (Bank Name 2)</label>
+                <input type="text" name="invoiceBankName2" value={settings.invoiceBankName2} onChange={handleChange} placeholder="Ex: Lloyds Bank" className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none focus:border-indigo-500 text-sm" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-medium text-slate-600">Account Number 2</label>
+                  <input type="text" name="invoiceAccountNumber2" value={settings.invoiceAccountNumber2} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none focus:border-indigo-500 font-mono text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-600">Sort Code 2</label>
+                  <input type="text" name="invoiceSortCode2" value={settings.invoiceSortCode2} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none focus:border-indigo-500 font-mono text-sm" placeholder="XX-XX-XX" />
                 </div>
               </div>
             </div>
@@ -162,17 +199,64 @@ export function BillingSettings() {
               </div>
             </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              <div>
+                <label className="text-sm font-medium text-slate-700 block mb-2">Culoare Header Factură</label>
+                <div className="flex items-center gap-3">
+                  <input 
+                    type="color" 
+                    name="invoiceColor" 
+                    value={settings.invoiceColor} 
+                    onChange={handleChange} 
+                    className="w-12 h-12 rounded-lg cursor-pointer border-0 p-1 bg-slate-50" 
+                  />
+                  <span className="text-slate-500 font-mono text-sm">{settings.invoiceColor}</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-slate-700 block mb-2">Culoare Nuanțare Rânduri Alternate</label>
+                <div className="flex items-center gap-3">
+                  <input 
+                    type="color" 
+                    name="invoiceAlternateRowColor" 
+                    value={settings.invoiceAlternateRowColor || settings.invoiceColor} 
+                    onChange={handleChange} 
+                    className="w-12 h-12 rounded-lg cursor-pointer border-0 p-1 bg-slate-50" 
+                  />
+                  <span className="text-slate-500 font-mono text-sm">{settings.invoiceAlternateRowColor || settings.invoiceColor}</span>
+                </div>
+              </div>
+            </div>
+
             <div>
-              <label className="text-sm font-medium text-slate-700 block mb-2">Culoare Principală Header</label>
-              <div className="flex items-center gap-4">
-                <input 
-                  type="color" 
-                  name="invoiceColor" 
-                  value={settings.invoiceColor} 
-                  onChange={handleChange} 
-                  className="w-14 h-14 rounded-lg cursor-pointer border-0 p-1 bg-slate-50" 
-                />
-                <span className="text-slate-500 font-mono text-sm">{settings.invoiceColor}</span>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-sm font-medium text-slate-700">Intensitate / Transparență Rânduri Alternate: <span className="font-bold text-indigo-600">{settings.invoiceAlternateRowOpacity ?? 5}%</span></label>
+              </div>
+              <input 
+                type="range" 
+                name="invoiceAlternateRowOpacity" 
+                min="0" 
+                max="30" 
+                step="1"
+                value={settings.invoiceAlternateRowOpacity ?? 5} 
+                onChange={handleChange} 
+                className="w-full accent-indigo-600 cursor-pointer"
+              />
+              
+              {/* Demo Previzualizare rânduri tabel */}
+              <div className="mt-3 border border-slate-200 rounded-lg overflow-hidden text-xs">
+                <div className="bg-slate-100 px-3 py-1.5 font-bold text-slate-700">Previzualizare Rânduri Tabel Produse</div>
+                <div className="px-3 py-1.5 bg-white text-slate-800 border-b border-slate-100">Rând 1: Produs 1 - £10.00 (Alb)</div>
+                <div 
+                  className="px-3 py-1.5 text-slate-800 transition-colors"
+                  style={{ 
+                    backgroundColor: `${settings.invoiceAlternateRowColor || settings.invoiceColor}${Math.round(((settings.invoiceAlternateRowOpacity ?? 5) / 100) * 255).toString(16).padStart(2, '0')}`
+                  }}
+                >
+                  Rând 2: Produs 2 - £15.00 (Rând Alternat Nuanțat)
+                </div>
+                <div className="px-3 py-1.5 bg-white text-slate-800">Rând 3: Produs 3 - £8.50 (Alb)</div>
               </div>
             </div>
 

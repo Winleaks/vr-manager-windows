@@ -431,8 +431,8 @@ export function getStoreBySupabaseId(supabaseStoreId: string) {
 export function getInvoicesByDateRange(startDate?: string, endDate?: string) {
   let query = `
     SELECT i.*, 
-           s.name as store_name, s.address as store_address,
-           c.name as company_name, c.cui as company_cui, c.reg_com as company_reg_com, c.address as company_address, c.bank_account as company_bank_account, c.bank_name as company_bank_name,
+           s.name as store_name, s.address as store_address, s.phone as store_phone,
+           c.name as company_name, c.cui as company_cui, c.reg_com as company_reg_com, c.address as company_address, c.phone as company_phone, c.bank_account as company_bank_account, c.bank_name as company_bank_name,
            cl.name as client_name
     FROM invoices i
     JOIN stores s ON i.store_id = s.id
