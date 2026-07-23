@@ -226,7 +226,7 @@ export function BillingOrders() {
                           </div>
                           <div className="text-sm text-slate-600 mb-2">{data.items.length} produse comandate</div>
                           <div className="font-semibold text-slate-700 border-t border-slate-100 pt-2 mt-2">
-                            Total calculat: {total.toFixed(2)} GBP
+                            Total calculat: £{total.toFixed(2)}
                           </div>
                         </div>
                         

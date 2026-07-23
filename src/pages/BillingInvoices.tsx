@@ -366,7 +366,7 @@ export function BillingInvoices() {
                         </div>
                       </td>
                       <td className="py-4 px-6 font-bold text-slate-900">
-                        {inv.total_amount.toFixed(2)} GBP
+                        £{inv.total_amount.toFixed(2)}
                       </td>
                       <td className="py-4 px-6">
                         <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
@@ -377,7 +377,7 @@ export function BillingInvoices() {
                             : 'bg-rose-100 text-rose-800'
                         }`}>
                           {isPaid ? <CheckCircle2 size={13} /> : isPartial ? <Clock size={13} /> : <AlertCircle size={13} />}
-                          {isPaid ? 'Achitat' : isPartial ? `Parțial (${inv.paid_amount.toFixed(2)})` : 'Neachitat'}
+                          {isPaid ? 'Achitat' : isPartial ? `Parțial (£${inv.paid_amount.toFixed(2)})` : 'Neachitat'}
                         </span>
                       </td>
                       <td className="py-4 px-6 text-right">
@@ -475,7 +475,7 @@ export function BillingInvoices() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1.5">Suma Plătită (GBP)</label>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1.5">Suma Plătită (£)</label>
                   <input
                     type="number"
                     step="0.01"
@@ -540,7 +540,7 @@ export function BillingInvoices() {
                             />
                           </td>
                           <td className="p-2 font-bold text-slate-900 font-mono">
-                            {item.totalPrice.toFixed(2)} GBP
+                            £{item.totalPrice.toFixed(2)}
                           </td>
                           <td className="p-2 text-center">
                             <button
@@ -559,7 +559,7 @@ export function BillingInvoices() {
 
                 <div className="mt-4 p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 flex justify-between items-center">
                   <span className="font-semibold text-slate-700">Total Calculat Factură:</span>
-                  <span className="text-xl font-bold text-indigo-700 font-mono">{calculatedTotalAmount.toFixed(2)} GBP</span>
+                  <span className="text-xl font-bold text-indigo-700 font-mono">£{calculatedTotalAmount.toFixed(2)}</span>
                 </div>
               </div>
             </div>

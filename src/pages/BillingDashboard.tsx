@@ -33,7 +33,7 @@ export function BillingDashboard() {
             </div>
             <h3 className="font-semibold text-slate-700">Total Facturat</h3>
           </div>
-          <div className="text-3xl font-bold text-slate-900">£ {stats.totalInvoiced.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          <div className="text-3xl font-bold text-slate-900">£{stats.totalInvoiced.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
         </div>
 
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
@@ -43,7 +43,7 @@ export function BillingDashboard() {
             </div>
             <h3 className="font-semibold text-slate-700">Total Încasat</h3>
           </div>
-          <div className="text-3xl font-bold text-slate-900">£ {stats.totalPaid.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          <div className="text-3xl font-bold text-slate-900">£{stats.totalPaid.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
         </div>
 
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
@@ -53,7 +53,7 @@ export function BillingDashboard() {
             </div>
             <h3 className="font-semibold text-slate-700">Rest de Plată</h3>
           </div>
-          <div className="text-3xl font-bold text-slate-900">£ {stats.totalUnpaid.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          <div className="text-3xl font-bold text-slate-900">£{stats.totalUnpaid.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
         </div>
       </div>
       

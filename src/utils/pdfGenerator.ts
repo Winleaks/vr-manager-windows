@@ -233,13 +233,13 @@ export function generateInvoicePDF(
   doc.setTextColor(100, 116, 139);
   doc.text("Subtotal:", summaryBoxX + 6, finalTableY + 6);
   doc.setTextColor(15, 23, 42);
-  doc.text(`£ ${invoiceData.totalAmount.toFixed(2)}`, 190, finalTableY + 6, { align: "right" });
+  doc.text(`£${invoiceData.totalAmount.toFixed(2)}`, 190, finalTableY + 6, { align: "right" });
 
   doc.setFontSize(10.5);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(r, g, b);
   doc.text("Total Due:", summaryBoxX + 6, finalTableY + 13);
-  doc.text(`£ ${invoiceData.totalAmount.toFixed(2)}`, 190, finalTableY + 13, { align: "right" });
+  doc.text(`£${invoiceData.totalAmount.toFixed(2)}`, 190, finalTableY + 13, { align: "right" });
 
   // --- FOOTER & PAYMENT TERMS ---
   const pageHeight = doc.internal.pageSize.height;
