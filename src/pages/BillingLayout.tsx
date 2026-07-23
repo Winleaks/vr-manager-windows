@@ -1,9 +1,10 @@
 import React from 'react';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, FileText, Settings, ArrowLeft, Users, Receipt, Package } from 'lucide-react';
+import { LayoutDashboard, FileText, Settings, ArrowLeft, Users, Receipt, Package, ShoppingBag } from 'lucide-react';
 import { BillingDashboard } from './BillingDashboard';
 import { BillingClients } from './BillingClients';
 import { BillingInvoices } from './BillingInvoices';
+import { BillingOrders } from './BillingOrders';
 import { BillingSettings } from './BillingSettings';
 import { BillingProducts } from './BillingProducts';
 
@@ -27,6 +28,10 @@ function Sidebar() {
         <Link to="/facturare/dashboard" className={`flex items-center gap-3 p-3 rounded-lg font-medium transition-colors ${isActive('/facturare/dashboard') ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
           <LayoutDashboard size={20} />
           Dashboard
+        </Link>
+        <Link to="/facturare/comenzi" className={`flex items-center gap-3 p-3 rounded-lg font-medium transition-colors ${isActive('/facturare/comenzi') ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
+          <ShoppingBag size={20} />
+          Comenzi
         </Link>
         <Link to="/facturare/facturi" className={`flex items-center gap-3 p-3 rounded-lg font-medium transition-colors ${isActive('/facturare/facturi') ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
           <Receipt size={20} />
@@ -56,6 +61,7 @@ export function BillingLayout() {
       <main className="flex-1 overflow-y-auto">
         <Routes>
           <Route path="/dashboard" element={<BillingDashboard />} />
+          <Route path="/comenzi" element={<BillingOrders />} />
           <Route path="/facturi" element={<BillingInvoices />} />
           <Route path="/clienti" element={<BillingClients />} />
           <Route path="/produse" element={<BillingProducts />} />

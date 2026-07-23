@@ -222,17 +222,73 @@ export function getStoreBySupabaseId(supabaseStoreId: string) {
 }
 
 // Invoices
-export function getInvoicesByDateRange(startDate: string, endDate: string) {
-  const invoices = db.prepare(`
-    SELECT i.*, s.name as store_name, c.name as company_name 
+export function getInvoicesByDateRange(startDate?: string, endDate?: string) {
+  let query = `
+    SELECT i.*, 
+           s.name as store_name, s.address as store_address,
+           c.name as company_name, c.cui as company_cui, c.reg_com as company_reg_com, c.address as company_address, c.bank_account as company_bank_account, c.bank_name as company_bank_name,
+           cl.name as client_name
     FROM invoices i
     JOIN stores s ON i.store_id = s.id
     JOIN companies c ON s.company_id = c.id
-    WHERE i.invoice_date >= ? AND i.invoice_date <= ?
-    ORDER BY i.invoice_date DESC, i.invoice_number DESC
-  `).all(startDate, endDate);
-  return invoices;
+    JOIN clients cl ON c.client_id = cl.id
+  `;
+  const params: any[] = [];
+  if (startDate && endDate) {
+    query += ` WHERE i.invoice_date >= ? AND i.invoice_date <= ?`;
+    params.push(startDate, endDate);
+  }
+  query += ` ORDER BY i.invoice_date DESC, i.invoice_number DESC`;
+
+  const invoices = db.prepare(query).all(...params) as any[];
+
+  return invoices.map(inv => {
+    const items = db.prepare(`SELECT * FROM invoice_items WHERE invoice_id = ?`).all(inv.id) as any[];
+    return {
+      ...inv,
+      items: items.map(item => ({
+        id: item.id,
+        productName: item.product_name,
+        quantity: item.quantity,
+        unitPrice: item.unit_price,
+        totalPrice: item.total_price
+      }))
+    };
+  });
 }
+
+export function updateInvoiceWithItems(
+  id: number,
+  invoiceNumber: string,
+  invoiceDate: string,
+  totalAmount: number,
+  paidAmount: number,
+  status: string,
+  items: { productName: string, quantity: number, unitPrice: number, totalPrice: number }[]
+) {
+  const updateTransaction = db.transaction(() => {
+    db.prepare(`
+      UPDATE invoices 
+      SET invoice_number = ?, invoice_date = ?, total_amount = ?, paid_amount = ?, status = ?
+      WHERE id = ?
+    `).run(invoiceNumber, invoiceDate, totalAmount, paidAmount, status, id);
+
+    db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(id);
+
+    const stmtItems = db.prepare(`
+      INSERT INTO invoice_items (invoice_id, product_name, quantity, unit_price, total_price)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    
+    for (const item of items) {
+      stmtItems.run(id, item.productName, item.quantity, item.unitPrice, item.totalPrice);
+    }
+  });
+
+  updateTransaction();
+  return true;
+}
+
 
 export function createInvoiceWithItems(
   storeId: number, 

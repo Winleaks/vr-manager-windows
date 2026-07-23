@@ -53,6 +53,19 @@ export function registerBillingHandlers() {
     return billingRepo.getInvoicesByDateRange(startDate, endDate);
   });
 
+  ipcMain.handle('billing:updateInvoice', (_, data) => {
+    return billingRepo.updateInvoiceWithItems(
+      data.id,
+      data.invoiceNumber,
+      data.invoiceDate,
+      data.totalAmount,
+      data.paidAmount ?? 0,
+      data.status ?? 'unpaid',
+      data.items || []
+    );
+  });
+
+
   ipcMain.handle('billing:getStats', () => {
     return billingRepo.getBillingStats();
   });
