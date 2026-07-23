@@ -44,6 +44,14 @@ export function registerBillingHandlers() {
     return billingRepo.getAllCompaniesAndStores();
   });
 
+  ipcMain.handle('billing:getCompanyProfile', (_, companyId) => {
+    return billingRepo.getCompanyProfileDetails(companyId);
+  });
+
+  ipcMain.handle('billing:recordCompanyPayment', (_, data) => {
+    return billingRepo.recordCompanyPayment(data);
+  });
+
   ipcMain.handle('billing:updateStore', (_, data) => {
     billingRepo.updateStore(data.id, data.name, data.address, data.supabaseStoreId, data.isActive);
     return true;

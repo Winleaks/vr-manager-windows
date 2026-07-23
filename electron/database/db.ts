@@ -188,6 +188,15 @@ function runMigrations() {
           try { db.exec("ALTER TABLE cloud_products ADD COLUMN price_standard REAL DEFAULT 0;"); } catch (e) {}
           try { db.exec("ALTER TABLE cloud_products ADD COLUMN available BOOLEAN DEFAULT 1;"); } catch (e) {}
         }
+      },
+      {
+        version: 4,
+        description: "Adăugare credit_balance la companies și company_id, bank_name la payments",
+        up: () => {
+          try { db.exec("ALTER TABLE companies ADD COLUMN credit_balance REAL DEFAULT 0;"); } catch (e) {}
+          try { db.exec("ALTER TABLE payments ADD COLUMN company_id INTEGER;"); } catch (e) {}
+          try { db.exec("ALTER TABLE payments ADD COLUMN bank_name TEXT;"); } catch (e) {}
+        }
       }
     ];
 

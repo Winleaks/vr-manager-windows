@@ -211,6 +211,7 @@ CREATE TABLE IF NOT EXISTS companies (
   bank_account TEXT,
   bank_name TEXT,
   supabase_company_id TEXT,
+  credit_balance REAL DEFAULT 0,
   is_active BOOLEAN DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(client_id) REFERENCES clients(id)
@@ -253,14 +254,17 @@ CREATE TABLE IF NOT EXISTS invoice_items (
 
 CREATE TABLE IF NOT EXISTS payments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  client_id INTEGER NOT NULL,
+  client_id INTEGER,
+  company_id INTEGER,
   invoice_id INTEGER,
   amount REAL NOT NULL,
   payment_date DATE NOT NULL,
   method TEXT NOT NULL,
+  bank_name TEXT,
   notes TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(client_id) REFERENCES clients(id),
+  FOREIGN KEY(company_id) REFERENCES companies(id),
   FOREIGN KEY(invoice_id) REFERENCES invoices(id)
 );
 

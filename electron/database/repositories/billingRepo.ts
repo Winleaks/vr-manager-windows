@@ -210,10 +210,211 @@ export function getAllCompaniesAndStores() {
   const companies = db.prepare('SELECT * FROM companies ORDER BY name').all() as any[];
   const stores = db.prepare('SELECT * FROM stores ORDER BY name').all() as any[];
 
-  return companies.map(c => ({
-    ...c,
-    stores: stores.filter(s => s.company_id === c.id)
-  }));
+  return companies.map(c => {
+    const compStores = stores.filter(s => s.company_id === c.id);
+    const storeIds = compStores.map(s => s.id);
+    let unpaidInvoicesCount = 0;
+    let unpaidTotal = 0;
+
+    if (storeIds.length > 0) {
+      const placeholders = storeIds.map(() => '?').join(',');
+      const res = db.prepare(`
+        SELECT COUNT(*) as cnt, SUM(total_amount - paid_amount) as unpaid 
+        FROM invoices 
+        WHERE store_id IN (${placeholders}) AND status != 'paid' AND (total_amount - paid_amount) > 0
+      `).get(...storeIds) as any;
+      unpaidInvoicesCount = res?.cnt || 0;
+      unpaidTotal = res?.unpaid || 0;
+    }
+
+    return {
+      ...c,
+      credit_balance: c.credit_balance || 0,
+      stores: compStores,
+      unpaidInvoicesCount,
+      unpaidTotal
+    };
+  });
+}
+
+export function getCompanyProfileDetails(companyId: number) {
+  const company = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId) as any;
+  if (!company) return null;
+
+  const stores = db.prepare('SELECT * FROM stores WHERE company_id = ? ORDER BY name').all(companyId) as any[];
+  const storeIds = stores.map(s => s.id);
+
+  let invoices: any[] = [];
+  if (storeIds.length > 0) {
+    const placeholders = storeIds.map(() => '?').join(',');
+    invoices = db.prepare(`
+      SELECT i.*, s.name as store_name
+      FROM invoices i
+      JOIN stores s ON i.store_id = s.id
+      WHERE i.store_id IN (${placeholders})
+      ORDER BY i.invoice_date DESC, i.id DESC
+    `).all(...storeIds) as any[];
+
+    invoices = invoices.map(inv => {
+      const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id) as any[];
+      return {
+        ...inv,
+        items: items.map(it => ({
+          id: it.id,
+          productName: it.product_name,
+          quantity: it.quantity,
+          unitPrice: it.unit_price,
+          totalPrice: it.total_price
+        }))
+      };
+    });
+  }
+
+  const payments = db.prepare(`
+    SELECT p.*, i.invoice_number 
+    FROM payments p
+    LEFT JOIN invoices i ON p.invoice_id = i.id
+    WHERE p.company_id = ?
+    ORDER BY p.payment_date DESC, p.id DESC
+  `).all(companyId) as any[];
+
+  const totalInvoiced = invoices.reduce((acc, inv) => acc + (inv.total_amount || 0), 0);
+  const totalPaid = invoices.reduce((acc, inv) => acc + (inv.paid_amount || 0), 0);
+  const unpaidInvoices = invoices.filter(inv => inv.status !== 'paid' && (inv.total_amount - inv.paid_amount) > 0);
+  const totalUnpaid = unpaidInvoices.reduce((acc, inv) => acc + ((inv.total_amount || 0) - (inv.paid_amount || 0)), 0);
+
+  return {
+    company: {
+      ...company,
+      credit_balance: company.credit_balance || 0
+    },
+    stores,
+    invoices,
+    unpaidInvoices,
+    payments,
+    stats: {
+      totalInvoiced,
+      totalPaid,
+      totalUnpaid,
+      creditBalance: company.credit_balance || 0
+    }
+  };
+}
+
+export function recordCompanyPayment(data: {
+  companyId: number;
+  invoiceId?: number;
+  amount: number;
+  paymentDate: string;
+  method: string;
+  bankName?: string;
+  notes?: string;
+}) {
+  const { companyId, invoiceId, amount, paymentDate, method, bankName, notes } = data;
+  if (!companyId || !amount || amount <= 0) {
+    throw new Error('Suma încasată trebuie să fie mai mare decât 0!');
+  }
+
+  let remainingAmount = amount;
+
+  const processPaymentTransaction = db.transaction(() => {
+    // 1. Dacă s-a selectat o factură specifică
+    if (invoiceId) {
+      const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId) as any;
+      if (inv) {
+        const due = Math.max(0, inv.total_amount - inv.paid_amount);
+        if (due > 0) {
+          const payForThis = Math.min(remainingAmount, due);
+          const newPaid = inv.paid_amount + payForThis;
+          const newStatus = (newPaid >= inv.total_amount) ? 'paid' : 'partial';
+
+          db.prepare('UPDATE invoices SET paid_amount = ?, status = ? WHERE id = ?')
+            .run(newPaid, newStatus, inv.id);
+
+          db.prepare(`
+            INSERT INTO payments (company_id, invoice_id, amount, payment_date, method, bank_name, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(companyId, inv.id, payForThis, paymentDate, method, bankName || null, notes || null);
+
+          remainingAmount -= payForThis;
+        }
+      }
+    }
+
+    // 2. Cascadăm pe următoarele cele mai vechi facturi neachitate ale companiei
+    if (remainingAmount > 0) {
+      const stores = db.prepare('SELECT id FROM stores WHERE company_id = ?').all(companyId) as any[];
+      const storeIds = stores.map(s => s.id);
+
+      if (storeIds.length > 0) {
+        const placeholders = storeIds.map(() => '?').join(',');
+        let query = `
+          SELECT * FROM invoices 
+          WHERE store_id IN (${placeholders}) AND status != 'paid' AND (total_amount - paid_amount) > 0
+        `;
+        const params: any[] = [...storeIds];
+
+        if (invoiceId) {
+          query += ` AND id != ?`;
+          params.push(invoiceId);
+        }
+        query += ` ORDER BY invoice_date ASC, id ASC`;
+
+        const unpaidInvoices = db.prepare(query).all(...params) as any[];
+
+        for (const inv of unpaidInvoices) {
+          if (remainingAmount <= 0) break;
+          const due = inv.total_amount - inv.paid_amount;
+          if (due <= 0) continue;
+
+          const payForThis = Math.min(remainingAmount, due);
+          const newPaid = inv.paid_amount + payForThis;
+          const newStatus = (newPaid >= inv.total_amount) ? 'paid' : 'partial';
+
+          db.prepare('UPDATE invoices SET paid_amount = ?, status = ? WHERE id = ?')
+            .run(newPaid, newStatus, inv.id);
+
+          db.prepare(`
+            INSERT INTO payments (company_id, invoice_id, amount, payment_date, method, bank_name, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            companyId, 
+            inv.id, 
+            payForThis, 
+            paymentDate, 
+            method, 
+            bankName || null, 
+            notes ? `${notes} (Distribuire automata surplus)` : 'Distribuire automată surplus pe factură restantă'
+          );
+
+          remainingAmount -= payForThis;
+        }
+      }
+    }
+
+    // 3. Supra-plată -> adăugare în soldul de credit al companiei
+    if (remainingAmount > 0) {
+      db.prepare('UPDATE companies SET credit_balance = credit_balance + ? WHERE id = ?')
+        .run(remainingAmount, companyId);
+
+      db.prepare(`
+        INSERT INTO payments (company_id, invoice_id, amount, payment_date, method, bank_name, notes)
+        VALUES (?, NULL, ?, ?, ?, ?, ?)
+      `).run(
+        companyId,
+        remainingAmount,
+        paymentDate,
+        method,
+        bankName || null,
+        notes ? `${notes} (Avans / Credit companie)` : 'Avans / Credit înregistrat în balanța companiei'
+      );
+
+      remainingAmount = 0;
+    }
+  });
+
+  processPaymentTransaction();
+  return true;
 }
 
 export function getStoreBySupabaseId(supabaseStoreId: string) {
