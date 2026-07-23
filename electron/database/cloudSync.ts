@@ -127,6 +127,43 @@ export async function disconnectCloud() {
   return { success: true };
 }
 
+async function getOrCreateFolder(drive: any, folderName: string, parentId?: string): Promise<string> {
+  const query = parentId 
+    ? `name='${folderName}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
+    : `name='${folderName}' and 'root' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+  
+  const search = await drive.files.list({
+    q: query,
+    fields: 'files(id)'
+  });
+
+  if (search.data.files && search.data.files.length > 0) {
+    return search.data.files[0].id!;
+  }
+
+  const fileMetadata: any = {
+    name: folderName,
+    mimeType: 'application/vnd.google-apps.folder'
+  };
+  if (parentId) {
+    fileMetadata.parents = [parentId];
+  }
+
+  const folderRes = await drive.files.create({
+    requestBody: fileMetadata,
+    fields: 'id'
+  });
+
+  return folderRes.data.id!;
+}
+
+async function getDriveStructure(drive: any) {
+  const rootFolderId = await getOrCreateFolder(drive, 'VR - Management');
+  const facturiFolderId = await getOrCreateFolder(drive, 'Facturi', rootFolderId);
+  const dbFolderId = await getOrCreateFolder(drive, 'Baza de date', rootFolderId);
+  return { rootFolderId, facturiFolderId, dbFolderId };
+}
+
 export async function getCloudStatus(): Promise<CloudSyncStatus> {
   const isConnected = loadTokens();
   if (!isConnected) {
@@ -145,11 +182,21 @@ export async function getCloudStatus(): Promise<CloudSyncStatus> {
     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
     const userInfo = await oauth2.userinfo.get();
     
-    // Check if backup file exists
-    const res = await drive.files.list({
-      q: "name='stoc_fabrica_backup.db' and trashed=false",
+    const { dbFolderId } = await getDriveStructure(drive);
+
+    // Căutăm mai întâi în subfolderul 'Baza de date'
+    let res = await drive.files.list({
+      q: `'${dbFolderId}' in parents and name='stoc_fabrica_backup.db' and trashed=false`,
       fields: 'files(id, name, modifiedTime)'
     });
+
+    // Fallback: dacă nu există în 'Baza de date', căutăm oriunde pe Drive (pt. compatibilitate înapoi)
+    if (!res.data.files || res.data.files.length === 0) {
+      res = await drive.files.list({
+        q: "name='stoc_fabrica_backup.db' and trashed=false",
+        fields: 'files(id, name, modifiedTime)'
+      });
+    }
 
     const files = res.data.files || [];
     const backups = files.map(f => {
@@ -171,7 +218,7 @@ export async function getCloudStatus(): Promise<CloudSyncStatus> {
   } catch (e) {
     console.error('Error fetching cloud status:', e);
     return {
-      isConnected: true, // tokens exist but maybe expired/invalid
+      isConnected: true, // tokens exist logic
       userEmail: 'Eroare conexiune',
       lastCloudBackup: null,
       availableBackups: []
@@ -190,12 +237,20 @@ export async function saveToCloud(isManual = false): Promise<{ success: boolean;
     const localScore = localInfo ? localInfo.totalItems : 0;
 
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
-    
-    // Check if file already exists
-    const search = await drive.files.list({
-      q: "name='stoc_fabrica_backup.db' and trashed=false",
-      fields: 'files(id)'
+    const { dbFolderId } = await getDriveStructure(drive);
+
+    // Check if file already exists in 'Baza de date' folder or anywhere on drive
+    let search = await drive.files.list({
+      q: `'${dbFolderId}' in parents and name='stoc_fabrica_backup.db' and trashed=false`,
+      fields: 'files(id, parents)'
     });
+
+    if (!search.data.files || search.data.files.length === 0) {
+      search = await drive.files.list({
+        q: "name='stoc_fabrica_backup.db' and trashed=false",
+        fields: 'files(id, parents)'
+      });
+    }
 
     // Protecție: Dacă salvarea este automată pe fundal și baza locală este goală/nouă, dar pe cloud există deja un backup, nu suprascriem!
     if (!isManual && localScore <= 5 && search.data.files && search.data.files.length > 0) {
@@ -203,26 +258,37 @@ export async function saveToCloud(isManual = false): Promise<{ success: boolean;
       return { success: true };
     }
 
-    const fileMetadata = {
-      name: 'stoc_fabrica_backup.db'
-    };
-    
     const media = {
       mimeType: 'application/x-sqlite3',
       body: fs.createReadStream(dbPath)
     };
 
     if (search.data.files && search.data.files.length > 0) {
-      // Update existing
-      const fileId = search.data.files[0].id!;
-      await drive.files.update({
+      const existingFile = search.data.files[0];
+      const fileId = existingFile.id!;
+
+      const updateParams: any = {
         fileId: fileId,
         media: media
-      });
+      };
+
+      // Mutăm fișierul în folderul 'Baza de date' dacă era în rădăcină sau altundeva
+      if (!existingFile.parents || !existingFile.parents.includes(dbFolderId)) {
+        updateParams.addParents = dbFolderId;
+        const previousParents = (existingFile.parents || []).join(',');
+        if (previousParents) {
+          updateParams.removeParents = previousParents;
+        }
+      }
+
+      await drive.files.update(updateParams);
     } else {
-      // Create new
+      // Creare fișier nou în subfolderul 'Baza de date'
       await drive.files.create({
-        requestBody: fileMetadata,
+        requestBody: {
+          name: 'stoc_fabrica_backup.db',
+          parents: [dbFolderId]
+        },
         media: media,
         fields: 'id'
       });
@@ -245,10 +311,20 @@ export async function restoreFromCloud(fileId?: string): Promise<{ success: bool
     
     let targetFileId = fileId;
     if (!targetFileId) {
-      const search = await drive.files.list({
-        q: "name='stoc_fabrica_backup.db' and trashed=false",
+      const { dbFolderId } = await getDriveStructure(drive);
+
+      let search = await drive.files.list({
+        q: `'${dbFolderId}' in parents and name='stoc_fabrica_backup.db' and trashed=false`,
         fields: 'files(id)'
       });
+
+      if (!search.data.files || search.data.files.length === 0) {
+        search = await drive.files.list({
+          q: "name='stoc_fabrica_backup.db' and trashed=false",
+          fields: 'files(id)'
+        });
+      }
+
       if (!search.data.files || search.data.files.length === 0) {
         return { success: false, error: 'Nu am găsit baza de date pe Google Drive.' };
       }
@@ -291,46 +367,37 @@ export async function uploadPdfToCloud(filename: string, buffer: Uint8Array): Pr
   }
   try {
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
-    
-    // Check if 'Facturi' folder exists
-    const folderSearch = await drive.files.list({
-      q: "name='Facturi' and mimeType='application/vnd.google-apps.folder' and trashed=false",
-      fields: 'files(id)'
-    });
-    
-    let folderId = '';
-    if (folderSearch.data.files && folderSearch.data.files.length > 0) {
-      folderId = folderSearch.data.files[0].id!;
-    } else {
-      const folderRes = await drive.files.create({
-        requestBody: { name: 'Facturi', mimeType: 'application/vnd.google-apps.folder' },
-        fields: 'id'
-      });
-      folderId = folderRes.data.id!;
-    }
+    const { facturiFolderId } = await getDriveStructure(drive);
 
     const { Readable } = require('stream');
     const stream = new Readable();
     stream.push(buffer);
     stream.push(null);
 
-    // Căutăm dacă fișierul PDF există deja în folderul 'Facturi' pentru suprascriere
-    const fileSearch = await drive.files.list({
-      q: `name='${filename}' and '${folderId}' in parents and trashed=false`,
+    // Căutăm dacă fișierul PDF există deja în subfolderul 'Facturi' din VR - Management
+    let fileSearch = await drive.files.list({
+      q: `name='${filename}' and '${facturiFolderId}' in parents and trashed=false`,
       fields: 'files(id)'
     });
 
+    if (!fileSearch.data.files || fileSearch.data.files.length === 0) {
+      fileSearch = await drive.files.list({
+        q: `name='${filename}' and trashed=false`,
+        fields: 'files(id)'
+      });
+    }
+
     if (fileSearch.data.files && fileSearch.data.files.length > 0) {
       // Suprascriere fișier existent
-      const existingFileId = fileSearch.data.files[0].id!;
+      const existingFile = fileSearch.data.files[0];
       await drive.files.update({
-        fileId: existingFileId,
+        fileId: existingFile.id!,
         media: { mimeType: 'application/pdf', body: stream }
       });
     } else {
-      // Creare fișier nou
+      // Creare fișier nou în subfolderul Facturi din VR - Management
       await drive.files.create({
-        requestBody: { name: filename, parents: [folderId] },
+        requestBody: { name: filename, parents: [facturiFolderId] },
         media: { mimeType: 'application/pdf', body: stream },
         fields: 'id'
       });
@@ -349,21 +416,19 @@ export async function deletePdfFromCloud(filename: string): Promise<{ success: b
   }
   try {
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
-    
-    const folderSearch = await drive.files.list({
-      q: "name='Facturi' and mimeType='application/vnd.google-apps.folder' and trashed=false",
-      fields: 'files(id)'
-    });
-    
-    if (!folderSearch.data.files || folderSearch.data.files.length === 0) {
-      return { success: true };
-    }
-    const folderId = folderSearch.data.files[0].id!;
+    const { facturiFolderId } = await getDriveStructure(drive);
 
-    const fileSearch = await drive.files.list({
-      q: `name='${filename}' and '${folderId}' in parents and trashed=false`,
+    let fileSearch = await drive.files.list({
+      q: `name='${filename}' and '${facturiFolderId}' in parents and trashed=false`,
       fields: 'files(id)'
     });
+
+    if (!fileSearch.data.files || fileSearch.data.files.length === 0) {
+      fileSearch = await drive.files.list({
+        q: `name='${filename}' and trashed=false`,
+        fields: 'files(id)'
+      });
+    }
 
     if (fileSearch.data.files && fileSearch.data.files.length > 0) {
       for (const file of fileSearch.data.files) {
