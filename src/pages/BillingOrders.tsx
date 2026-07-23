@@ -14,26 +14,6 @@ export function BillingOrders() {
   const [generatingOrderId, setGeneratingOrderId] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<any>(null);
 
-  const handleDeleteInvoice = async (data: any) => {
-    if (window.confirm(`Ești sigur că vrei să ștergi factura #${data.assignedInvoiceNumber} generată pentru magazinul "${data.store.name}"?`)) {
-      if (data.assignedInvoiceId) {
-        await api.billing.deleteInvoice(data.assignedInvoiceId);
-      }
-      setSyncResult((prev: any) => ({
-        ...prev,
-        ordersByStore: prev.ordersByStore.map((o: any) => {
-          if (o.store.id === data.store.id) {
-            const copy = { ...o };
-            delete copy.assignedInvoiceNumber;
-            delete copy.assignedInvoiceId;
-            return copy;
-          }
-          return o;
-        })
-      }));
-    }
-  };
-
   const weekStart = startOfWeek(selectedDate, { weekStartsOn: 1 });
   const weekEnd = endOfWeek(selectedDate, { weekStartsOn: 1 });
   const dateRangeStr = `${format(weekStart, 'dd MMM', { locale: ro })} - ${format(weekEnd, 'dd MMM yyyy', { locale: ro })}`;
@@ -126,12 +106,58 @@ export function BillingOrders() {
 
   const handleGenerateIndividual = async (order: any) => {
     setGeneratingOrderId(order.store.id);
-    const isRegenerate = !!order.assignedInvoiceNumber;
-    await generatePdfForOrder(order, isRegenerate);
-    if (isRegenerate) {
-      alert('Factura a fost re-generată cu succes în folderul tău!');
-    }
+    await generatePdfForOrder(order, false);
     setGeneratingOrderId(null);
+  };
+
+  const handleOpenPdf = async (order: any) => {
+    setGeneratingOrderId(order.store.id);
+    try {
+      const settings = await api.billing.getSettings();
+      const series = settings.invoiceSeries || 'FACT';
+      const filename = `Factura_${series}_${order.assignedInvoiceNumber}.pdf`;
+
+      const res = await api.system.openPdfFile(filename);
+      if (res.notFound) {
+        await generatePdfForOrder(order, true);
+        await api.system.openPdfFile(filename);
+      }
+    } catch (e: any) {
+      alert('Eroare la deschiderea PDF: ' + e.message);
+    } finally {
+      setGeneratingOrderId(null);
+    }
+  };
+
+  const handleDeleteInvoice = async (order: any) => {
+    if (!order.assignedInvoiceNumber) return;
+    if (window.confirm(`Ești sigur că dorești să ștergi factura FACT #${order.assignedInvoiceNumber} pentru magazinul ${order.store.name}?`)) {
+      try {
+        const settings = await api.billing.getSettings();
+        const series = settings.invoiceSeries || 'FACT';
+        const filename = `Factura_${series}_${order.assignedInvoiceNumber}.pdf`;
+
+        const allInvoices = await api.billing.getInvoices();
+        const inv = allInvoices.find((i: any) => i.invoice_number === order.assignedInvoiceNumber);
+
+        if (inv) {
+          await api.billing.deleteInvoice(inv.id);
+        }
+
+        await api.system.deletePdfAuto(filename);
+
+        setSyncResult((prev: any) => ({
+          ...prev,
+          ordersByStore: prev.ordersByStore.map((o: any) => 
+            o.store.id === order.store.id ? { ...o, assignedInvoiceNumber: undefined, assignedInvoiceDate: undefined } : o
+          )
+        }));
+
+        alert(`Factura #${order.assignedInvoiceNumber} a fost ștearsă din sistem, de pe calculator și din Google Drive!`);
+      } catch (e: any) {
+        alert('Eroare la ștergere: ' + e.message);
+      }
+    }
   };
 
   return (
@@ -144,59 +170,53 @@ export function BillingOrders() {
             </div>
             <h1 className="text-3xl font-bold text-slate-900">Sincronizare Comenzi</h1>
           </div>
-          <p className="text-slate-500 mt-2">Preluarea comenzilor din platforma Cloud și emiterea facturilor aferente.</p>
-        </div>
-      </div>
-
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm mb-8 flex items-center justify-between flex-wrap gap-4">
-        <div className="flex items-center gap-6 flex-wrap">
-          <div className="flex flex-col">
-            <span className="text-sm font-medium text-slate-500 mb-1">Alege săptămâna</span>
+          
+          <div className="flex items-center gap-4 mt-6">
             <div className="relative">
               <DatePicker
                 selected={selectedDate}
                 onChange={(date) => date && setSelectedDate(date)}
                 dateFormat="dd MMM yyyy"
                 locale={ro}
-                customInput={
-                  <button className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-700 hover:bg-slate-100 transition-colors">
-                    <Calendar size={18} className="text-indigo-600" />
-                    <span className="font-medium">{dateRangeStr}</span>
-                  </button>
-                }
+                className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-slate-800 font-medium cursor-pointer hover:border-slate-300 outline-none"
               />
             </div>
+            <div className="flex items-center gap-2 text-sm text-slate-500 bg-slate-50 px-4 py-2 rounded-xl border border-slate-200">
+              <Calendar size={16} className="text-slate-400" />
+              <span>Săptămâna: <strong className="text-slate-800">{format(weekStart, 'dd MMM')} - {format(weekEnd, 'dd MMM yyyy')}</strong></span>
+            </div>
           </div>
-          
-          <div className="h-10 w-px bg-slate-200 hidden sm:block"></div>
-          
-          <button
-            onClick={handleSync}
-            disabled={isSyncing}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white px-6 py-2.5 rounded-xl font-medium transition-colors shadow-sm"
-          >
-            {isSyncing ? <Loader2 size={18} className="animate-spin" /> : <DownloadCloud size={18} />}
-            {isSyncing ? 'Se sincronizează...' : 'Sincronizează Comenzile din Cloud'}
-          </button>
         </div>
+
+        <button
+          onClick={handleSync}
+          disabled={isSyncing}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-6 py-2.5 rounded-xl shadow-sm transition-colors flex items-center gap-2"
+        >
+          {isSyncing ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
+          {isSyncing ? 'Se sincronizează...' : 'Sincronizează Comenzi'}
+        </button>
       </div>
 
       {syncResult && (
-        <div className={`p-6 rounded-2xl mb-8 border ${syncResult.success ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200 text-red-800'}`}>
-          <div className={`flex items-center gap-3 font-semibold mb-2 ${syncResult.success ? 'text-emerald-800' : ''}`}>
-            {syncResult.success ? <CheckCircle size={20} /> : <AlertTriangle size={20} />}
-            {syncResult.message}
-          </div>
-          {syncResult.success && syncResult.ordersByStore && (
-            <div className="mt-4 space-y-4">
-              <div className="flex items-center justify-between flex-wrap gap-4">
-                <p className="font-medium text-slate-700">Am găsit comenzi pentru {syncResult.ordersByStore.length} magazine.</p>
-                <button 
+        <div className="space-y-6">
+          {!syncResult.success ? (
+            <div className="bg-rose-50 border border-rose-200 text-rose-700 p-4 rounded-xl">
+              {syncResult.message}
+            </div>
+          ) : (
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold text-slate-900">
+                  Comenzi Găsite ({syncResult.ordersByStore.length} magazine)
+                </h2>
+
+                <button
                   onClick={handleGenerateAll}
-                  disabled={isGeneratingAll}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white px-6 py-2 rounded-xl font-medium transition-colors shadow-sm"
+                  disabled={isGeneratingAll || syncResult.ordersByStore.every((o: any) => o.assignedInvoiceNumber)}
+                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold px-5 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-2 text-sm"
                 >
-                  {isGeneratingAll ? <Loader2 size={18} className="animate-spin" /> : <FileText size={18} />}
+                  {isGeneratingAll ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
                   Generează Toate Facturile
                 </button>
               </div>
@@ -218,43 +238,39 @@ export function BillingOrders() {
                           <div className="text-sm text-slate-600 mb-2 flex items-center gap-1.5 flex-wrap">
                             <Building2 size={14} className="text-indigo-500" />
                             <span className="font-medium text-slate-800">{data.store.client_company?.name || data.store.company_name || 'Companie neasociată'}</span>
-                            {(data.store.client_company?.vat_number || data.store.client_company?.cui) && (
-                              <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-mono font-medium">
-                                VAT: {data.store.client_company?.vat_number || data.store.client_company?.cui}
-                              </span>
-                            )}
                           </div>
-                          <div className="text-sm text-slate-600 mb-2">{data.items.length} produse comandate</div>
                           <div className="font-semibold text-slate-700 border-t border-slate-100 pt-2 mt-2">
                             Total calculat: £{total.toFixed(2)}
                           </div>
                         </div>
                         
                         <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleGenerateIndividual(data)}
-                            disabled={isDoing}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                              isGenerated 
-                                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' 
-                                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
-                            }`}
-                          >
-                            {isDoing ? (
-                              <Loader2 size={16} className="animate-spin" />
-                            ) : isGenerated ? (
-                              <Printer size={16} />
-                            ) : (
-                              <FileText size={16} />
-                            )}
-                            {isGenerated ? 'Retipărește' : 'Generează'}
-                          </button>
+                          {isGenerated ? (
+                            <button
+                              onClick={() => handleOpenPdf(data)}
+                              disabled={isDoing}
+                              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors bg-slate-100 hover:bg-slate-200 text-slate-700"
+                              title="Deschide PDF-ul facturii"
+                            >
+                              {isDoing ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
+                              Deschide PDF
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleGenerateIndividual(data)}
+                              disabled={isDoing}
+                              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors bg-indigo-50 hover:bg-indigo-100 text-indigo-700"
+                            >
+                              {isDoing ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+                              Generează
+                            </button>
+                          )}
 
                           {isGenerated && (
                             <button
                               onClick={() => handleDeleteInvoice(data)}
                               className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                              title="Șterge factura"
+                              title="Șterge factura din sistem, disk & cloud"
                             >
                               <Trash2 size={16} />
                             </button>

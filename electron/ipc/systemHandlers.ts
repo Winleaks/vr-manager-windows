@@ -1,8 +1,9 @@
-import { ipcMain, dialog, BrowserWindow } from 'electron';
+import { ipcMain, dialog, BrowserWindow, shell, app } from 'electron';
 import fs from 'fs';
+import path from 'path';
 import { autoUpdater } from 'electron-updater';
 import { db, backupDb, restoreDb, lastBackupTime } from '../database/db';
-import { getCloudStatus, connectGoogleDrive, saveToCloud, restoreFromCloud, disconnectCloud } from '../database/cloudSync';
+import { getCloudStatus, connectGoogleDrive, saveToCloud, restoreFromCloud, disconnectCloud, deletePdfFromCloud } from '../database/cloudSync';
 
 export function registerSystemHandlers() {
   ipcMain.handle('save-file', async (event, options: { buffer: Uint8Array, defaultPath: string, filters: any[] }) => {
@@ -27,8 +28,6 @@ export function registerSystemHandlers() {
 
   ipcMain.handle('save-pdf-auto', async (event, options: { buffer: Uint8Array, filename: string }) => {
     try {
-      const path = require('path');
-      const { app } = require('electron');
       const documentsPath = app.getPath('documents');
       const facturiDir = path.join(documentsPath, 'Facturi Vatra Romaneasca');
       if (!fs.existsSync(facturiDir)) {
@@ -39,6 +38,44 @@ export function registerSystemHandlers() {
       return { success: true, filePath };
     } catch (err: any) {
       console.error('Eroare salvare auto:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('open-pdf-file', async (_event, filename: string) => {
+    try {
+      const documentsPath = app.getPath('documents');
+      const facturiDir = path.join(documentsPath, 'Facturi Vatra Romaneasca');
+      const filePath = path.join(facturiDir, filename);
+
+      if (fs.existsSync(filePath)) {
+        await shell.openPath(filePath);
+        return { success: true, filePath };
+      }
+      return { success: false, notFound: true, filePath };
+    } catch (err: any) {
+      console.error('Eroare la deschiderea PDF-ului:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('delete-pdf-auto', async (_event, filename: string) => {
+    try {
+      const documentsPath = app.getPath('documents');
+      const facturiDir = path.join(documentsPath, 'Facturi Vatra Romaneasca');
+      const filePath = path.join(facturiDir, filename);
+
+      // 1. Ștergere de pe disk local
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+
+      // 2. Ștergere de pe Google Drive
+      await deletePdfFromCloud(filename);
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('Eroare la ștergerea fișierului PDF:', err);
       return { success: false, error: err.message };
     }
   });

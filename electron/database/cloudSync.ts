@@ -314,14 +314,67 @@ export async function uploadPdfToCloud(filename: string, buffer: Uint8Array): Pr
     stream.push(buffer);
     stream.push(null);
 
-    await drive.files.create({
-      requestBody: { name: filename, parents: [folderId] },
-      media: { mimeType: 'application/pdf', body: stream },
-      fields: 'id'
+    // Căutăm dacă fișierul PDF există deja în folderul 'Facturi' pentru suprascriere
+    const fileSearch = await drive.files.list({
+      q: `name='${filename}' and '${folderId}' in parents and trashed=false`,
+      fields: 'files(id)'
     });
+
+    if (fileSearch.data.files && fileSearch.data.files.length > 0) {
+      // Suprascriere fișier existent
+      const existingFileId = fileSearch.data.files[0].id!;
+      await drive.files.update({
+        fileId: existingFileId,
+        media: { mimeType: 'application/pdf', body: stream }
+      });
+    } else {
+      // Creare fișier nou
+      await drive.files.create({
+        requestBody: { name: filename, parents: [folderId] },
+        media: { mimeType: 'application/pdf', body: stream },
+        fields: 'id'
+      });
+    }
+
     return { success: true };
   } catch (e: any) {
     console.error('Upload PDF error:', e);
+    return { success: false, error: e.message };
+  }
+}
+
+export async function deletePdfFromCloud(filename: string): Promise<{ success: boolean; error?: string }> {
+  if (!loadTokens()) {
+    return { success: false, error: 'Nu ești conectat la Google Drive.' };
+  }
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    
+    const folderSearch = await drive.files.list({
+      q: "name='Facturi' and mimeType='application/vnd.google-apps.folder' and trashed=false",
+      fields: 'files(id)'
+    });
+    
+    if (!folderSearch.data.files || folderSearch.data.files.length === 0) {
+      return { success: true };
+    }
+    const folderId = folderSearch.data.files[0].id!;
+
+    const fileSearch = await drive.files.list({
+      q: `name='${filename}' and '${folderId}' in parents and trashed=false`,
+      fields: 'files(id)'
+    });
+
+    if (fileSearch.data.files && fileSearch.data.files.length > 0) {
+      for (const file of fileSearch.data.files) {
+        if (file.id) {
+          await drive.files.delete({ fileId: file.id });
+        }
+      }
+    }
+    return { success: true };
+  } catch (e: any) {
+    console.error('Delete PDF from cloud error:', e);
     return { success: false, error: e.message };
   }
 }

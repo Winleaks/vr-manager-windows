@@ -95,8 +95,18 @@ export function BillingInvoices() {
   const handleDeleteInvoice = async (inv: Invoice) => {
     if (window.confirm(`Ești sigur că dorești să ștergi definitiv factura FACT #${inv.invoice_number} emisiune ${inv.store_name || ''}?`)) {
       try {
+        const settings = await api.billing.getSettings();
+        const series = settings.invoiceSeries || 'FACT';
+        const filename = `Factura_${series}_${inv.invoice_number}.pdf`;
+
+        // 1. Ștergem din baza de date
         await api.billing.deleteInvoice(inv.id);
+
+        // 2. Ștergem fișierul PDF de pe calculator și din Google Drive
+        await api.system.deletePdfAuto(filename);
+
         setInvoices(prev => prev.filter(i => i.id !== inv.id));
+        alert(`Factura #${inv.invoice_number} și fișierul ei PDF au fost șterse din calculator și din Google Drive!`);
       } catch (e: any) {
         alert('Eroare la ștergerea facturii: ' + e.message);
       }
@@ -170,7 +180,19 @@ export function BillingInvoices() {
         items: editForm.items
       });
 
-      alert('Factura a fost modificată cu succes!');
+      // Re-generăm și suprascriem PDF-ul cu datele actualizate
+      const updatedInv = {
+        ...editingInvoice,
+        invoice_number: editForm.invoice_number.trim(),
+        invoice_date: editForm.invoice_date,
+        total_amount: calculatedTotalAmount,
+        paid_amount: editForm.paid_amount,
+        status: editForm.status,
+        items: editForm.items
+      };
+      await handlePrintPdf(updatedInv, true);
+
+      alert('Factura a fost modificată și fișierul PDF a fost actualizat pe disk & Google Drive!');
       setEditingInvoice(null);
       await loadInvoices();
     } catch (e: any) {
@@ -180,7 +202,7 @@ export function BillingInvoices() {
     }
   };
 
-  const handlePrintPdf = async (inv: Invoice) => {
+  const handlePrintPdf = async (inv: Invoice, isQuiet = false) => {
     setGeneratingPdfId(inv.id);
     try {
       const settings = await api.billing.getSettings();
@@ -208,9 +230,34 @@ export function BillingInvoices() {
 
       await api.system.savePdfAuto({ buffer, filename });
       api.system.uploadPdfToCloud(filename, buffer).catch(console.error);
-      alert(`Factura #${inv.invoice_number} a fost salvată pe calculator și încărcată în Google Drive (folderul Facturi)!`);
+
+      if (!isQuiet) {
+        alert(`Factura #${inv.invoice_number} a fost actualizată pe calculator și în Google Drive!`);
+      }
     } catch (e: any) {
-      alert('Eroare la generarea PDF: ' + e.message);
+      if (!isQuiet) alert('Eroare la generarea PDF: ' + e.message);
+    } finally {
+      setGeneratingPdfId(null);
+    }
+  };
+
+  const handleOpenPdf = async (inv: Invoice) => {
+    setGeneratingPdfId(inv.id);
+    try {
+      const settings = await api.billing.getSettings();
+      const series = settings.invoiceSeries || 'FACT';
+      const filename = `Factura_${series}_${inv.invoice_number}.pdf`;
+
+      // Încercăm deschiderea directă a fișierului
+      const res = await api.system.openPdfFile(filename);
+
+      // Dacă fișierul nu există local, îl re-creăm și îl deschidem
+      if (res.notFound) {
+        await handlePrintPdf(inv, true);
+        await api.system.openPdfFile(filename);
+      }
+    } catch (e: any) {
+      alert('Eroare la deschiderea PDF: ' + e.message);
     } finally {
       setGeneratingPdfId(null);
     }
@@ -382,14 +429,15 @@ export function BillingInvoices() {
                       </td>
                       <td className="py-4 px-6 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {/* Tipărire / Descarcă PDF */}
+                          {/* Deschide PDF */}
                           <button
-                            onClick={() => handlePrintPdf(inv)}
+                            onClick={() => handleOpenPdf(inv)}
                             disabled={generatingPdfId === inv.id}
-                            className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                            title="Descarcă / Deschide PDF"
+                            className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors flex items-center gap-1.5"
+                            title="Deschide PDF-ul facturii"
                           >
                             {generatingPdfId === inv.id ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
+                            <span className="text-xs font-semibold">Deschide PDF</span>
                           </button>
 
                           {/* Editează */}

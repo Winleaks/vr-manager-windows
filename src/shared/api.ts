@@ -37,6 +37,10 @@ export const api = {
       window.ipcRenderer.invoke('save-file', options),
     savePdfAuto: (options: { buffer: Uint8Array, filename: string }) =>
       window.ipcRenderer.invoke('save-pdf-auto', options),
+    openPdfFile: (filename: string) =>
+      window.ipcRenderer.invoke('open-pdf-file', filename),
+    deletePdfAuto: (filename: string) =>
+      window.ipcRenderer.invoke('delete-pdf-auto', filename),
     manualBackup: () => window.ipcRenderer.invoke('manual-backup'),
     restoreBackup: () => window.ipcRenderer.invoke('restore-backup'),
     getLastBackupTime: () => window.ipcRenderer.invoke('get-last-backup-time'),
