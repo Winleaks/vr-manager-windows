@@ -6,6 +6,10 @@ import { db, backupDb, restoreDb, lastBackupTime } from '../database/db';
 import { getCloudStatus, connectGoogleDrive, saveToCloud, restoreFromCloud, disconnectCloud, deletePdfFromCloud } from '../database/cloudSync';
 
 export function registerSystemHandlers() {
+  ipcMain.handle('system:getAppVersion', () => {
+    return app.getVersion();
+  });
+
   ipcMain.handle('save-file', async (event, options: { buffer: Uint8Array, defaultPath: string, filters: any[] }) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     

@@ -33,6 +33,7 @@ export const api = {
       window.ipcRenderer.invoke('adjust-stock', rawMaterialId, newStock, reason)
   },
   system: {
+    getAppVersion: () => window.ipcRenderer?.invoke('system:getAppVersion') || Promise.resolve('0.1.70'),
     saveFile: (options: { buffer: Uint8Array, defaultPath: string, filters: any[] }) =>
       window.ipcRenderer.invoke('save-file', options),
     savePdfAuto: (options: { buffer: Uint8Array, filename: string }) =>

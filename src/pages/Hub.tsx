@@ -98,9 +98,11 @@ const modules = [
 export function Hub() {
   const navigate = useNavigate();
   const [lastBackup, setLastBackup] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string>('0.1.70');
 
   useEffect(() => {
     fetchLastBackup();
+    fetchAppVersion();
     const unsubscribe = api.system.onBackupCompleted(() => {
       fetchLastBackup();
     });
@@ -114,14 +116,28 @@ export function Hub() {
     if (time) setLastBackup(time);
   };
 
+  const fetchAppVersion = async () => {
+    try {
+      const ver = await api.system.getAppVersion();
+      if (ver) setAppVersion(ver);
+    } catch (e) {
+      console.warn('Eroare citire versiune:', e);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col p-8 md:p-12">
       <div className="max-w-6xl mx-auto w-full">
         <header className="mb-12 text-center md:text-left flex flex-col md:flex-row justify-between items-center">
           <div>
-            <h1 className="text-4xl font-extrabold text-slate-900 tracking-tight">
-              VR - Management Hub
-            </h1>
+            <div className="flex items-center gap-3 justify-center md:justify-start flex-wrap">
+              <h1 className="text-4xl font-extrabold text-slate-900 tracking-tight">
+                VR - Management Hub
+              </h1>
+              <span className="bg-indigo-100 text-indigo-700 text-xs font-black px-3 py-1 rounded-full border border-indigo-200 shadow-sm self-center font-mono">
+                v{appVersion}
+              </span>
+            </div>
             <p className="text-slate-500 mt-2 text-lg">
               Selectează modulul pe care dorești să îl accesezi
             </p>
