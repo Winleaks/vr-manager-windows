@@ -315,6 +315,9 @@ export function recordCompanyPayment(data: {
     throw new Error('Suma încasată trebuie să fie mai mare decât 0!');
   }
 
+  const comp = db.prepare('SELECT client_id FROM companies WHERE id = ?').get(companyId) as any;
+  const clientId = comp?.client_id || 1;
+
   let remainingAmount = amount;
 
   const processPaymentTransaction = db.transaction(() => {
@@ -332,9 +335,9 @@ export function recordCompanyPayment(data: {
             .run(newPaid, newStatus, inv.id);
 
           db.prepare(`
-            INSERT INTO payments (company_id, invoice_id, amount, payment_date, method, bank_name, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `).run(companyId, inv.id, payForThis, paymentDate, method, bankName || null, notes || null);
+            INSERT INTO payments (client_id, company_id, invoice_id, amount, payment_date, method, bank_name, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(clientId, companyId, inv.id, payForThis, paymentDate, method, bankName || null, notes || null);
 
           remainingAmount -= payForThis;
         }
@@ -375,9 +378,10 @@ export function recordCompanyPayment(data: {
             .run(newPaid, newStatus, inv.id);
 
           db.prepare(`
-            INSERT INTO payments (company_id, invoice_id, amount, payment_date, method, bank_name, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO payments (client_id, company_id, invoice_id, amount, payment_date, method, bank_name, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
+            clientId,
             companyId, 
             inv.id, 
             payForThis, 
@@ -398,9 +402,10 @@ export function recordCompanyPayment(data: {
         .run(remainingAmount, companyId);
 
       db.prepare(`
-        INSERT INTO payments (company_id, invoice_id, amount, payment_date, method, bank_name, notes)
-        VALUES (?, NULL, ?, ?, ?, ?, ?)
+        INSERT INTO payments (client_id, company_id, invoice_id, amount, payment_date, method, bank_name, notes)
+        VALUES (?, ?, NULL, ?, ?, ?, ?, ?)
       `).run(
+        clientId,
         companyId,
         remainingAmount,
         paymentDate,
