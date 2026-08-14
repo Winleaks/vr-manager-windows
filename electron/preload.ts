@@ -107,6 +107,8 @@ export const desktopApi = {
       ipcRenderer.invoke('get-historical-z-reports', startDate, endDate),
     deleteTransaction: (transactionId: number) =>
       ipcRenderer.invoke('delete-cash-transaction', transactionId),
+    onDayRolledOver: (callback: EventCallback) => subscribe('cash-day-rolled-over', callback),
+    onDayRolloverError: (callback: EventCallback) => subscribe('cash-day-rollover-error', callback),
   },
   billing: {
     getClients: () => ipcRenderer.invoke('billing:getClients'),

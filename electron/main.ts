@@ -16,12 +16,15 @@ import { getDeviceRole } from './device/deviceRole'
 import { syncViewerFromCloud } from './database/cloudSync'
 import { containsLegacyApplicationProcess } from './migration/legacyProcessPolicy'
 import { checkForUpdates, initializeUpdater } from './updater/updateCoordinator'
+import { cashRepo } from './database/repositories/cashRepo'
+import { millisecondsUntilNextLocalMidnight } from './database/cashDayRollover'
 
 const DIST_PATH = path.join(__dirname, '../dist')
 process.env.DIST = DIST_PATH
 process.env.PUBLIC = app.isPackaged ? DIST_PATH : path.join(DIST_PATH, '../public')
 
 let win: BrowserWindow | null
+let cashDayRolloverTimer: ReturnType<typeof setTimeout> | null = null
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
@@ -92,6 +95,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  if (cashDayRolloverTimer) clearTimeout(cashDayRolloverTimer)
   closeDb();
 })
 
@@ -135,6 +139,32 @@ app.whenReady().then(() => {
     if (getDeviceRole() !== 'viewer') return
     const result = await syncViewerFromCloud()
     if (result.updated && win) win.webContents.send('database-replica-updated', result)
+  }
+  const runCashDayRollover = async () => {
+    if (getDeviceRole() !== 'writer') return
+    try {
+      const previousDay = cashRepo.getActiveDay(false)
+      const currentDay = cashRepo.getActiveDay(true)
+      if (previousDay?.id !== currentDay?.id) {
+        if (win && !win.isDestroyed()) win.webContents.send('cash-day-rolled-over', currentDay)
+        await runAutomaticBackup()
+      }
+    } catch (error) {
+      console.error('Închiderea automată a casei a eșuat:', error)
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('cash-day-rollover-error', 'Ziua de casă nu a putut fi închisă automat. Verifică Setări și data calculatorului.')
+      }
+    }
+  }
+  const scheduleCashDayRollover = () => {
+    if (cashDayRolloverTimer) clearTimeout(cashDayRolloverTimer)
+    cashDayRolloverTimer = setTimeout(() => {
+      void runCashDayRollover().finally(scheduleCashDayRollover)
+    }, millisecondsUntilNextLocalMidnight() + 250)
+  }
+  if (getDeviceRole() === 'writer') {
+    void runCashDayRollover()
+    scheduleCashDayRollover()
   }
   if (getDeviceRole() === 'writer') void runAutomaticBackup()
   setInterval(() => {

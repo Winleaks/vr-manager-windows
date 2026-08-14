@@ -1,3 +1,11 @@
+### VR - Hub Management v0.1.76
+
+- Încasările și celelalte operațiuni Daily Cash sunt filtrate după data locală reală la care au fost înregistrate, nu după data unei sesiuni vechi.
+- Writer-ul închide automat casa la ora locală 00:00 și transferă soldul final ca sold de deschidere al zilei noi; la prima pornire repară tranzacțiile de astăzi atașate sesiunii vechi.
+- Câmpurile numerice pot fi completate normal de la tastatură în întreaga aplicație.
+- Vânzarea Directă acceptă cantități întregi precum 1, 2, 3 sau 10, iar prețul unitar păstrează două zecimale.
+- Introducerea cantității în Producție poate fi ștearsă și rescrisă fără blocarea valorii.
+
 ### VR - Hub Management v0.1.75
 
 - Câmpurile din Setări → Personal afișează explicit textul și cursorul pe Windows.

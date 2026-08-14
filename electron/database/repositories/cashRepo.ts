@@ -1,4 +1,6 @@
 import { db } from '../db';
+import { getCashTransactionsByDateRange } from '../cashHistory.ts';
+import { localIsoDate, rolloverCashDay } from '../cashDayRollover.ts';
 import {
   addCashTransaction,
   closeCashDayTransaction,
@@ -13,12 +15,13 @@ import {
 export const cashRepo = {
   // Ia ziua curenta deschisa sau creează una nouă (dacă ultima e închisă)
   getActiveDay: (createIfMissing = true) => {
+    if (createIfMissing) rolloverCashDay(db);
     let activeDay = db.prepare('SELECT * FROM cash_days WHERE is_closed = 0 ORDER BY date DESC LIMIT 1').get() as any;
     
     if (!activeDay) {
       if (!createIfMissing) return null;
       // Trebuie să deschidem o zi nouă (azi)
-      const dateStr = new Date().toISOString().split('T')[0];
+      const dateStr = localIsoDate();
       
       // Vedem dacă s-a deschis deja azi și s-a închis (preventiv, ca să nu avem erori la unique date, deși în mod normal se face doar una pe zi)
       // Dacă s-a închis deja azi, ar trebui tratată altfel, dar pt simplitate, creăm una nouă (dacă e altă zi).
@@ -83,32 +86,7 @@ export const cashRepo = {
   },
 
   getTransactionsByDateRange: (startDate: string, endDate: string, category?: string) => {
-    let query = `
-      SELECT t.*, 
-             d.name as driver_name, 
-             e.name as employee_name,
-             c.date as cash_date,
-             c.is_closed as cash_day_closed
-      FROM cash_transactions t
-      JOIN cash_days c ON t.cash_day_id = c.id
-      LEFT JOIN drivers d ON (t.category = 'driver_collection' AND t.reference_id = d.id)
-      LEFT JOIN employees e ON ((t.category = 'direct_sale' OR t.category = 'employee_collection') AND t.reference_id = e.id)
-      WHERE c.date >= ? AND c.date <= ?
-    `;
-    const params: any[] = [startDate, endDate];
-    
-    if (category) {
-      if (category === 'purchase_or_expense') {
-        query += ` AND (t.category = 'purchase' OR t.category = 'other_expense')`;
-      } else {
-        query += ` AND t.category = ?`;
-        params.push(category);
-      }
-    }
-    
-    query += ` ORDER BY t.created_at DESC`;
-    
-    return db.prepare(query).all(...params) as any[];
+    return getCashTransactionsByDateRange(db, startDate, endDate, category);
   },
 
   getHistoricalZReports: (startDate: string, endDate: string) => {
@@ -120,7 +98,8 @@ export const cashRepo = {
   },
 
   addTransaction: (data: CashTransactionInput) => {
-    return addCashTransaction(db, data);
+    const currentDay = cashRepo.getActiveDay(true);
+    return addCashTransaction(db, { ...data, cash_day_id: currentDay.id });
   },
 
   deleteTransaction: (transactionId: number) => {

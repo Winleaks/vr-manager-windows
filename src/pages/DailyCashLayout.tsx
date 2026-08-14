@@ -370,8 +370,8 @@ function DailyCashSidebar() {
                     <div className="w-24">
                       <label className="block text-xs text-slate-500 mb-1">Cant.</label>
                       <input 
-                        type="number" step="0.01" min="0.01"
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        type="number" step="1" min="1" inputMode="numeric"
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white text-slate-900 caret-slate-900"
                         value={currentSaleItem.quantity}
                         onChange={e => setCurrentSaleItem({...currentSaleItem, quantity: e.target.value})}
                       />
@@ -379,8 +379,8 @@ function DailyCashSidebar() {
                     <div className="w-24">
                       <label className="block text-xs text-slate-500 mb-1">Preț unit.</label>
                       <input 
-                        type="number" step="0.01" min="0"
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        type="number" step="0.01" min="0" inputMode="decimal"
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white text-slate-900 caret-slate-900"
                         value={currentSaleItem.unit_price}
                         onChange={e => setCurrentSaleItem({...currentSaleItem, unit_price: e.target.value})}
                       />
@@ -456,6 +456,19 @@ export function DailyCashLayout() {
 
   useEffect(() => {
     loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    const unsubscribeRollover = api.dailyCash.onDayRolledOver(() => {
+      void loadData();
+    });
+    const unsubscribeError = api.dailyCash.onDayRolloverError((message) => {
+      window.alert(message);
+    });
+    return () => {
+      unsubscribeRollover();
+      unsubscribeError();
+    };
   }, [loadData]);
 
   return (

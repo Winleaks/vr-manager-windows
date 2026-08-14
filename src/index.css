@@ -1,6 +1,17 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
+:root {
+  color-scheme: light;
+}
+
+input:not([type='checkbox']):not([type='radio']):not([type='range']),
+textarea,
+select {
+  color: #0f172a;
+  caret-color: #0f172a;
+}
+
 @theme {
   --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   --font-mono: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -74,5 +85,4 @@
 .react-datepicker__day.custom-week-highlight:hover {
   background-color: #059669 !important;
 }
-
 

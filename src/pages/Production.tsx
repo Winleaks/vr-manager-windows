@@ -9,7 +9,7 @@ export default function Production() {
 
   const [productionDate, setProductionDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
-  const [items, setItems] = useState([{ finished_product_id: '', quantity_produced: 1 }]);
+  const [items, setItems] = useState([{ finished_product_id: '', quantity_produced: '1' }]);
 
   useEffect(() => {
     loadData();
@@ -59,7 +59,7 @@ export default function Production() {
           onClick={() => {
             setProductionDate(new Date().toISOString().split('T')[0]);
             setNotes('');
-            setItems([{ finished_product_id: '', quantity_produced: 1 }]);
+            setItems([{ finished_product_id: '', quantity_produced: '1' }]);
             setIsModalOpen(true);
           }}
           className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors"
@@ -131,7 +131,7 @@ export default function Production() {
                   <label className="block text-sm font-medium text-slate-700">Produse Fabricate</label>
                   <button 
                     type="button" 
-                    onClick={() => setItems([...items, { finished_product_id: '', quantity_produced: 1 }])}
+                    onClick={() => setItems([...items, { finished_product_id: '', quantity_produced: '1' }])}
                     className="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1"
                   >
                     <Plus size={16} /> Adaugă produs
@@ -159,11 +159,11 @@ export default function Production() {
                     </div>
                     <div className="w-24">
                       <input 
-                        type="number" step="0.01" min="0.01" required placeholder="Cant"
+                        type="number" step="0.01" min="0.01" inputMode="decimal" required placeholder="Cant"
                         value={item.quantity_produced} 
                         onChange={e => {
                           const newItems = [...items];
-                          newItems[index].quantity_produced = parseFloat(e.target.value);
+                          newItems[index].quantity_produced = e.target.value;
                           setItems(newItems);
                         }}
                         className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none text-sm"
