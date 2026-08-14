@@ -8,6 +8,8 @@ import {
   closeCashDayTransaction,
   createProductionTransaction,
   deleteCashTransaction,
+  updateCashDayOpeningBalance,
+  updateCashReceiptTransaction,
 } from './repositories/inventoryTransactions.ts';
 
 function createDatabase() {
@@ -87,6 +89,73 @@ test('cash sale rejects insufficient stock without leaving partial accounting ro
     assert.equal((connection.prepare('SELECT is_closed AS value FROM cash_days WHERE id = ?').get(dayId) as any).value, 0);
     assert.equal(closeCashDayTransaction(connection, dayId, 16), true);
     assert.throws(() => deleteCashTransaction(connection, transactionId), /zile închise/);
+  } finally {
+    connection.close();
+  }
+});
+
+test('cash day accepts £1893.24 opening balance and open receipts can be edited or deleted', () => {
+  const connection = createDatabase();
+  try {
+    const dayId = Number(connection.prepare(
+      "INSERT INTO cash_days (date, opening_balance) VALUES ('2026-08-14', 0)",
+    ).run().lastInsertRowid);
+    const driverId = Number(connection.prepare(
+      "INSERT INTO drivers (name) VALUES ('Șofer test')",
+    ).run().lastInsertRowid);
+
+    assert.equal(updateCashDayOpeningBalance(connection, dayId, 1893.24), true);
+    assert.equal(
+      (connection.prepare('SELECT opening_balance AS value FROM cash_days WHERE id = ?').get(dayId) as any).value,
+      1893.24,
+    );
+    assert.throws(
+      () => updateCashDayOpeningBalance(connection, dayId, 1893.241),
+      /maximum două zecimale/,
+    );
+
+    const receiptId = addCashTransaction(connection, {
+      cash_day_id: dayId,
+      type: 'IN',
+      category: 'driver_collection',
+      amount: 100,
+      reference_id: driverId,
+      notes: 'Inițial',
+    });
+    assert.throws(
+      () => updateCashDayOpeningBalance(connection, dayId, 2000),
+      /înainte de prima tranzacție/,
+    );
+    assert.equal(updateCashReceiptTransaction(connection, {
+      id: receiptId,
+      amount: 123.45,
+      reference_id: driverId,
+      notes: 'Corectat',
+    }), true);
+    const updated = connection.prepare(
+      'SELECT amount, reference_id, notes FROM cash_transactions WHERE id = ?',
+    ).get(receiptId) as any;
+    assert.deepEqual(updated, { amount: 123.45, reference_id: driverId, notes: 'Corectat' });
+
+    assert.equal(deleteCashTransaction(connection, receiptId), true);
+    assert.equal(
+      (connection.prepare('SELECT COUNT(*) AS value FROM cash_transactions WHERE id = ?').get(receiptId) as any).value,
+      0,
+    );
+
+    const closedReceiptId = addCashTransaction(connection, {
+      cash_day_id: dayId,
+      type: 'IN',
+      category: 'driver_collection',
+      amount: 10,
+      reference_id: driverId,
+    });
+    assert.equal(closeCashDayTransaction(connection, dayId, 1903.24), true);
+    assert.throws(() => updateCashReceiptTransaction(connection, {
+      id: closedReceiptId,
+      amount: 12,
+      reference_id: driverId,
+    }), /zile închise/);
   } finally {
     connection.close();
   }

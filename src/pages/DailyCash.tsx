@@ -12,9 +12,21 @@ import { DateRangePicker } from '../components/DateRangePicker';
 import { api } from '../shared/api';
 
 export function DailyCash() {
-  const { activeDay, dateFilter, setDateFilter, transactions: storeTransactions, fetchActiveDay } = useCashStore();
+  const { activeDay, dateFilter, setDateFilter, transactions: storeTransactions, loadData } = useCashStore();
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [deviceRole, setDeviceRole] = useState<'writer' | 'viewer'>('viewer');
+  const [editingOpeningBalance, setEditingOpeningBalance] = useState(false);
+  const [openingBalance, setOpeningBalance] = useState('');
+  const [savingOpeningBalance, setSavingOpeningBalance] = useState(false);
+
+  useEffect(() => {
+    api.system.getDeviceRole().then((state) => setDeviceRole(state.role)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (activeDay) setOpeningBalance(Number(activeDay.opening_balance).toFixed(2));
+  }, [activeDay]);
 
   const reloadData = async () => {
     setLoading(true);
@@ -24,11 +36,30 @@ export function DailyCash() {
         dateFilter.endDate
       );
       setData(result);
-      if (fetchActiveDay) fetchActiveDay();
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpeningBalanceSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!activeDay) return;
+    const amount = Number(openingBalance);
+    if (!Number.isFinite(amount) || amount < 0 || !/^\d+(\.\d{1,2})?$/.test(openingBalance.trim())) {
+      window.alert('Introdu o sumă validă, cu maximum două zecimale.');
+      return;
+    }
+    setSavingOpeningBalance(true);
+    try {
+      await api.dailyCash.updateOpeningBalance(activeDay.id, amount);
+      await loadData();
+      setEditingOpeningBalance(false);
+    } catch (error: any) {
+      window.alert(error?.message || 'Soldul de deschidere nu a putut fi actualizat.');
+    } finally {
+      setSavingOpeningBalance(false);
     }
   };
 
@@ -39,6 +70,7 @@ export function DailyCash() {
   const handleDeleteTransaction = async (id: number) => {
     if (window.confirm('Ești sigur că vrei să ștergi această tranzacție din registru?')) {
       await api.dailyCash.deleteTransaction(id);
+      await loadData();
       reloadData();
     }
   };
@@ -104,14 +136,46 @@ export function DailyCash() {
         
         {/* Current Active Day Status (Always visible regardless of filter, just as an indicator) */}
         {activeDay && (
-          <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex justify-between items-center text-blue-800">
+          <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex flex-wrap gap-4 justify-between items-center text-blue-800">
             <div>
               <span className="font-bold">Sesiune curentă deschisă:</span> {activeDay.date}
             </div>
-            <div className="flex gap-4">
+            <div className="flex flex-wrap items-center gap-4">
               <div>Sold Deschidere: <span className="font-bold">£{activeDay.opening_balance.toFixed(2)}</span></div>
               <div>Sold Curent: <span className="font-bold">£{activeDay.current_balance.toFixed(2)}</span></div>
+              {deviceRole === 'writer' && storeTransactions.length === 0 && !editingOpeningBalance && (
+                <button
+                  type="button"
+                  onClick={() => setEditingOpeningBalance(true)}
+                  className="px-3 py-1.5 rounded-lg bg-blue-700 text-white text-sm font-medium hover:bg-blue-800"
+                >
+                  Setează soldul de deschidere
+                </button>
+              )}
             </div>
+            {deviceRole === 'writer' && storeTransactions.length === 0 && editingOpeningBalance && (
+              <form onSubmit={handleOpeningBalanceSubmit} className="w-full flex flex-wrap items-end gap-3 pt-3 border-t border-blue-200">
+                <label className="text-sm font-medium">
+                  Sold de deschidere (£)
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    required
+                    value={openingBalance}
+                    onChange={(event) => setOpeningBalance(event.target.value)}
+                    className="block mt-1 w-48 px-3 py-2 rounded-lg border border-blue-300 bg-white text-slate-900"
+                    placeholder="1893.24"
+                  />
+                </label>
+                <button type="submit" disabled={savingOpeningBalance} className="px-4 py-2 rounded-lg bg-blue-700 text-white font-medium disabled:opacity-50">
+                  {savingOpeningBalance ? 'Se salvează...' : 'Salvează'}
+                </button>
+                <button type="button" onClick={() => setEditingOpeningBalance(false)} className="px-4 py-2 rounded-lg bg-white border border-blue-300 text-blue-800">
+                  Renunță
+                </button>
+              </form>
+            )}
           </div>
         )}
 

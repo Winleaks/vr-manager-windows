@@ -19,6 +19,21 @@ export function requireFiniteNonNegative(value: unknown, label: string) {
   return value;
 }
 
+export function requireMoneyNonNegative(value: unknown, label: string) {
+  const amount = requireFiniteNonNegative(value, label);
+  const rounded = Math.round((amount + Number.EPSILON) * 100) / 100;
+  if (Math.abs(amount - rounded) > 1e-9) {
+    throw new Error(`${label} trebuie să aibă maximum două zecimale.`);
+  }
+  return rounded;
+}
+
+export function requireMoneyPositive(value: unknown, label: string) {
+  const amount = requireMoneyNonNegative(value, label);
+  if (amount <= 0) throw new Error(`${label} trebuie să fie mai mare decât zero.`);
+  return amount;
+}
+
 export function requireText(value: unknown, label: string, maxLength = 500) {
   if (typeof value !== 'string' || value.trim().length === 0 || value.trim().length > maxLength) {
     throw new Error(`${label} este obligatoriu și trebuie să aibă maximum ${maxLength} caractere.`);

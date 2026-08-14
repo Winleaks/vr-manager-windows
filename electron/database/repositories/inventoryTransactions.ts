@@ -4,6 +4,8 @@ import {
   requireFiniteNonNegative,
   requireFinitePositive,
   requireIsoDate,
+  requireMoneyNonNegative,
+  requireMoneyPositive,
   requirePositiveInteger,
   requireText,
 } from '../businessValidation.ts';
@@ -24,6 +26,74 @@ export interface CashTransactionInput {
   reference_name?: string | null;
   notes?: string | null;
   items?: Array<{ finished_product_id: number; quantity: number; unit_price: number }>;
+}
+
+export interface CashReceiptUpdateInput {
+  id: number;
+  amount: number;
+  reference_id: number;
+  notes?: string | null;
+}
+
+export function updateCashDayOpeningBalance(
+  connection: SqliteDatabase,
+  dayIdInput: number,
+  openingBalanceInput: number,
+) {
+  const dayId = requirePositiveInteger(dayIdInput, 'Ziua de casă');
+  const openingBalance = requireMoneyNonNegative(openingBalanceInput, 'Soldul de deschidere');
+
+  return connection.transaction(() => {
+    const day = connection.prepare(
+      'SELECT id, is_closed FROM cash_days WHERE id = ?',
+    ).get(dayId) as { id: number; is_closed: number } | undefined;
+    if (!day) throw new Error('Ziua de casă nu există.');
+    if (day.is_closed) throw new Error('Soldul unei zile închise nu poate fi modificat.');
+    const transactionCount = Number((connection.prepare(
+      'SELECT COUNT(*) AS count FROM cash_transactions WHERE cash_day_id = ?',
+    ).get(dayId) as { count: number }).count);
+    if (transactionCount > 0) {
+      throw new Error('Soldul de deschidere poate fi modificat numai înainte de prima tranzacție.');
+    }
+    const result = connection.prepare(
+      'UPDATE cash_days SET opening_balance = ? WHERE id = ? AND is_closed = 0',
+    ).run(openingBalance, dayId);
+    if (result.changes !== 1) throw new Error('Soldul de deschidere nu a putut fi actualizat.');
+    return true;
+  })();
+}
+
+export function updateCashReceiptTransaction(
+  connection: SqliteDatabase,
+  data: CashReceiptUpdateInput,
+) {
+  const transactionId = requirePositiveInteger(data.id, 'Încasarea');
+  const amount = requireMoneyPositive(data.amount, 'Suma încasării');
+  const referenceId = requirePositiveInteger(data.reference_id, 'Șoferul');
+  const notes = optionalText(data.notes, 'Observațiile încasării');
+
+  return connection.transaction(() => {
+    const receipt = connection.prepare(`
+      SELECT t.id, t.type, t.category, d.is_closed
+      FROM cash_transactions t
+      JOIN cash_days d ON d.id = t.cash_day_id
+      WHERE t.id = ?
+    `).get(transactionId) as { id: number; type: string; category: string; is_closed: number } | undefined;
+    if (!receipt) throw new Error('Încasarea nu există.');
+    if (receipt.is_closed) throw new Error('Încasările unei zile închise nu pot fi modificate.');
+    if (receipt.type !== 'IN' || receipt.category !== 'driver_collection') {
+      throw new Error('Numai încasările de la șoferi pot fi modificate din acest ecran.');
+    }
+    const driver = connection.prepare('SELECT id FROM drivers WHERE id = ?').get(referenceId);
+    if (!driver) throw new Error('Șoferul selectat nu există.');
+    const result = connection.prepare(`
+      UPDATE cash_transactions
+      SET amount = ?, reference_id = ?, notes = ?
+      WHERE id = ?
+    `).run(amount, referenceId, notes, transactionId);
+    if (result.changes !== 1) throw new Error('Încasarea nu a putut fi actualizată.');
+    return true;
+  })();
 }
 
 export function createProductionTransaction(
