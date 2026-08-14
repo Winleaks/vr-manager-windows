@@ -3,6 +3,9 @@ import {
   addCashTransaction,
   closeCashDayTransaction,
   deleteCashTransaction,
+  updateCashDayOpeningBalance,
+  updateCashReceiptTransaction,
+  type CashReceiptUpdateInput,
   type CashTransactionInput,
 } from './inventoryTransactions';
 
@@ -52,6 +55,14 @@ export const cashRepo = {
     return closeCashDayTransaction(db, dayId, closingBalance);
   },
 
+  updateOpeningBalance: (dayId: number, openingBalance: number) => {
+    return updateCashDayOpeningBalance(db, dayId, openingBalance);
+  },
+
+  updateReceipt: (data: CashReceiptUpdateInput) => {
+    return updateCashReceiptTransaction(db, data);
+  },
+
   getTransactions: (dayId: number) => {
     return db.prepare(`
       SELECT t.*, 
@@ -70,7 +81,8 @@ export const cashRepo = {
       SELECT t.*, 
              d.name as driver_name, 
              e.name as employee_name,
-             c.date as cash_date
+             c.date as cash_date,
+             c.is_closed as cash_day_closed
       FROM cash_transactions t
       JOIN cash_days c ON t.cash_day_id = c.id
       LEFT JOIN drivers d ON (t.category = 'driver_collection' AND t.reference_id = d.id)

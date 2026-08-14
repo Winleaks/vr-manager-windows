@@ -1,3 +1,9 @@
+### VR - Hub Management v0.1.73
+
+- Daily Cash permite setarea unui sold de deschidere cu două zecimale înainte de prima tranzacție, inclusiv `£1,893.24`.
+- Încasările de la șoferi pot fi modificate sau șterse cât timp ziua de casă este deschisă.
+- Zilele închise rămân imuabile, iar calculatoarele Viewer nu pot executa noile operații de casă.
+
 ### VR - Hub Management v0.1.72
 
 - Autentificarea Google Drive folosește PKCE și nu mai include un client secret în pachetul desktop.

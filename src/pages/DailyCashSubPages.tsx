@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useCashStore } from '../store/cashStore';
 import { DateRangePicker } from '../components/DateRangePicker';
-import { PlusCircle, ShoppingCart, MinusCircle, FileText, Truck, User } from 'lucide-react';
+import { PlusCircle, FileText, Truck, User, Pencil, Trash2 } from 'lucide-react';
 import { api } from '../shared/api';
 
 interface PageProps {
@@ -13,11 +13,20 @@ interface PageProps {
 }
 
 export function TransactionHistoryPage({ title, category, icon, color, modalType }: PageProps) {
-  const { dateFilter, setDateFilter, openModal } = useCashStore();
+  const { dateFilter, setDateFilter, openModal, loadData, drivers } = useCashStore();
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [editingReceipt, setEditingReceipt] = useState<any | null>(null);
+  const [editAmount, setEditAmount] = useState('');
+  const [editDriverId, setEditDriverId] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [deviceRole, setDeviceRole] = useState<'writer' | 'viewer'>('viewer');
 
   const transactionsTrigger = useCashStore(state => state.transactions);
+
+  useEffect(() => {
+    api.system.getDeviceRole().then((state) => setDeviceRole(state.role)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -39,6 +48,42 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
   }, [dateFilter, category, transactionsTrigger]);
 
   const totalSum = data.reduce((sum, t) => sum + t.amount, 0);
+  const managesDriverReceipts = category === 'driver_collection' && deviceRole === 'writer';
+
+  const beginReceiptEdit = (transaction: any) => {
+    setEditingReceipt(transaction);
+    setEditAmount(Number(transaction.amount).toFixed(2));
+    setEditDriverId(String(transaction.reference_id || ''));
+    setEditNotes(transaction.notes || '');
+  };
+
+  const handleReceiptUpdate = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingReceipt) return;
+    const amount = Number(editAmount);
+    const referenceId = Number(editDriverId);
+    if (!Number.isFinite(amount) || amount <= 0 || !/^\d+(\.\d{1,2})?$/.test(editAmount.trim()) || !Number.isInteger(referenceId) || referenceId <= 0) {
+      window.alert('Verifică șoferul și suma introdusă. Suma poate avea maximum două zecimale.');
+      return;
+    }
+    try {
+      await api.dailyCash.updateReceipt({ id: editingReceipt.id, amount, reference_id: referenceId, notes: editNotes });
+      setEditingReceipt(null);
+      await loadData();
+    } catch (error: any) {
+      window.alert(error?.message || 'Încasarea nu a putut fi modificată.');
+    }
+  };
+
+  const handleReceiptDelete = async (transaction: any) => {
+    if (!window.confirm(`Ștergi încasarea de £${Number(transaction.amount).toFixed(2)}?`)) return;
+    try {
+      await api.dailyCash.deleteTransaction(transaction.id);
+      await loadData();
+    } catch (error: any) {
+      window.alert(error?.message || 'Încasarea nu a putut fi ștearsă.');
+    }
+  };
 
   const colorConfig = {
     emerald: { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-200', btn: 'bg-emerald-600 hover:bg-emerald-700' },
@@ -65,13 +110,15 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
             endDate={dateFilter.endDate} 
             onChange={setDateFilter} 
           />
-          <button 
-            onClick={() => openModal(modalType)}
-            className={`px-5 py-2.5 text-white font-medium rounded-lg flex items-center gap-2 shadow-sm transition-colors ${theme.btn}`}
-          >
-            <PlusCircle size={20} />
-            Adaugă
-          </button>
+          {deviceRole === 'writer' && (
+            <button
+              onClick={() => openModal(modalType)}
+              className={`px-5 py-2.5 text-white font-medium rounded-lg flex items-center gap-2 shadow-sm transition-colors ${theme.btn}`}
+            >
+              <PlusCircle size={20} />
+              Adaugă
+            </button>
+          )}
         </div>
       </div>
 
@@ -107,6 +154,7 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
                   <th className="p-4">Referință</th>
                   <th className="p-4">Detalii</th>
                   <th className="p-4 text-right w-40">Sumă</th>
+                  {managesDriverReceipts && <th className="p-4 text-right w-32">Acțiuni</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -131,6 +179,20 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
                        <td className="p-4 text-right">
                          <span className={`font-bold ${theme.text}`}>£{t.amount.toFixed(2)}</span>
                        </td>
+                       {managesDriverReceipts && (
+                         <td className="p-4 text-right">
+                           {Number(t.cash_day_closed) === 0 ? (
+                             <div className="inline-flex gap-1">
+                               <button type="button" onClick={() => beginReceiptEdit(t)} className="p-2 rounded-lg text-blue-600 hover:bg-blue-50" title="Modifică încasarea">
+                                 <Pencil size={16} />
+                               </button>
+                               <button type="button" onClick={() => handleReceiptDelete(t)} className="p-2 rounded-lg text-rose-600 hover:bg-rose-50" title="Șterge încasarea">
+                                 <Trash2 size={16} />
+                               </button>
+                             </div>
+                           ) : <span className="text-xs text-slate-400">Zi închisă</span>}
+                         </td>
+                       )}
                      </tr>
                    );
                 })}
@@ -139,6 +201,38 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
           </div>
         )}
       </div>
+
+      {editingReceipt && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden">
+            <div className="p-5 border-b border-slate-100 bg-emerald-50 flex justify-between items-center">
+              <h3 className="font-bold text-emerald-800">Modifică încasarea</h3>
+              <button type="button" onClick={() => setEditingReceipt(null)} className="text-slate-500">&times;</button>
+            </div>
+            <form onSubmit={handleReceiptUpdate} className="p-5 space-y-4">
+              <label className="block text-sm font-medium text-slate-700">
+                Șofer
+                <select required value={editDriverId} onChange={(event) => setEditDriverId(event.target.value)} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg bg-white">
+                  <option value="">-- Selectează șofer --</option>
+                  {drivers.map((driver: any) => <option key={driver.id} value={driver.id}>{driver.name}</option>)}
+                </select>
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Suma (£)
+                <input type="number" min="0.01" step="0.01" required value={editAmount} onChange={(event) => setEditAmount(event.target.value)} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg" />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Note
+                <input type="text" value={editNotes} onChange={(event) => setEditNotes(event.target.value)} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg" />
+              </label>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setEditingReceipt(null)} className="px-4 py-2 rounded-lg bg-slate-100 text-slate-700">Renunță</button>
+                <button type="submit" className="px-4 py-2 rounded-lg bg-emerald-600 text-white font-medium">Salvează</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
