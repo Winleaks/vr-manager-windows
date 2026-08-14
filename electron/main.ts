@@ -1,5 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, dialog, session } from 'electron'
+import { execFileSync } from 'child_process'
 import path from 'path'
+import { fileURLToPath } from 'url'
 import { autoUpdater } from 'electron-updater'
 import { initDb, backupDb, closeDb } from './database/db'
 import { registerRawMaterialHandlers } from './ipc/rawMaterialHandlers'
@@ -10,32 +12,62 @@ import { registerStockMovementHandlers } from './ipc/stockMovementHandlers'
 import { registerSystemHandlers } from './ipc/systemHandlers'
 import { registerDailyCashHandlers } from './ipc/dailyCashHandlers'
 import { registerBillingHandlers } from './ipc/billingHandlers'
+import { trustIpcSender } from './ipc/trustedHandler'
+import { getDeviceRole } from './device/deviceRole'
+import { syncViewerFromCloud } from './database/cloudSync'
+import { containsLegacyApplicationProcess } from './migration/legacyProcessPolicy'
 
-process.env.DIST = path.join(__dirname, '../dist')
-process.env.PUBLIC = app.isPackaged ? process.env.DIST : path.join(process.env.DIST, '../public')
+const DIST_PATH = path.join(__dirname, '../dist')
+process.env.DIST = DIST_PATH
+process.env.PUBLIC = app.isPackaged ? DIST_PATH : path.join(DIST_PATH, '../public')
 
 let win: BrowserWindow | null
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
-if (!app.isPackaged) {
-  process.env['ELECTRON_DISABLE_SECURITY_WARNINGS'] = 'true'
+app.enableSandbox()
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) app.quit()
+
+function isAllowedAppUrl(targetUrl: string) {
+  try {
+    const parsed = new URL(targetUrl)
+    if (VITE_DEV_SERVER_URL) {
+      return parsed.origin === new URL(VITE_DEV_SERVER_URL).origin
+    }
+
+    if (parsed.protocol !== 'file:') return false
+    const targetPath = path.resolve(fileURLToPath(parsed))
+    const appPath = path.resolve(path.join(DIST_PATH, 'index.html'))
+    return targetPath === appPath
+  } catch {
+    return false
+  }
 }
 
 function createWindow() {
   win = new BrowserWindow({
     width: 1200,
     height: 800,
-    title: 'VR - Management Hub',
+    title: 'VR - Hub Management',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       backgroundThrottling: true,
       spellcheck: false,
     },
   })
+
+  trustIpcSender(win.webContents)
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  win.webContents.on('will-navigate', (event, targetUrl) => {
+    if (!isAllowedAppUrl(targetUrl)) event.preventDefault()
+  })
+  win.webContents.on('will-attach-webview', (event) => event.preventDefault())
   
   // Remove default menu (File, Edit, View, etc.)
   win.setMenu(null)
@@ -44,7 +76,7 @@ function createWindow() {
     win.loadURL(VITE_DEV_SERVER_URL)
     win.webContents.openDevTools()
   } else {
-    win.loadFile(path.join(process.env.DIST, 'index.html'))
+    win.loadFile(path.join(DIST_PATH, 'index.html'))
   }
 }
 
@@ -60,15 +92,53 @@ app.on('before-quit', () => {
 })
 
 app.whenReady().then(() => {
-  initDb()
-  // Run an automatic backup on startup and every 10 minutes
-  backupDb()
-  setInterval(() => {
-    backupDb();
-    if (win) {
-      win.webContents.send('backup-completed');
+  app.setAppUserModelId('com.winleaks.vrhubmanagement')
+  if (process.platform === 'win32' && getDeviceRole() === 'writer') {
+    try {
+      const processes = execFileSync('tasklist.exe', ['/FO', 'CSV', '/NH'], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 5000,
+      });
+      if (containsLegacyApplicationProcess(processes)) {
+        dialog.showErrorBox(
+          'Aplicația veche este încă deschisă',
+          'Închide VR - Management Hub pe toate calculatoarele înainte de a porni noul Writer VR - Hub Management.',
+        );
+        app.quit();
+        return;
+      }
+    } catch {
+      dialog.showErrorBox(
+        'Verificarea tranziției a eșuat',
+        'Noul Writer nu pornește deoarece nu a putut verifica dacă aplicația veche este închisă.',
+      );
+      app.quit();
+      return;
     }
+  }
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false)
+  })
+  initDb()
+  // Writer publică snapshot-uri; Viewer descarcă doar versiuni Drive mai noi.
+  const runAutomaticBackup = async () => {
+    if (getDeviceRole() !== 'writer') return
+    const result = await backupDb()
+    if (result.success && win) win.webContents.send('backup-completed')
+  }
+  const runViewerSync = async () => {
+    if (getDeviceRole() !== 'viewer') return
+    const result = await syncViewerFromCloud()
+    if (result.updated && win) win.webContents.send('database-replica-updated', result)
+  }
+  if (getDeviceRole() === 'writer') void runAutomaticBackup()
+  setInterval(() => {
+    void runAutomaticBackup()
   }, 10 * 60 * 1000);
+  setInterval(() => {
+    void runViewerSync()
+  }, 60 * 1000);
   registerRawMaterialHandlers()
   registerFinishedProductHandlers()
   registerRecipeHandlers()
@@ -79,6 +149,9 @@ app.whenReady().then(() => {
   registerBillingHandlers()
   
   createWindow()
+  setTimeout(() => {
+    void runViewerSync()
+  }, 2000)
   
   // Verificare Update-uri
   autoUpdater.autoDownload = false;
@@ -117,7 +190,8 @@ app.whenReady().then(() => {
 })
 
 autoUpdater.on('error', (err) => {
+  console.error('Eroare auto-update:', err);
   if (win) {
-    win.webContents.send('update-error', err == null ? 'unknown' : (err.stack || err).toString());
+    win.webContents.send('update-error', 'Actualizarea nu a putut fi finalizată. Încearcă din nou.');
   }
 });

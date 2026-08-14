@@ -1,12 +1,12 @@
-import { ipcMain } from 'electron';
 import { recipeRepo } from '../database/repositories/recipeRepo';
+import { handleTrustedIpc } from './trustedHandler';
 
 export function registerRecipeHandlers() {
-  ipcMain.handle('get-recipe', (_, productId: number) => {
+  handleTrustedIpc('get-recipe', (_, productId: number) => {
     return recipeRepo.getByProductId(productId);
   });
 
-  ipcMain.handle('save-recipe', (_, productId: number, batchSize: number, notes: string, items: any[]) => {
+  handleTrustedIpc('save-recipe', (_, productId: number, batchSize: number, notes: string, items: any[]) => {
     return recipeRepo.saveRecipe(productId, batchSize, notes, items);
   });
 }

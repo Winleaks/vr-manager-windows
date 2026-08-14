@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { 
   Database, 
@@ -13,7 +13,6 @@ import {
   FolderSync,
   AlertCircle,
   Trash2,
-  Sliders,
   Copy,
   CheckCircle
 } from 'lucide-react';
@@ -36,10 +35,12 @@ export function SettingsSystem() {
   const [showBackupList, setShowBackupList] = useState(false);
   const [authUrlModal, setAuthUrlModal] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [deviceRole, setDeviceRole] = useState<'writer' | 'viewer'>('writer');
 
   useEffect(() => {
     fetchLastBackup();
     fetchCloudStatus();
+    api.system.getDeviceRole().then((state) => setDeviceRole(state.role)).catch(() => {});
 
     const unsubscribeBackup = api.system.onBackupCompleted(() => {
       fetchLastBackup();
@@ -87,13 +88,43 @@ export function SettingsSystem() {
     try {
       const res = await api.system.saveToCloud();
       if (res && res.success) {
-        alert(`Baza de date a fost salvată în Cloud cu succes!\n\nFișier: ${res.path}\nOră: ${res.time}`);
+        alert('Baza de date a fost salvată în Google Drive cu succes.');
         fetchCloudStatus();
       } else {
         alert('Eroare la salvarea în cloud:\n' + (res?.error || 'Eroare necunoscută'));
       }
     } catch (e: any) {
       alert('Eroare: ' + e.message);
+    } finally {
+      setIsSyncingCloud(false);
+    }
+  };
+
+  const handleDeviceRole = async (role: 'writer' | 'viewer') => {
+    if (role === deviceRole) return;
+    const description = role === 'writer'
+      ? 'Acest calculator va putea modifica datele și va publica baza în Google Drive.'
+      : 'Acest calculator va deveni doar pentru vizualizare și va prelua automat baza din Google Drive.';
+    if (!window.confirm(`${description}\n\nContinui?`)) return;
+    await api.system.setDeviceRole(role);
+    setDeviceRole(role);
+    if (role === 'viewer' && cloudStatus.isConnected) {
+      const result = await api.system.syncViewerNow();
+      if (result.updated) window.location.reload();
+    }
+  };
+
+  const handleViewerSync = async () => {
+    setIsSyncingCloud(true);
+    try {
+      const result = await api.system.syncViewerNow();
+      if (result.updated) {
+        window.location.reload();
+      } else if (!result.success) {
+        alert(result.error || 'Actualizarea din Google Drive a eșuat.');
+      } else {
+        alert('Baza locală este deja la zi.');
+      }
     } finally {
       setIsSyncingCloud(false);
     }
@@ -173,6 +204,28 @@ export function SettingsSystem() {
         </div>
       </div>
 
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h2 className="font-bold text-slate-900">Rolul acestui calculator</h2>
+            <p className="text-sm text-slate-500 mt-1">
+              Folosește un singur Writer. Toate celelalte calculatoare trebuie configurate Viewer.
+            </p>
+          </div>
+          <div className="inline-flex rounded-xl bg-slate-100 p-1">
+            {(['writer', 'viewer'] as const).map((role) => (
+              <button
+                key={role}
+                onClick={() => handleDeviceRole(role)}
+                className={`px-5 py-2 rounded-lg text-sm font-bold transition-colors ${deviceRole === role ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                {role === 'writer' ? 'Principal (Writer)' : 'Doar vizualizare (Viewer)'}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {/* Card Sincronizare Cloud & Server (NEW) */}
       <div className="bg-gradient-to-br from-indigo-900 via-slate-900 to-blue-950 rounded-2xl shadow-xl border border-indigo-500/30 overflow-hidden text-white relative">
         <div className="absolute top-0 right-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20"></div>
@@ -184,7 +237,7 @@ export function SettingsSystem() {
             </div>
             <div>
               <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                Sincronizare Cloud & Server
+                Replicare prin Google Drive
                 {cloudStatus.isConnected ? (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -197,7 +250,7 @@ export function SettingsSystem() {
                   </span>
                 )}
               </h2>
-              <p className="text-xs text-indigo-200/80">Google Drive, OneDrive sau Dropbox pentru transfer rapid pe alt calculator</p>
+              <p className="text-xs text-indigo-200/80">Writer publică baza; calculatoarele Viewer o descarcă automat, fără a putea modifica datele</p>
             </div>
           </div>
 
@@ -227,11 +280,11 @@ export function SettingsSystem() {
                   </div>
                   <div className="bg-white/5 p-3.5 rounded-lg border border-white/5">
                     <strong className="text-white block mb-1">2. Autentificare</strong>
-                    Baza de date va fi urcată automat.
+                    {deviceRole === 'writer' ? 'Baza de date va fi urcată automat.' : 'Baza de date va fi descărcată automat.'}
                   </div>
                   <div className="bg-white/5 p-3.5 rounded-lg border border-white/5">
                     <strong className="text-white block mb-1">3. Alt PC</strong>
-                    Apasă 'Adu Baza de Date' pentru a prelua fișierul.
+                    Viewer verifică automat o versiune nouă la fiecare minut.
                   </div>
                 </div>
               </div>
@@ -266,6 +319,7 @@ export function SettingsSystem() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {deviceRole === 'writer' ? (
                 <div className="bg-white/5 border border-white/10 rounded-xl p-5 flex flex-col justify-between">
                   <div>
                     <h3 className="font-bold text-white mb-1 flex items-center gap-2">
@@ -285,6 +339,23 @@ export function SettingsSystem() {
                     {isSyncingCloud ? 'Se sincronizează...' : 'Sincronizează Acum în Cloud'}
                   </button>
                 </div>
+                ) : (
+                <div className="bg-white/5 border border-white/10 rounded-xl p-5 flex flex-col justify-between">
+                  <div>
+                    <h3 className="font-bold text-white mb-1 flex items-center gap-2">
+                      <CloudDownload className="w-5 h-5 text-blue-400" />
+                      Actualizare Viewer
+                    </h3>
+                    <p className="text-indigo-200/80 text-sm mb-6 leading-relaxed">
+                      Verificarea este automată la fiecare minut. Poți verifica și acum, fără a trimite nimic în Drive.
+                    </p>
+                  </div>
+                  <button onClick={handleViewerSync} disabled={isSyncingCloud} className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white py-2.5 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2">
+                    <RefreshCw size={18} className={isSyncingCloud ? 'animate-spin' : ''} />
+                    {isSyncingCloud ? 'Se verifică...' : 'Actualizează acum'}
+                  </button>
+                </div>
+                )}
 
                 <div className="bg-emerald-950/30 border border-emerald-500/20 rounded-xl p-5 flex flex-col justify-between">
                   <div>
@@ -328,10 +399,10 @@ export function SettingsSystem() {
                       <div key={idx} className="bg-white/5 hover:bg-white/10 p-3 rounded-lg flex items-center justify-between border border-white/5 transition-colors text-xs">
                         <div>
                           <div className="font-semibold text-white">{b.fileName}</div>
-                          <div className="text-indigo-300 mt-0.5">Data: {b.formattedTime} | Scor volum: {b.totalItems} articole</div>
+                          <div className="text-indigo-300 mt-0.5">Data: {b.formattedTime}</div>
                         </div>
                         <button 
-                          onClick={() => handleRestoreFromCloud(b.filePath)}
+                          onClick={() => handleRestoreFromCloud(b.fileId)}
                           className="px-3 py-1.5 bg-emerald-600/80 hover:bg-emerald-600 text-white font-medium rounded transition-colors shadow-sm cursor-pointer"
                         >
                           Restaurează
@@ -385,7 +456,7 @@ export function SettingsSystem() {
             </button>
           </div>
 
-          <div className="border border-rose-100 bg-rose-50/30 rounded-xl p-5 flex flex-col justify-between">
+          {deviceRole === 'writer' && <div className="border border-rose-100 bg-rose-50/30 rounded-xl p-5 flex flex-col justify-between">
             <div>
               <h3 className="font-bold text-rose-900 mb-1 flex items-center gap-2">
                 <Upload size={18} className="text-rose-600" />
@@ -402,7 +473,7 @@ export function SettingsSystem() {
               <Upload size={18} />
               Încarcă Bază de Date
             </button>
-          </div>
+          </div>}
         </div>
       </div>
 

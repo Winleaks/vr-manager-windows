@@ -62,7 +62,7 @@ export function BillingOrders() {
       const startStr = format(weekStart, 'yyyy-MM-dd');
       const endStr = format(weekEnd, 'yyyy-MM-dd');
       
-      const res = await api.billing.syncSupabaseOrders(startStr, endStr);
+      const res = await api.billing.previewWeeklyInvoices(startStr, endStr);
       setSyncResult(res);
     } catch (e: any) {
       setSyncResult({ success: false, message: e.message || 'Eroare necunoscută' });
@@ -75,7 +75,9 @@ export function BillingOrders() {
     try {
       let currentOrder = order;
       if (!isRegenerate) {
-        const res = await api.billing.createInvoicesFromSync([order]);
+        const startStr = format(weekStart, 'yyyy-MM-dd');
+        const endStr = format(weekEnd, 'yyyy-MM-dd');
+        const res = await api.billing.createWeeklyInvoices(startStr, endStr, [order.store.id]);
         if (!res.success) throw new Error(res.message);
         currentOrder = res.updatedOrders[0];
 
@@ -92,10 +94,10 @@ export function BillingOrders() {
         invoiceNumber: currentOrder.assignedInvoiceNumber,
         invoiceDate: currentOrder.assignedInvoiceDate,
         client: {
-          name: currentOrder.store.client_company?.name || currentOrder.store.name,
-          cui: currentOrder.store.client_company?.vat_number || currentOrder.store.client_company?.cui,
-          regCom: currentOrder.store.client_company?.registration_number || currentOrder.store.client_company?.reg_com,
-          address: currentOrder.store.client_company?.address || currentOrder.store.address,
+          name: currentOrder.store.company?.name || currentOrder.store.name,
+          cui: currentOrder.store.company?.vatNumber,
+          regCom: currentOrder.store.company?.registrationNumber,
+          address: currentOrder.store.company?.address || currentOrder.store.address,
           county: currentOrder.store.owner?.county,
           city: currentOrder.store.owner?.city
         },
@@ -121,7 +123,7 @@ export function BillingOrders() {
   };
 
   const handleGenerateAll = async () => {
-    const pendingOrders = syncResult.ordersByStore.filter((o: any) => !o.assignedInvoiceNumber);
+    const pendingOrders = syncResult.ordersByStore.filter((o: any) => o.billingState === 'ready');
     if (pendingOrders.length === 0) {
       alert('Toate facturile sunt deja generate!');
       return;
@@ -129,10 +131,17 @@ export function BillingOrders() {
     
     setIsGeneratingAll(true);
     let successCount = 0;
-    
-    for (const order of pendingOrders) {
-      const ok = await generatePdfForOrder(order, false);
-      if (ok) successCount++;
+    const startStr = format(weekStart, 'yyyy-MM-dd');
+    const endStr = format(weekEnd, 'yyyy-MM-dd');
+    try {
+      const res = await api.billing.createWeeklyInvoices(startStr, endStr, pendingOrders.map((order: any) => order.store.id));
+      if (!res.success) throw new Error(res.message);
+      for (const order of res.updatedOrders) {
+        if (await generatePdfForOrder(order, true)) successCount += 1;
+      }
+      setSyncResult((prev: any) => ({ ...prev, ordersByStore: prev.ordersByStore.map((old: any) => res.updatedOrders.find((next: any) => next.store.id === old.store.id) || old) }));
+    } catch (e: any) {
+      alert('Eroare la emiterea lotului: ' + e.message);
     }
     
     setIsGeneratingAll(false);
@@ -290,7 +299,7 @@ export function BillingOrders() {
 
                 <button
                   onClick={handleGenerateAll}
-                  disabled={isGeneratingAll || syncResult.ordersByStore.every((o: any) => o.assignedInvoiceNumber)}
+                  disabled={isGeneratingAll || syncResult.ordersByStore.every((o: any) => o.billingState !== 'ready')}
                   className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold px-5 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-2 text-sm"
                 >
                   {isGeneratingAll ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
@@ -301,7 +310,7 @@ export function BillingOrders() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                 {syncResult.ordersByStore.map((data: any, idx: number) => {
                   const total = data.items.reduce((acc: number, item: any) => acc + item.totalPrice, 0);
-                  const isGenerated = !!data.assignedInvoiceNumber;
+                  const isGenerated = data.billingState === 'invoiced';
                   const isDoing = generatingOrderId === data.store.id;
                   
                   return (
@@ -314,18 +323,19 @@ export function BillingOrders() {
                           </div>
                           <div className="text-sm text-slate-600 mb-2 flex items-center gap-1.5 flex-wrap">
                             <Building2 size={14} className="text-indigo-500" />
-                            <span className="font-medium text-slate-800">{data.store.client_company?.name || data.store.company_name || 'Companie neasociată'}</span>
+                            <span className="font-medium text-slate-800">{data.store.company?.name || 'Companie neasociată'}</span>
                           </div>
                           <div className="font-semibold text-slate-700 border-t border-slate-100 pt-2 mt-2">
                             Total calculat: £{total.toFixed(2)}
                           </div>
+                          {data.billingState === 'source_changed' && <div className="mt-2 text-xs font-semibold text-amber-700">Sursa s-a modificat după emitere — verificare manuală necesară.</div>}
                         </div>
                         
                         <div className="flex items-center gap-2">
                           {isGenerated ? (
                             <button
                               onClick={() => handleOpenPdf(data)}
-                              disabled={isDoing}
+                              disabled={isDoing || data.billingState !== 'ready'}
                               className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors bg-slate-100 hover:bg-slate-200 text-slate-700"
                               title="Deschide PDF-ul facturii"
                             >

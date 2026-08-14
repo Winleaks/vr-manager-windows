@@ -1,22 +1,136 @@
-import { ipcRenderer, contextBridge } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 
-contextBridge.exposeInMainWorld('ipcRenderer', {
-  on(channel: string, listener: (...args: any[]) => void) {
-    const subscription = (_event: any, ...args: any[]) => listener(...args)
-    ipcRenderer.on(channel, subscription)
-    return () => {
-      ipcRenderer.removeListener(channel, subscription)
-    }
+type EventCallback = (...args: any[]) => void
+
+function subscribe(channel: string, callback: EventCallback) {
+  const listener = (_event: Electron.IpcRendererEvent, ...args: any[]) => callback(...args)
+  ipcRenderer.on(channel, listener)
+  return () => ipcRenderer.removeListener(channel, listener)
+}
+
+export const desktopApi = {
+  rawMaterials: {
+    getAll: () => ipcRenderer.invoke('get-raw-materials'),
+    add: (rm: any) => ipcRenderer.invoke('add-raw-material', rm),
+    update: (id: number, rm: any) => ipcRenderer.invoke('update-raw-material', id, rm),
   },
-  off(channel: string, listener: (...args: any[]) => void) {
-    ipcRenderer.removeListener(channel, listener as any)
+  categories: {
+    get: (type?: string) => ipcRenderer.invoke('get-categories', type),
+    add: (name: string, type: string) => ipcRenderer.invoke('add-category', name, type),
+    update: (id: number, name: string) => ipcRenderer.invoke('update-category', id, name),
+    delete: (id: number) => ipcRenderer.invoke('delete-category', id),
   },
-  send(...args: Parameters<typeof ipcRenderer.send>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.send(channel, ...omit)
+  finishedProducts: {
+    getAll: () => ipcRenderer.invoke('get-finished-products'),
+    getById: (id: number) => ipcRenderer.invoke('get-finished-product', id),
+    add: (data: any) => ipcRenderer.invoke('add-finished-product', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('update-finished-product', id, data),
+    delete: (id: number) => ipcRenderer.invoke('delete-finished-product', id),
   },
-  invoke(...args: Parameters<typeof ipcRenderer.invoke>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.invoke(channel, ...omit)
+  recipes: {
+    getByProductId: (productId: number) => ipcRenderer.invoke('get-recipe', productId),
+    save: (productId: number, batchSize: number, notes: string, items: any[]) =>
+      ipcRenderer.invoke('save-recipe', productId, batchSize, notes, items),
   },
-})
+  productions: {
+    getAll: () => ipcRenderer.invoke('get-productions'),
+    add: (productId: number, quantity: number, date: string, notes: string) =>
+      ipcRenderer.invoke('add-production', productId, quantity, date, notes),
+  },
+  stockMovements: {
+    getAll: (limit?: number) => ipcRenderer.invoke('get-stock-movements', limit),
+    adjustStock: (rawMaterialId: number, newStock: number, reason: string) =>
+      ipcRenderer.invoke('adjust-stock', rawMaterialId, newStock, reason),
+  },
+  system: {
+    getAppVersion: () => ipcRenderer.invoke('system:getAppVersion'),
+    saveFile: (options: { buffer: Uint8Array; defaultPath: string; filters: any[] }) =>
+      ipcRenderer.invoke('save-file', options),
+    savePdfAuto: (options: { buffer: Uint8Array; filename: string }) =>
+      ipcRenderer.invoke('save-pdf-auto', options),
+    openPdfFile: (filename: string) => ipcRenderer.invoke('open-pdf-file', filename),
+    deletePdfAuto: (filename: string) => ipcRenderer.invoke('delete-pdf-auto', filename),
+    manualBackup: () => ipcRenderer.invoke('manual-backup'),
+    restoreBackup: () => ipcRenderer.invoke('restore-backup'),
+    getLastBackupTime: () => ipcRenderer.invoke('get-last-backup-time'),
+    checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+    startUpdateDownload: () => ipcRenderer.invoke('start-update-download'),
+    installUpdate: () => ipcRenderer.invoke('install-update'),
+    onUpdateAvailable: (callback: EventCallback) => subscribe('update-available', callback),
+    onUpdateProgress: (callback: EventCallback) => subscribe('update-progress', callback),
+    onUpdateDownloaded: (callback: EventCallback) => subscribe('update-downloaded', callback),
+    onUpdateError: (callback: EventCallback) => subscribe('update-error', callback),
+    onBackupCompleted: (callback: EventCallback) => subscribe('backup-completed', callback),
+    onGoogleAuthUrl: (callback: EventCallback) => subscribe('google-auth-url', callback),
+    getCloudStatus: () => ipcRenderer.invoke('get-cloud-status'),
+    connectGoogleDrive: () => ipcRenderer.invoke('connect-google-drive'),
+    saveToCloud: () => ipcRenderer.invoke('save-to-cloud'),
+    restoreFromCloud: (fileId?: string) => ipcRenderer.invoke('restore-from-cloud', fileId),
+    disconnectCloud: () => ipcRenderer.invoke('disconnect-cloud'),
+    uploadPdfToCloud: (filename: string, buffer: Uint8Array) =>
+      ipcRenderer.invoke('upload-pdf-to-cloud', filename, buffer),
+    getSyncStatus: () => ipcRenderer.invoke('get-sync-status'),
+    getDeviceRole: () => ipcRenderer.invoke('get-device-role'),
+    setDeviceRole: (role: 'writer' | 'viewer') => ipcRenderer.invoke('set-device-role', role),
+    syncViewerNow: () => ipcRenderer.invoke('sync-viewer-now'),
+    onDatabaseReplicaUpdated: (callback: EventCallback) => subscribe('database-replica-updated', callback),
+  },
+  drivers: {
+    getAll: () => ipcRenderer.invoke('get-drivers'),
+    create: (data: any) => ipcRenderer.invoke('create-driver', data),
+    update: (data: any) => ipcRenderer.invoke('update-driver', data),
+    toggleActive: (id: number, isActive: boolean) => ipcRenderer.invoke('toggle-driver', id, isActive),
+  },
+  employees: {
+    getAll: () => ipcRenderer.invoke('get-employees'),
+    create: (data: any) => ipcRenderer.invoke('create-employee', data),
+    update: (data: any) => ipcRenderer.invoke('update-employee', data),
+    toggleActive: (id: number, isActive: boolean) => ipcRenderer.invoke('toggle-employee', id, isActive),
+  },
+  dailyCash: {
+    getActiveDay: () => ipcRenderer.invoke('get-active-cash-day'),
+    getTransactions: (dayId: number) => ipcRenderer.invoke('get-cash-transactions', dayId),
+    addTransaction: (data: any) => ipcRenderer.invoke('add-cash-transaction', data),
+    closeDay: (dayId: number, finalBalance: number) =>
+      ipcRenderer.invoke('close-cash-day', dayId, finalBalance),
+    getTransactionsByDateRange: (startDate: string, endDate: string, category?: string) =>
+      ipcRenderer.invoke('get-cash-transactions-by-date', startDate, endDate, category),
+    getHistoricalZReports: (startDate: string, endDate: string) =>
+      ipcRenderer.invoke('get-historical-z-reports', startDate, endDate),
+    deleteTransaction: (transactionId: number) =>
+      ipcRenderer.invoke('delete-cash-transaction', transactionId),
+  },
+  billing: {
+    getClients: () => ipcRenderer.invoke('billing:getClients'),
+    createClient: (data: any) => ipcRenderer.invoke('billing:createClient', data),
+    updateClient: (data: any) => ipcRenderer.invoke('billing:updateClient', data),
+    getCompanies: (clientId: number) => ipcRenderer.invoke('billing:getCompanies', clientId),
+    createCompany: (data: any) => ipcRenderer.invoke('billing:createCompany', data),
+    updateCompany: (data: any) => ipcRenderer.invoke('billing:updateCompany', data),
+    getStores: (companyId: number) => ipcRenderer.invoke('billing:getStores', companyId),
+    createStore: (data: any) => ipcRenderer.invoke('billing:createStore', data),
+    updateStore: (data: any) => ipcRenderer.invoke('billing:updateStore', data),
+    getAllCompaniesAndStores: () => ipcRenderer.invoke('billing:getAllCompaniesAndStores'),
+    getCompanyProfile: (companyId: number) => ipcRenderer.invoke('billing:getCompanyProfile', companyId),
+    recordCompanyPayment: (data: any) => ipcRenderer.invoke('billing:recordCompanyPayment', data),
+    getInvoices: (startDate?: string, endDate?: string) =>
+      ipcRenderer.invoke('billing:getInvoices', startDate, endDate),
+    updateInvoice: (data: any) => ipcRenderer.invoke('billing:updateInvoice', data),
+    deleteInvoice: (invoiceId: number) => ipcRenderer.invoke('billing:deleteInvoice', invoiceId),
+    getStats: () => ipcRenderer.invoke('billing:getStats'),
+    getSettings: () => ipcRenderer.invoke('billing:getSettings'),
+    saveSettings: (data: any) => ipcRenderer.invoke('billing:saveSettings', data),
+    getVrBakerStatus: () => ipcRenderer.invoke('billing:getVrBakerStatus'),
+    configureVrBakerToken: (token: string) => ipcRenderer.invoke('billing:configureVrBakerToken', token),
+    testVrBakerConnection: () => ipcRenderer.invoke('billing:testVrBakerConnection'),
+    previewWeeklyInvoices: (startDate: string, endDate: string) =>
+      ipcRenderer.invoke('billing:previewWeeklyInvoices', startDate, endDate),
+    createWeeklyInvoices: (startDate: string, endDate: string, storeExternalIds: string[]) =>
+      ipcRenderer.invoke('billing:createWeeklyInvoices', startDate, endDate, storeExternalIds),
+    getProducts: () => ipcRenderer.invoke('billing:getProducts'),
+    syncProducts: () => ipcRenderer.invoke('billing:syncProducts'),
+    syncEntities: () => ipcRenderer.invoke('billing:syncEntities'),
+  },
+}
+
+contextBridge.exposeInMainWorld('desktopApi', desktopApi)

@@ -40,7 +40,7 @@ const modules = [
   {
     id: 'facturare',
     title: 'Facturare',
-    description: 'Generare automată a facturilor din platforma Lovable, evidență plăți și restanțieri.',
+    description: 'Generare controlată a facturilor din VR Baker Platform, evidență plăți și restanțieri.',
     icon: TrendingUp,
     color: 'bg-indigo-500',
     hoverColor: 'hover:bg-indigo-600',
@@ -132,7 +132,7 @@ export function Hub() {
           <div>
             <div className="flex items-center gap-3 justify-center md:justify-start flex-wrap">
               <h1 className="text-4xl font-extrabold text-slate-900 tracking-tight">
-                VR - Management Hub
+                VR - Hub Management
               </h1>
               <span className="bg-indigo-100 text-indigo-700 text-xs font-black px-3 py-1 rounded-full border border-indigo-200 shadow-sm self-center font-mono">
                 v{appVersion}

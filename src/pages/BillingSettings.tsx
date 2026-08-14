@@ -4,10 +4,6 @@ import { api } from '../shared/api';
 
 export function BillingSettings() {
   const [settings, setSettings] = useState({
-    supabaseUrl: '',
-    supabaseKey: '',
-    supabaseEmail: '',
-    supabasePassword: '',
     invoiceSeries: 'INV',
     invoiceStartNumber: '1',
     issuerName: '',
@@ -28,6 +24,9 @@ export function BillingSettings() {
   });
   const [isSaving, setIsSaving] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
+  const [vrBaker, setVrBaker] = useState({ endpoint: '', hasToken: false });
+  const [vrBakerToken, setVrBakerToken] = useState('');
+  const [connectionMessage, setConnectionMessage] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -38,6 +37,7 @@ export function BillingSettings() {
     try {
       const data = await api.billing.getSettings();
       setSettings(prev => ({ ...prev, ...data }));
+      setVrBaker(await api.billing.getVrBakerStatus());
     } catch (e) {
       console.error(e);
     }
@@ -301,35 +301,33 @@ export function BillingSettings() {
         </div>
       </div>
 
-      {/* Card Supabase */}
+      {/* Card VR Baker Platform */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm opacity-80 hover:opacity-100 transition-opacity">
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 bg-slate-100 text-slate-600 rounded-xl flex items-center justify-center">
             <Database size={20} />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-slate-900">Conexiune Lovable Cloud (Supabase)</h2>
-            <p className="text-sm text-slate-500">Configurația API pentru citirea comenzilor de la distanță.</p>
+            <h2 className="text-lg font-bold text-slate-900">Conexiune VR Baker Platform</h2>
+            <p className="text-sm text-slate-500">API dedicat read-only pentru comenzi, companii, magazine și produse.</p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1">
-            <label className="text-sm font-medium text-slate-700">Supabase URL</label>
-            <input type="text" name="supabaseUrl" value={settings.supabaseUrl} onChange={handleChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 text-sm" />
+            <label className="text-sm font-medium text-slate-700">Endpoint fix</label>
+            <input type="text" readOnly value={vrBaker.endpoint} className="w-full bg-slate-100 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-500 text-xs" />
           </div>
           <div className="space-y-1">
-            <label className="text-sm font-medium text-slate-700">Anon Key (Publishable)</label>
-            <input type="text" name="supabaseKey" value={settings.supabaseKey} onChange={handleChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 font-mono text-xs" />
+            <label className="text-sm font-medium text-slate-700">Token dedicat</label>
+            <input type="password" value={vrBakerToken} onChange={(event) => setVrBakerToken(event.target.value)} placeholder={vrBaker.hasToken ? 'Token salvat securizat — introdu unul nou pentru rotație' : 'Introdu tokenul vr-hub-management-writer'} autoComplete="new-password" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 text-sm" />
           </div>
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-slate-700">Email Cont (Lovable Auth)</label>
-            <input type="email" name="supabaseEmail" value={settings.supabaseEmail} onChange={handleChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 text-sm" />
+          <div className="md:col-span-2 flex flex-wrap items-center gap-3">
+            <button onClick={async () => { const result = await api.billing.configureVrBakerToken(vrBakerToken); setConnectionMessage(result.message); if (result.success) { setVrBakerToken(''); setVrBaker(await api.billing.getVrBakerStatus()); } }} disabled={!vrBakerToken} className="bg-indigo-600 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-sm font-semibold">Verifică și salvează / rotește tokenul</button>
+            <button onClick={async () => setConnectionMessage((await api.billing.testVrBakerConnection()).message)} disabled={!vrBaker.hasToken} className="bg-slate-100 disabled:opacity-50 text-slate-700 px-4 py-2 rounded-xl text-sm font-semibold">Testează conexiunea</button>
+            <span className={`text-sm font-medium ${vrBaker.hasToken ? 'text-emerald-700' : 'text-amber-700'}`}>{vrBaker.hasToken ? 'Token configurat' : 'Token neconfigurat'}</span>
           </div>
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-slate-700">Parolă Cont</label>
-            <input type="password" name="supabasePassword" value={settings.supabasePassword} onChange={handleChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 text-sm" />
-          </div>
+          {connectionMessage && <p className="md:col-span-2 text-sm text-slate-600">{connectionMessage}</p>}
         </div>
       </div>
     </div>

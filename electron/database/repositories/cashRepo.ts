@@ -1,11 +1,18 @@
 import { db } from '../db';
+import {
+  addCashTransaction,
+  closeCashDayTransaction,
+  deleteCashTransaction,
+  type CashTransactionInput,
+} from './inventoryTransactions';
 
 export const cashRepo = {
   // Ia ziua curenta deschisa sau creează una nouă (dacă ultima e închisă)
-  getActiveDay: () => {
+  getActiveDay: (createIfMissing = true) => {
     let activeDay = db.prepare('SELECT * FROM cash_days WHERE is_closed = 0 ORDER BY date DESC LIMIT 1').get() as any;
     
     if (!activeDay) {
+      if (!createIfMissing) return null;
       // Trebuie să deschidem o zi nouă (azi)
       const dateStr = new Date().toISOString().split('T')[0];
       
@@ -23,8 +30,10 @@ export const cashRepo = {
         const info = stmt.run(dateStr, openingBalance);
         activeDay = db.prepare('SELECT * FROM cash_days WHERE id = ?').get(info.lastInsertRowid);
       } catch (e: any) {
-         // Dacă există deja (unique constraint), o luăm pe aia
-         activeDay = db.prepare('SELECT * FROM cash_days WHERE date = ?').get(dateStr);
+        const existingDay = db.prepare('SELECT * FROM cash_days WHERE date = ?').get(dateStr) as any;
+        if (existingDay?.is_closed) throw new Error('Ziua de casă pentru astăzi este deja închisă.');
+        if (!existingDay) throw e;
+        activeDay = existingDay;
       }
     }
 
@@ -40,12 +49,7 @@ export const cashRepo = {
   },
 
   closeDay: (dayId: number, closingBalance: number) => {
-    db.prepare(`
-      UPDATE cash_days 
-      SET is_closed = 1, closing_balance = ?, closed_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(closingBalance, dayId);
-    return true;
+    return closeCashDayTransaction(db, dayId, closingBalance);
   },
 
   getTransactions: (dayId: number) => {
@@ -97,86 +101,11 @@ export const cashRepo = {
     `).all(startDate, endDate) as any[];
   },
 
-  addTransaction: (data: {
-    cash_day_id: number;
-    type: 'IN' | 'OUT';
-    category: string;
-    amount: number;
-    reference_id?: number | null;
-    reference_name?: string | null;
-    notes?: string | null;
-    items?: { finished_product_id: number, quantity: number, unit_price: number }[];
-  }) => {
-    const transaction = db.transaction(() => {
-      // 1. Inserăm tranzacția
-      const stmt = db.prepare(`
-        INSERT INTO cash_transactions (cash_day_id, type, category, amount, reference_id, reference_name, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `);
-      const info = stmt.run(
-        data.cash_day_id, 
-        data.type, 
-        data.category, 
-        data.amount, 
-        data.reference_id || null, 
-        data.reference_name || null, 
-        data.notes || null
-      );
-      const transactionId = info.lastInsertRowid;
-
-      // 2. Dacă sunt items (ex. vânzare directă), scădem stocul produselor finite
-      if (data.items && data.items.length > 0) {
-        const insertItem = db.prepare(`
-          INSERT INTO cash_transaction_items (transaction_id, finished_product_id, quantity, unit_price)
-          VALUES (?, ?, ?, ?)
-        `);
-        const updateProductStock = db.prepare(`
-          UPDATE finished_products SET current_stock = current_stock - ? WHERE id = ?
-        `);
-        const getProductStock = db.prepare(`SELECT current_stock FROM finished_products WHERE id = ?`);
-        const insertMovement = db.prepare(`
-          INSERT INTO finished_product_movements (finished_product_id, movement_type, quantity, stock_before, stock_after, reference_type, reference_id, notes)
-          VALUES (?, 'vanzare', ?, ?, ?, 'cash_transaction', ?, ?)
-        `);
-
-        for (const item of data.items) {
-          insertItem.run(transactionId, item.finished_product_id, item.quantity, item.unit_price);
-          
-          const currentStockRow = getProductStock.get(item.finished_product_id) as any;
-          const stockBefore = currentStockRow ? currentStockRow.current_stock : 0;
-          const stockAfter = stockBefore - item.quantity;
-
-          updateProductStock.run(item.quantity, item.finished_product_id);
-          
-          insertMovement.run(
-            item.finished_product_id,
-            item.quantity,
-            stockBefore,
-            stockAfter,
-            transactionId,
-            `Vânzare cash (Tranzacția #${transactionId})`
-          );
-        }
-      }
-
-      return transactionId;
-    });
-
-    return transaction();
+  addTransaction: (data: CashTransactionInput) => {
+    return addCashTransaction(db, data);
   },
 
   deleteTransaction: (transactionId: number) => {
-    const runDelete = db.transaction(() => {
-      // 1. Preluăm item-ele tranzacției dacă a existat o scădere de stoc pentru produse finite
-      const items = db.prepare('SELECT * FROM cash_transaction_items WHERE transaction_id = ?').all(transactionId) as any[];
-      for (const item of items) {
-        db.prepare('UPDATE finished_products SET current_stock = current_stock + ? WHERE id = ?').run(item.quantity, item.finished_product_id);
-      }
-      db.prepare('DELETE FROM finished_product_movements WHERE reference_type = "cash_transaction" AND reference_id = ?').run(transactionId);
-      db.prepare('DELETE FROM cash_transaction_items WHERE transaction_id = ?').run(transactionId);
-      db.prepare('DELETE FROM cash_transactions WHERE id = ?').run(transactionId);
-    });
-    runDelete();
-    return true;
+    return deleteCashTransaction(db, transactionId);
   }
 };

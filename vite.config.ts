@@ -12,6 +12,9 @@ export default defineConfig({
       {
         entry: 'electron/main.ts',
         vite: {
+          define: {
+            __VR_HUB_GOOGLE_CLIENT_ID__: JSON.stringify(process.env.VR_HUB_GOOGLE_CLIENT_ID || ''),
+          },
           build: {
             rollupOptions: {
               external: ['better-sqlite3']

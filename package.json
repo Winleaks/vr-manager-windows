@@ -1,19 +1,20 @@
 {
-  "name": "vr-management-hub",
+  "name": "vr-hub-management",
   "private": true,
-  "version": "0.1.71",
-  "description": "Gestiune stoc fabrica patiserie",
+  "version": "0.1.72",
+  "description": "Platformă desktop integrată pentru management, producție, facturare și operațiuni VR",
   "author": "Razvan Cristofor",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build && electron-builder",
     "lint": "oxlint",
+    "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON electron/security/*.test.mts electron/database/*.test.mts electron/device/*.test.mts electron/integrations/*.test.mts electron/migration/*.test.mts",
+    "typecheck": "tsc -b",
     "preview": "vite preview",
     "release": "npm version patch && git push && git push --tags"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.110.7",
     "better-sqlite3": "^12.11.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
@@ -26,9 +27,8 @@
     "react": "^19.2.7",
     "react-datepicker": "^9.1.0",
     "react-dom": "^19.2.7",
-    "react-router-dom": "^7.18.1",
+    "react-router-dom": "^7.18.2",
     "tailwind-merge": "^3.6.0",
-    "xlsx": "^0.18.5",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
@@ -40,22 +40,32 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "autoprefixer": "^10.5.2",
-    "concurrently": "^9.2.3",
     "cross-env": "^10.1.0",
-    "electron": "^41.7.1",
+    "electron": "^41.10.3",
     "electron-builder": "^26.15.3",
     "oxlint": "^1.69.0",
-    "postcss": "^8.5.16",
+    "postcss": "^8.5.26",
     "tailwindcss": "^4.3.2",
     "typescript": "~6.0.2",
     "vite": "^8.1.0",
     "vite-plugin-electron": "^1.1.0",
     "vite-plugin-electron-renderer": "^1.0.0"
   },
+  "overrides": {
+    "brace-expansion@<1.1.18": "1.1.18",
+    "brace-expansion@>=2.0.0 <2.1.4": "2.1.4",
+    "brace-expansion@>=5.0.0 <5.0.9": "5.0.9",
+    "dompurify@<=3.4.12": "3.4.13",
+    "fast-uri@>=3.0.0 <3.1.5": "3.1.5",
+    "js-yaml@>=4.0.0 <4.3.1": "4.3.1",
+    "nanoid@<3.3.17": "3.3.17",
+    "tar@<=7.5.20": "7.5.22",
+    "undici@<6.28.0": "6.28.0"
+  },
   "build": {
-    "appId": "com.winleaks.vrmanager",
-    "productName": "VR - Management Hub",
-    "artifactName": "VR-Management-Hub-Setup-${version}.${ext}",
+    "appId": "com.winleaks.vrhubmanagement",
+    "productName": "VR - Hub Management",
+    "artifactName": "VR-Hub-Management-Setup-${version}.${ext}",
     "copyright": "Copyright © 2026 Razvan Cristofor",
     "directories": {
       "output": "release"

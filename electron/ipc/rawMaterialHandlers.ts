@@ -1,33 +1,32 @@
-import { ipcMain } from 'electron'
 import * as repo from '../repositories/rawMaterialRepo'
+import { handleTrustedIpc } from './trustedHandler'
 
 export function registerRawMaterialHandlers() {
-  ipcMain.handle('get-raw-materials', () => {
+  handleTrustedIpc('get-raw-materials', () => {
     return repo.getAllRawMaterials()
   })
 
-  ipcMain.handle('add-raw-material', (event, rm) => {
+  handleTrustedIpc('add-raw-material', (event, rm) => {
     return repo.addRawMaterial(rm)
   })
 
-  ipcMain.handle('update-raw-material', (event, id, rm) => {
+  handleTrustedIpc('update-raw-material', (event, id, rm) => {
     return repo.updateRawMaterial(id, rm)
   })
 
-  ipcMain.handle('get-categories', (event, type) => {
+  handleTrustedIpc('get-categories', (event, type) => {
     return repo.getCategories(type)
   })
 
-  ipcMain.handle('add-category', (event, name, type) => {
+  handleTrustedIpc('add-category', (event, name, type) => {
     return repo.addCategory(name, type)
   })
 
-  ipcMain.handle('update-category', (event, id, name) => {
+  handleTrustedIpc('update-category', (event, id, name) => {
     return repo.updateCategory(id, name)
   })
 
-  ipcMain.handle('delete-category', (event, id) => {
+  handleTrustedIpc('delete-category', (event, id) => {
     return repo.deleteCategory(id)
   })
 }
-

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain VR - Hub Management"
+  short_description: "Backend, billing, data, sync and desktop safety"
+  default_prompt: "Use $maintain-vr-hub-management to safely improve the VR - Hub Management backend."

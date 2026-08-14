@@ -1,32 +1,27 @@
-import React, { useState, useEffect } from 'react';
-import { Wifi, WifiOff, RefreshCw } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 
 export function SyncStatusBadge() {
   const [status, setStatus] = useState<{
     active: boolean;
     lastSync: string | null;
-    mode: string;
+    role: 'writer' | 'viewer';
     message: string;
   }>({
     active: false,
     lastSync: null,
-    mode: 'offline',
-    message: 'Se conectează...'
+    role: 'writer',
+    message: 'Se verifică Google Drive...'
   });
 
   useEffect(() => {
-    // Pornește engine-ul de sincronizare
-    api.system.initRealtimeSync().catch(() => {});
-
-    // Preluare stare inițială
-    api.system.getSyncStatus().then((s: any) => {
+    const refresh = () => api.system.getSyncStatus().then((s: any) => {
       if (s) setStatus(s);
     }).catch(() => {});
+    refresh();
 
-    // Ascultă modificările de stare
-    const unsubscribeStatus = api.system.onSyncStatusChanged((s: any) => {
-      if (s) setStatus(s);
+    const unsubscribeStatus = api.system.onDatabaseReplicaUpdated(() => {
+      window.location.reload();
     });
 
     return () => {
@@ -46,7 +41,7 @@ export function SyncStatusBadge() {
       )}
 
       <span className="text-slate-200 font-semibold">
-        {status.active ? 'Sincronizat Live' : 'Mod Local'}
+        {status.role === 'viewer' ? 'Viewer' : 'Writer'} · {status.active ? 'Google Drive' : 'Local'}
       </span>
 
       {status.lastSync && (
