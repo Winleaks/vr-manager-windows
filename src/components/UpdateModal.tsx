@@ -1,8 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../shared/api';
 import { DownloadCloud, CheckCircle, AlertCircle, X, ChevronRight, Package } from 'lucide-react';
 
 type UpdateState = 'idle' | 'available' | 'downloading' | 'downloaded' | 'error';
+
+interface UpdaterSnapshot {
+  status: 'idle' | 'checking' | 'not-available' | 'available' | 'downloading' | 'downloaded' | 'error';
+  updateInfo: { version: string; releaseNotes: string | null } | null;
+  progress: number;
+  error: string | null;
+}
 
 export function UpdateModal() {
   const [status, setStatus] = useState<UpdateState>('idle');
@@ -11,42 +18,22 @@ export function UpdateModal() {
   const [errorMsg, setErrorMsg] = useState<string>('');
 
   useEffect(() => {
-    const unsubs: (() => void)[] = [];
-
-    unsubs.push(
-      api.system.onUpdateAvailable((e: any, info: any) => {
-        const payload = info || e;
-        setVersionInfo(payload);
-        setStatus('available');
-      })
-    );
-
-    unsubs.push(
-      api.system.onUpdateProgress((e: any, progressObj: any) => {
-        const payload = progressObj || e;
-        if (payload && payload.percent !== undefined) {
-          setProgress(Math.round(payload.percent));
-        }
-        setStatus('downloading');
-      })
-    );
-
-    unsubs.push(
-      api.system.onUpdateDownloaded(() => {
-        setStatus('downloaded');
-      })
-    );
-
-    unsubs.push(
-      api.system.onUpdateError((e: any, err: any) => {
-        const payload = err || e;
-        setErrorMsg(typeof payload === 'string' ? payload : 'Eroare la descărcarea update-ului.');
-        setStatus('error');
-      })
-    );
+    let mounted = true;
+    const applySnapshot = (snapshot: UpdaterSnapshot) => {
+      if (!mounted || !snapshot) return;
+      setVersionInfo(snapshot.updateInfo);
+      setProgress(snapshot.progress || 0);
+      setErrorMsg(snapshot.error || '');
+      setStatus(['available', 'downloading', 'downloaded', 'error'].includes(snapshot.status)
+        ? snapshot.status as UpdateState
+        : 'idle');
+    };
+    const unsubscribe = api.system.onUpdateStateChanged(applySnapshot);
+    void api.system.getUpdateState().then(applySnapshot);
 
     return () => {
-      unsubs.forEach(unsub => unsub());
+      mounted = false;
+      unsubscribe();
     };
   }, []);
 
@@ -98,10 +85,7 @@ export function UpdateModal() {
                 <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">Noutăți / Corecții (Changelog)</h3>
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 max-h-48 overflow-y-auto custom-scrollbar">
                   {versionInfo?.releaseNotes ? (
-                    <div 
-                      className="prose prose-sm prose-slate"
-                      dangerouslySetInnerHTML={{ __html: typeof versionInfo.releaseNotes === 'string' ? versionInfo.releaseNotes : (versionInfo.releaseNotes[0]?.note || 'Actualizări de performanță și securitate.') }}
-                    />
+                    <p className="text-slate-600 text-sm whitespace-pre-wrap">{versionInfo.releaseNotes}</p>
                   ) : (
                     <p className="text-slate-600 text-sm italic">Nu există detalii suplimentare pentru această versiune.</p>
                   )}

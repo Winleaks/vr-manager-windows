@@ -54,12 +54,14 @@ export const desktopApi = {
     restoreBackup: () => ipcRenderer.invoke('restore-backup'),
     getLastBackupTime: () => ipcRenderer.invoke('get-last-backup-time'),
     checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+    getUpdateState: () => ipcRenderer.invoke('get-update-state'),
     startUpdateDownload: () => ipcRenderer.invoke('start-update-download'),
     installUpdate: () => ipcRenderer.invoke('install-update'),
     onUpdateAvailable: (callback: EventCallback) => subscribe('update-available', callback),
     onUpdateProgress: (callback: EventCallback) => subscribe('update-progress', callback),
     onUpdateDownloaded: (callback: EventCallback) => subscribe('update-downloaded', callback),
     onUpdateError: (callback: EventCallback) => subscribe('update-error', callback),
+    onUpdateStateChanged: (callback: EventCallback) => subscribe('update-state-changed', callback),
     onBackupCompleted: (callback: EventCallback) => subscribe('backup-completed', callback),
     onGoogleAuthUrl: (callback: EventCallback) => subscribe('google-auth-url', callback),
     getCloudStatus: () => ipcRenderer.invoke('get-cloud-status'),
@@ -95,6 +97,8 @@ export const desktopApi = {
       ipcRenderer.invoke('close-cash-day', dayId, finalBalance),
     updateOpeningBalance: (dayId: number, openingBalance: number) =>
       ipcRenderer.invoke('update-cash-day-opening-balance', dayId, openingBalance),
+    reconcileCurrentBalance: (dayId: number, actualBalance: number) =>
+      ipcRenderer.invoke('reconcile-current-cash-balance', dayId, actualBalance),
     updateReceipt: (data: { id: number; amount: number; reference_id: number; notes?: string | null }) =>
       ipcRenderer.invoke('update-cash-receipt', data),
     getTransactionsByDateRange: (startDate: string, endDate: string, category?: string) =>

@@ -19,6 +19,9 @@ export function DailyCash() {
   const [editingOpeningBalance, setEditingOpeningBalance] = useState(false);
   const [openingBalance, setOpeningBalance] = useState('');
   const [savingOpeningBalance, setSavingOpeningBalance] = useState(false);
+  const [editingCurrentBalance, setEditingCurrentBalance] = useState(false);
+  const [currentBalance, setCurrentBalance] = useState('1893.24');
+  const [savingCurrentBalance, setSavingCurrentBalance] = useState(false);
 
   useEffect(() => {
     api.system.getDeviceRole().then((state) => setDeviceRole(state.role)).catch(() => {});
@@ -60,6 +63,27 @@ export function DailyCash() {
       window.alert(error?.message || 'Soldul de deschidere nu a putut fi actualizat.');
     } finally {
       setSavingOpeningBalance(false);
+    }
+  };
+
+  const handleCurrentBalanceSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!activeDay) return;
+    const amount = Number(currentBalance);
+    if (!Number.isFinite(amount) || amount < 0 || !/^\d+(\.\d{1,2})?$/.test(currentBalance.trim())) {
+      window.alert('Introdu un sold curent valid, cu maximum două zecimale.');
+      return;
+    }
+    if (!window.confirm(`Confirmi că numerarul fizic existent acum este £${amount.toFixed(2)}? Diferența va fi înregistrată ca ajustare.`)) return;
+    setSavingCurrentBalance(true);
+    try {
+      await api.dailyCash.reconcileCurrentBalance(activeDay.id, amount);
+      await loadData();
+      setEditingCurrentBalance(false);
+    } catch (error: any) {
+      window.alert(error?.message || 'Soldul curent nu a putut fi ajustat.');
+    } finally {
+      setSavingCurrentBalance(false);
     }
   };
 
@@ -143,6 +167,18 @@ export function DailyCash() {
             <div className="flex flex-wrap items-center gap-4">
               <div>Sold Deschidere: <span className="font-bold">£{activeDay.opening_balance.toFixed(2)}</span></div>
               <div>Sold Curent: <span className="font-bold">£{activeDay.current_balance.toFixed(2)}</span></div>
+              {deviceRole === 'writer' && !editingCurrentBalance && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentBalance(Number(activeDay.current_balance).toFixed(2));
+                    setEditingCurrentBalance(true);
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-700 text-white text-sm font-medium hover:bg-emerald-800"
+                >
+                  Actualizează soldul curent
+                </button>
+              )}
               {deviceRole === 'writer' && storeTransactions.length === 0 && !editingOpeningBalance && (
                 <button
                   type="button"
@@ -172,6 +208,29 @@ export function DailyCash() {
                   {savingOpeningBalance ? 'Se salvează...' : 'Salvează'}
                 </button>
                 <button type="button" onClick={() => setEditingOpeningBalance(false)} className="px-4 py-2 rounded-lg bg-white border border-blue-300 text-blue-800">
+                  Renunță
+                </button>
+              </form>
+            )}
+            {deviceRole === 'writer' && editingCurrentBalance && (
+              <form onSubmit={handleCurrentBalanceSubmit} className="w-full flex flex-wrap items-end gap-3 pt-3 border-t border-blue-200">
+                <label className="text-sm font-medium">
+                  Numerar fizic existent acum (£)
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    required
+                    value={currentBalance}
+                    onChange={(event) => setCurrentBalance(event.target.value)}
+                    className="block mt-1 w-48 px-3 py-2 rounded-lg border border-blue-300 bg-white text-slate-900"
+                    placeholder="1893.24"
+                  />
+                </label>
+                <button type="submit" disabled={savingCurrentBalance} className="px-4 py-2 rounded-lg bg-emerald-700 text-white font-medium disabled:opacity-50">
+                  {savingCurrentBalance ? 'Se salvează...' : 'Salvează ajustarea'}
+                </button>
+                <button type="button" onClick={() => setEditingCurrentBalance(false)} className="px-4 py-2 rounded-lg bg-white border border-blue-300 text-blue-800">
                   Renunță
                 </button>
               </form>
@@ -222,6 +281,7 @@ export function DailyCash() {
                             {t.category === 'driver_collection' ? 'Încasare Șofer' : 
                              t.category === 'direct_sale' ? 'Vânzare Directă' : 
                              t.category === 'purchase' ? 'Achiziție Marfă' : 
+                             t.category === 'cash_adjustment' ? 'Ajustare Sold' :
                              t.category === 'cash_collection' ? 'Colectare Cash' : 'Alte Cheltuieli'}
                           </div>
                           <div className="text-xs text-slate-500 mt-0.5 flex gap-2">
