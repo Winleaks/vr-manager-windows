@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { Users, Truck, UserPlus, CheckCircle2, XCircle } from 'lucide-react';
 
+const entityInputClassName = 'px-3 py-2 border border-slate-200 rounded-lg bg-white text-slate-900 caret-slate-900 placeholder:text-slate-400 pointer-events-auto select-text focus:outline-none focus:ring-2';
+
 export function SettingsEntities() {
   const [drivers, setDrivers] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -62,8 +64,12 @@ export function SettingsEntities() {
               type="text" 
               placeholder="Nume Șofer..." 
               value={newDriver.name}
-              onChange={e => setNewDriver({...newDriver, name: e.target.value})}
-              className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setNewDriver(current => ({ ...current, name: value }));
+              }}
+              className={`${entityInputClassName} text-sm focus:ring-orange-500`}
+              autoComplete="off"
               required
             />
             <div className="flex gap-2">
@@ -71,15 +77,23 @@ export function SettingsEntities() {
                 type="text" 
                 placeholder="Telefon..." 
                 value={newDriver.phone}
-                onChange={e => setNewDriver({...newDriver, phone: e.target.value})}
-                className="px-3 py-2 border border-slate-200 rounded-lg text-sm flex-1 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setNewDriver(current => ({ ...current, phone: value }));
+                }}
+                className={`${entityInputClassName} text-sm flex-1 focus:ring-orange-500`}
+                autoComplete="off"
               />
               <input 
                 type="text" 
                 placeholder="Mașină (ex. B-10-ABC)..." 
                 value={newDriver.car_details}
-                onChange={e => setNewDriver({...newDriver, car_details: e.target.value})}
-                className="px-3 py-2 border border-slate-200 rounded-lg text-sm flex-1 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setNewDriver(current => ({ ...current, car_details: value }));
+                }}
+                className={`${entityInputClassName} text-sm flex-1 focus:ring-orange-500`}
+                autoComplete="off"
               />
             </div>
             <button type="submit" className="bg-orange-500 hover:bg-orange-600 text-white font-medium py-2 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
@@ -122,16 +136,24 @@ export function SettingsEntities() {
               type="text" 
               placeholder="Nume Angajat..." 
               value={newEmployee.name}
-              onChange={e => setNewEmployee({...newEmployee, name: e.target.value})}
-              className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setNewEmployee(current => ({ ...current, name: value }));
+              }}
+              className={`${entityInputClassName} text-sm focus:ring-purple-500`}
+              autoComplete="off"
               required
             />
             <input 
               type="text" 
               placeholder="Rol / Funcție..." 
               value={newEmployee.role}
-              onChange={e => setNewEmployee({...newEmployee, role: e.target.value})}
-              className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setNewEmployee(current => ({ ...current, role: value }));
+              }}
+              className={`${entityInputClassName} text-sm focus:ring-purple-500`}
+              autoComplete="off"
             />
             <button type="submit" className="bg-purple-500 hover:bg-purple-600 text-white font-medium py-2 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
               <UserPlus size={16} /> Adaugă Angajat
