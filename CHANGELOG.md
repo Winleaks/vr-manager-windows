@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.74
+
+- Daily Cash poate fi reconciliat cu numerarul fizic existent la trecerea din alt program; diferența este înregistrată auditabil, fără rescrierea istoricului.
+- Calculul soldului curent este normalizat la două zecimale și noua ajustare este disponibilă numai pe calculatorul Writer.
+- Notificarea de actualizare este păstrată în procesul principal și reaplicată după încărcarea interfeței, inclusiv pentru verificarea manuală din Setări.
+- Detaliile updaterului sunt limitate la câmpurile necesare, iar notele versiunii sunt afișate ca text, fără interpretare HTML.
+
 ### VR - Hub Management v0.1.73
 
 - Daily Cash permite setarea unui sold de deschidere cu două zecimale înainte de prima tranzacție, inclusiv `£1,893.24`.

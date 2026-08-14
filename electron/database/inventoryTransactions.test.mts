@@ -8,6 +8,7 @@ import {
   closeCashDayTransaction,
   createProductionTransaction,
   deleteCashTransaction,
+  reconcileCurrentCashBalance,
   updateCashDayOpeningBalance,
   updateCashReceiptTransaction,
 } from './repositories/inventoryTransactions.ts';
@@ -156,6 +157,45 @@ test('cash day accepts £1893.24 opening balance and open receipts can be edited
       amount: 12,
       reference_id: driverId,
     }), /zile închise/);
+  } finally {
+    connection.close();
+  }
+});
+
+test('cash balance reconciliation preserves history and adjusts the current physical balance', () => {
+  const connection = createDatabase();
+  try {
+    const dayId = Number(connection.prepare(
+      "INSERT INTO cash_days (date, opening_balance) VALUES ('2026-08-14', 1000)",
+    ).run().lastInsertRowid);
+    connection.prepare(`
+      INSERT INTO cash_transactions (cash_day_id, type, category, amount, notes)
+      VALUES (?, 'IN', 'driver_collection', 250, 'Istoric existent')
+    `).run(dayId);
+    connection.prepare(`
+      INSERT INTO cash_transactions (cash_day_id, type, category, amount, notes)
+      VALUES (?, 'OUT', 'purchase', 50, 'Istoric existent')
+    `).run(dayId);
+
+    const adjustmentId = reconcileCurrentCashBalance(connection, dayId, 1893.24);
+    assert.ok(adjustmentId && adjustmentId > 0);
+    const rows = connection.prepare(
+      'SELECT type, category, amount FROM cash_transactions WHERE cash_day_id = ? ORDER BY id',
+    ).all(dayId) as Array<{ type: string; category: string; amount: number }>;
+    assert.equal(rows.length, 3);
+    assert.deepEqual(rows[2], { type: 'IN', category: 'cash_adjustment', amount: 693.24 });
+    const totals = connection.prepare(`
+      SELECT
+        SUM(CASE WHEN type = 'IN' THEN amount ELSE 0 END) AS total_in,
+        SUM(CASE WHEN type = 'OUT' THEN amount ELSE 0 END) AS total_out
+      FROM cash_transactions WHERE cash_day_id = ?
+    `).get(dayId) as { total_in: number; total_out: number };
+    assert.equal(Math.round((1000 + totals.total_in - totals.total_out) * 100) / 100, 1893.24);
+    assert.equal(reconcileCurrentCashBalance(connection, dayId, 1893.24), null);
+    assert.equal(
+      (connection.prepare('SELECT COUNT(*) AS value FROM cash_transactions WHERE cash_day_id = ?').get(dayId) as any).value,
+      3,
+    );
   } finally {
     connection.close();
   }

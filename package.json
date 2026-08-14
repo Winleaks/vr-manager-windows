@@ -1,7 +1,7 @@
 {
   "name": "vr-hub-management",
   "private": true,
-  "version": "0.1.73",
+  "version": "0.1.74",
   "description": "Platformă desktop integrată pentru management, producție, facturare și operațiuni VR",
   "author": "Razvan Cristofor",
   "main": "dist-electron/main.js",
@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "vite build && electron-builder",
     "lint": "oxlint",
-    "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON electron/security/*.test.mts electron/database/*.test.mts electron/device/*.test.mts electron/integrations/*.test.mts electron/migration/*.test.mts",
+    "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON electron/security/*.test.mts electron/database/*.test.mts electron/device/*.test.mts electron/integrations/*.test.mts electron/migration/*.test.mts electron/updater/*.test.mts",
     "typecheck": "tsc -b",
     "preview": "vite preview",
     "release": "npm version patch && git push && git push --tags"

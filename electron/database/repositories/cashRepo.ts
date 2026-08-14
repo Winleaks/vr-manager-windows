@@ -3,6 +3,7 @@ import {
   addCashTransaction,
   closeCashDayTransaction,
   deleteCashTransaction,
+  reconcileCurrentCashBalance,
   updateCashDayOpeningBalance,
   updateCashReceiptTransaction,
   type CashReceiptUpdateInput,
@@ -42,11 +43,12 @@ export const cashRepo = {
 
     // Calculăm soldul live din tranzacțiile zilei
     const transactions = cashRepo.getTransactions(activeDay.id);
-    let currentBalance = activeDay.opening_balance;
+    let currentBalance = Number(activeDay.opening_balance);
     for (const t of transactions) {
-      if (t.type === 'IN') currentBalance += t.amount;
-      if (t.type === 'OUT') currentBalance -= t.amount;
+      if (t.type === 'IN') currentBalance += Number(t.amount);
+      if (t.type === 'OUT') currentBalance -= Number(t.amount);
     }
+    currentBalance = Math.round(currentBalance * 100) / 100;
     
     return { ...activeDay, current_balance: currentBalance };
   },
@@ -57,6 +59,10 @@ export const cashRepo = {
 
   updateOpeningBalance: (dayId: number, openingBalance: number) => {
     return updateCashDayOpeningBalance(db, dayId, openingBalance);
+  },
+
+  reconcileCurrentBalance: (dayId: number, actualBalance: number) => {
+    return reconcileCurrentCashBalance(db, dayId, actualBalance);
   },
 
   updateReceipt: (data: CashReceiptUpdateInput) => {

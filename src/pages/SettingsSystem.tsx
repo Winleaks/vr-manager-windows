@@ -181,10 +181,8 @@ export function SettingsSystem() {
       const res = await api.system.checkForUpdates();
       if (!res.success) {
         alert('Eroare la căutarea update-ului:\n' + res.error);
-      } else {
-        if (res.result === null) {
-          alert('Căutarea a fost finalizată. Nu s-a găsit nicio versiune nouă disponibilă.');
-        }
+      } else if (res.state.status === 'not-available') {
+        alert(`Aplicația este deja la zi (versiunea ${res.state.currentVersion}).`);
       }
     } catch (e: any) {
       alert('Eroare: ' + e.message);

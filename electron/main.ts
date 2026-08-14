@@ -2,7 +2,6 @@ import { app, BrowserWindow, dialog, session } from 'electron'
 import { execFileSync } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { autoUpdater } from 'electron-updater'
 import { initDb, backupDb, closeDb } from './database/db'
 import { registerRawMaterialHandlers } from './ipc/rawMaterialHandlers'
 import { registerFinishedProductHandlers } from './ipc/finishedProductHandlers'
@@ -16,6 +15,7 @@ import { trustIpcSender } from './ipc/trustedHandler'
 import { getDeviceRole } from './device/deviceRole'
 import { syncViewerFromCloud } from './database/cloudSync'
 import { containsLegacyApplicationProcess } from './migration/legacyProcessPolicy'
+import { checkForUpdates, initializeUpdater } from './updater/updateCoordinator'
 
 const DIST_PATH = path.join(__dirname, '../dist')
 process.env.DIST = DIST_PATH
@@ -78,6 +78,10 @@ function createWindow() {
   } else {
     win.loadFile(path.join(DIST_PATH, 'index.html'))
   }
+
+  win.webContents.once('did-finish-load', () => {
+    if (app.isPackaged) void checkForUpdates()
+  })
 }
 
 app.on('window-all-closed', () => {
@@ -147,40 +151,11 @@ app.whenReady().then(() => {
   registerSystemHandlers()
   registerDailyCashHandlers()
   registerBillingHandlers()
-  
+  initializeUpdater()
   createWindow()
   setTimeout(() => {
     void runViewerSync()
   }, 2000)
-  
-  // Verificare Update-uri
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
-  
-  // Așteptăm 3 secunde după deschidere ca să nu blocăm încărcarea UI-ului
-  setTimeout(() => {
-    autoUpdater.checkForUpdates().catch(err => {
-      console.log('Eroare la verificarea update-urilor:', err);
-    });
-  }, 3000);
-
-  autoUpdater.on('update-available', (info) => {
-    if (win) {
-      win.webContents.send('update-available', info);
-    }
-  });
-
-  autoUpdater.on('download-progress', (progressObj) => {
-    if (win) {
-      win.webContents.send('update-progress', progressObj);
-    }
-  });
-
-  autoUpdater.on('update-downloaded', (info) => {
-    if (win) {
-      win.webContents.send('update-downloaded', info);
-    }
-  });
   
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -188,10 +163,3 @@ app.whenReady().then(() => {
     }
   })
 })
-
-autoUpdater.on('error', (err) => {
-  console.error('Eroare auto-update:', err);
-  if (win) {
-    win.webContents.send('update-error', 'Actualizarea nu a putut fi finalizată. Încearcă din nou.');
-  }
-});

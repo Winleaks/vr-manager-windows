@@ -8,6 +8,7 @@ const VIEWER_ALLOWED_CHANNELS = new Set([
   'manual-backup',
   'get-last-backup-time',
   'check-for-updates',
+  'get-update-state',
   'start-update-download',
   'install-update',
   'get-cloud-status',

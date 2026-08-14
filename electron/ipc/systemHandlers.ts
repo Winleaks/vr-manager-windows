@@ -2,7 +2,6 @@ import { dialog, BrowserWindow, shell, app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { autoUpdater } from 'electron-updater';
 import { createVerifiedSnapshot, restoreDb, lastBackupTime } from '../database/db';
 import { getCloudStatus, connectGoogleDrive, saveToCloud, restoreFromCloud, disconnectCloud, deletePdfFromCloud, syncViewerFromCloud } from '../database/cloudSync';
 import { handleTrustedIpc } from './trustedHandler';
@@ -14,6 +13,7 @@ import {
   validateCloudFileId,
   validatePdfFilename,
 } from '../security/fileValidation';
+import { checkForUpdates, downloadUpdate, getUpdateState, installUpdate } from '../updater/updateCoordinator';
 
 export function registerSystemHandlers() {
   handleTrustedIpc('system:getAppVersion', () => {
@@ -142,21 +142,19 @@ export function registerSystemHandlers() {
   });
 
   handleTrustedIpc('check-for-updates', async () => {
-    try {
-      const result = await autoUpdater.checkForUpdates();
-      return { success: true, result };
-    } catch (err: any) {
-      return { success: false, error: err.message || err.toString() };
-    }
+    const state = await checkForUpdates();
+    return { success: state.status !== 'error', state, error: state.error };
   });
 
-  handleTrustedIpc('start-update-download', () => {
-    autoUpdater.downloadUpdate();
+  handleTrustedIpc('get-update-state', () => getUpdateState());
+
+  handleTrustedIpc('start-update-download', async () => {
+    await downloadUpdate();
     return { success: true };
   });
 
   handleTrustedIpc('install-update', () => {
-    autoUpdater.quitAndInstall(false, true);
+    installUpdate();
     return { success: true };
   });
 
