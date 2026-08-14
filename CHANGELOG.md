@@ -1,3 +1,8 @@
+### VR - Hub Management v0.1.75
+
+- Câmpurile din Setări → Personal afișează explicit textul și cursorul pe Windows.
+- Formularele pentru angajați și șoferi păstrează stabil valorile tastate înainte de salvare.
+
 ### VR - Hub Management v0.1.74
 
 - Daily Cash poate fi reconciliat cu numerarul fizic existent la trecerea din alt program; diferența este înregistrată auditabil, fără rescrierea istoricului.
