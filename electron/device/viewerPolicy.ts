@@ -1,0 +1,48 @@
+import type { DeviceRole } from './deviceRole';
+
+const VIEWER_ALLOWED_CHANNELS = new Set([
+  'system:getAppVersion',
+  'save-file',
+  'save-pdf-auto',
+  'open-pdf-file',
+  'manual-backup',
+  'get-last-backup-time',
+  'check-for-updates',
+  'start-update-download',
+  'install-update',
+  'get-cloud-status',
+  'connect-google-drive',
+  'disconnect-cloud',
+  'restore-from-cloud',
+  'get-device-role',
+  'set-device-role',
+  'sync-viewer-now',
+  'get-sync-status',
+  'get-raw-materials',
+  'get-categories',
+  'get-finished-product',
+  'get-finished-products',
+  'get-recipe',
+  'get-productions',
+  'get-stock-movements',
+  'get-drivers',
+  'get-employees',
+  'get-active-cash-day',
+  'get-cash-transactions',
+  'get-cash-transactions-by-date',
+  'get-historical-z-reports',
+  'billing:getClients',
+  'billing:getCompanies',
+  'billing:getStores',
+  'billing:getAllCompaniesAndStores',
+  'billing:getCompanyProfile',
+  'billing:getInvoices',
+  'billing:getStats',
+  'billing:getSettings',
+  'billing:getProducts',
+  'billing:getVrBakerStatus',
+]);
+
+export function isChannelAllowedForRole(role: DeviceRole, channel: string) {
+  return role === 'writer' || VIEWER_ALLOWED_CHANNELS.has(channel);
+}

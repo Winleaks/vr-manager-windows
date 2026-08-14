@@ -1,4 +1,15 @@
 import { db } from '../db';
+import {
+  createInvoiceBatchTransaction,
+  deleteUnpaidInvoiceTransaction,
+  recordCompanyPaymentTransaction,
+  updateInvoiceTransaction,
+  createWeeklyInvoiceBatchTransaction,
+  type WeeklyInvoiceInput,
+  type CompanyPaymentInput,
+  type InvoiceOrderInput,
+} from './billingTransactions';
+import type { VrBakerCompany, VrBakerProduct, VrBakerStore } from '../../integrations/vrBakerApiClient';
 
 // Settings
 export function getAppSetting(key: string): string | null {
@@ -8,6 +19,10 @@ export function getAppSetting(key: string): string | null {
 
 export function setAppSetting(key: string, value: string) {
   db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)').run(key, value);
+}
+
+export function deleteAppSetting(key: string) {
+  db.prepare('DELETE FROM app_settings WHERE key = ?').run(key);
 }
 
 // Clients
@@ -133,7 +148,7 @@ export function upsertCompanyFromSupabase(companyData: { id: string, name: strin
     return localCompany.id as number;
   } else {
     // Înregistrare companie nouă
-    let client = db.prepare('SELECT id FROM clients ORDER BY id LIMIT 1').get() as any;
+    let client = localClientId ? { id: localClientId } : db.prepare('SELECT id FROM clients ORDER BY id LIMIT 1').get() as any;
     if (!client) {
       const info = db.prepare('INSERT INTO clients (name) VALUES (?)').run('Client Implicit');
       client = { id: info.lastInsertRowid };
@@ -301,125 +316,12 @@ export function getCompanyProfileDetails(companyId: number) {
   };
 }
 
-export function recordCompanyPayment(data: {
-  companyId: number;
-  invoiceId?: number;
-  amount: number;
-  paymentDate: string;
-  method: string;
-  bankName?: string;
-  notes?: string;
-}) {
-  const { companyId, invoiceId, amount, paymentDate, method, bankName, notes } = data;
-  if (!companyId || !amount || amount <= 0) {
-    throw new Error('Suma încasată trebuie să fie mai mare decât 0!');
-  }
+export function recordCompanyPayment(data: CompanyPaymentInput) {
+  return recordCompanyPaymentTransaction(db, data);
+}
 
-  const comp = db.prepare('SELECT client_id FROM companies WHERE id = ?').get(companyId) as any;
-  const clientId = comp?.client_id || 1;
-
-  let remainingAmount = amount;
-
-  const processPaymentTransaction = db.transaction(() => {
-    // 1. Dacă s-a selectat o factură specifică
-    if (invoiceId) {
-      const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId) as any;
-      if (inv) {
-        const due = Math.max(0, inv.total_amount - inv.paid_amount);
-        if (due > 0) {
-          const payForThis = Math.min(remainingAmount, due);
-          const newPaid = inv.paid_amount + payForThis;
-          const newStatus = (newPaid >= inv.total_amount) ? 'paid' : 'partial';
-
-          db.prepare('UPDATE invoices SET paid_amount = ?, status = ? WHERE id = ?')
-            .run(newPaid, newStatus, inv.id);
-
-          db.prepare(`
-            INSERT INTO payments (client_id, company_id, invoice_id, amount, payment_date, method, bank_name, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(clientId, companyId, inv.id, payForThis, paymentDate, method, bankName || null, notes || null);
-
-          remainingAmount -= payForThis;
-        }
-      }
-    }
-
-    // 2. Cascadăm pe următoarele cele mai vechi facturi neachitate ale companiei
-    if (remainingAmount > 0) {
-      const stores = db.prepare('SELECT id FROM stores WHERE company_id = ?').all(companyId) as any[];
-      const storeIds = stores.map(s => s.id);
-
-      if (storeIds.length > 0) {
-        const placeholders = storeIds.map(() => '?').join(',');
-        let query = `
-          SELECT * FROM invoices 
-          WHERE store_id IN (${placeholders}) AND status != 'paid' AND (total_amount - paid_amount) > 0
-        `;
-        const params: any[] = [...storeIds];
-
-        if (invoiceId) {
-          query += ` AND id != ?`;
-          params.push(invoiceId);
-        }
-        query += ` ORDER BY invoice_date ASC, id ASC`;
-
-        const unpaidInvoices = db.prepare(query).all(...params) as any[];
-
-        for (const inv of unpaidInvoices) {
-          if (remainingAmount <= 0) break;
-          const due = inv.total_amount - inv.paid_amount;
-          if (due <= 0) continue;
-
-          const payForThis = Math.min(remainingAmount, due);
-          const newPaid = inv.paid_amount + payForThis;
-          const newStatus = (newPaid >= inv.total_amount) ? 'paid' : 'partial';
-
-          db.prepare('UPDATE invoices SET paid_amount = ?, status = ? WHERE id = ?')
-            .run(newPaid, newStatus, inv.id);
-
-          db.prepare(`
-            INSERT INTO payments (client_id, company_id, invoice_id, amount, payment_date, method, bank_name, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(
-            clientId,
-            companyId, 
-            inv.id, 
-            payForThis, 
-            paymentDate, 
-            method, 
-            bankName || null, 
-            notes ? `${notes} (Distribuire automata surplus)` : 'Distribuire automată surplus pe factură restantă'
-          );
-
-          remainingAmount -= payForThis;
-        }
-      }
-    }
-
-    // 3. Supra-plată -> adăugare în soldul de credit al companiei
-    if (remainingAmount > 0) {
-      db.prepare('UPDATE companies SET credit_balance = credit_balance + ? WHERE id = ?')
-        .run(remainingAmount, companyId);
-
-      db.prepare(`
-        INSERT INTO payments (client_id, company_id, invoice_id, amount, payment_date, method, bank_name, notes)
-        VALUES (?, ?, NULL, ?, ?, ?, ?, ?)
-      `).run(
-        clientId,
-        companyId,
-        remainingAmount,
-        paymentDate,
-        method,
-        bankName || null,
-        notes ? `${notes} (Avans / Credit companie)` : 'Avans / Credit înregistrat în balanța companiei'
-      );
-
-      remainingAmount = 0;
-    }
-  });
-
-  processPaymentTransaction();
-  return true;
+export function createInvoiceBatchFromSync(orders: InvoiceOrderInput[], invoiceDate: string) {
+  return createInvoiceBatchTransaction(db, orders, invoiceDate);
 }
 
 export function getStoreBySupabaseId(supabaseStoreId: string) {
@@ -467,64 +369,11 @@ export function updateInvoiceWithItems(
   id: number,
   invoiceNumber: string,
   invoiceDate: string,
-  totalAmount: number,
-  paidAmount: number,
-  status: string,
   items: { productName: string, quantity: number, unitPrice: number, totalPrice: number }[]
 ) {
-  const updateTransaction = db.transaction(() => {
-    db.prepare(`
-      UPDATE invoices 
-      SET invoice_number = ?, invoice_date = ?, total_amount = ?, paid_amount = ?, status = ?
-      WHERE id = ?
-    `).run(invoiceNumber, invoiceDate, totalAmount, paidAmount, status, id);
-
-    db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(id);
-
-    const stmtItems = db.prepare(`
-      INSERT INTO invoice_items (invoice_id, product_name, quantity, unit_price, total_price)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-    
-    for (const item of items) {
-      stmtItems.run(id, item.productName, item.quantity, item.unitPrice, item.totalPrice);
-    }
-  });
-
-  updateTransaction();
-  return true;
+  return updateInvoiceTransaction(db, id, invoiceNumber, invoiceDate, items);
 }
 
-
-export function createInvoiceWithItems(
-  storeId: number, 
-  invoiceNumber: string, 
-  invoiceDate: string, 
-  totalAmount: number,
-  items: { productName: string, quantity: number, unitPrice: number, totalPrice: number }[]
-) {
-  let invoiceId = -1;
-  const insertInvoice = db.transaction(() => {
-    const stmt = db.prepare(`
-      INSERT INTO invoices (store_id, invoice_number, invoice_date, total_amount, paid_amount, status)
-      VALUES (?, ?, ?, ?, 0, 'unpaid')
-    `);
-    const info = stmt.run(storeId, invoiceNumber, invoiceDate, totalAmount);
-    invoiceId = info.lastInsertRowid as number;
-
-    const stmtItems = db.prepare(`
-      INSERT INTO invoice_items (invoice_id, product_name, quantity, unit_price, total_price)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-    
-    for (const item of items) {
-      stmtItems.run(invoiceId, item.productName, item.quantity, item.unitPrice, item.totalPrice);
-    }
-  });
-
-  insertInvoice();
-  return invoiceId;
-}
 
 // Dashboard calculations
 export function getBillingStats() {
@@ -543,13 +392,7 @@ export function getBillingStats() {
 }
 
 export function deleteInvoice(invoiceId: number) {
-  const deleteTransaction = db.transaction(() => {
-    db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
-    db.prepare('DELETE FROM payments WHERE invoice_id = ?').run(invoiceId);
-    db.prepare('DELETE FROM invoices WHERE id = ?').run(invoiceId);
-  });
-  deleteTransaction();
-  return true;
+  return deleteUnpaidInvoiceTransaction(db, invoiceId);
 }
 
 export function getCloudProducts() {
@@ -606,4 +449,70 @@ export function upsertProductFromSupabase(product: {
     );
     return info.lastInsertRowid as number;
   }
+}
+
+export function syncProductsFromVrBaker(products: VrBakerProduct[]) {
+  return db.transaction(() => {
+    for (const product of products) {
+      upsertProductFromSupabase({
+        id: product.id,
+        name: product.name,
+        name_ro: product.nameRo,
+        variant_label: product.variantLabel,
+        unit: product.unit,
+        category: product.category,
+        price_standard: product.priceStandard,
+        available: product.available,
+      });
+    }
+    return products.length;
+  })();
+}
+
+export function syncEntitiesFromVrBaker(companies: VrBakerCompany[], stores: VrBakerStore[]) {
+  return db.transaction(() => {
+    const companyIds = new Map<string, number>();
+    for (const company of companies) {
+      const clientId = upsertClientFromSupabase({ id: company.id, name: company.name });
+      const companyId = upsertCompanyFromSupabase({
+        id: company.id,
+        name: company.name,
+        vat_number: company.vatNumber,
+        registration_number: company.registrationNumber,
+        address: company.address,
+      }, clientId);
+      companyIds.set(company.id, companyId);
+    }
+    let unassignedCompanyId: number | undefined;
+    for (const store of stores) {
+      let companyId = store.company ? companyIds.get(store.company.id) : undefined;
+      if (!companyId) {
+        const clientId = upsertClientFromSupabase({ id: 'vrbaker-unassigned-client', name: 'Magazine fără companie mamă' });
+        unassignedCompanyId ||= upsertCompanyFromSupabase({ id: 'vrbaker-unassigned-company', name: 'Magazine neasociate' }, clientId);
+        companyId = unassignedCompanyId;
+      }
+      upsertStoreFromSupabase({ id: store.id, name: store.name, address: store.address, client_company_id: store.company?.id || '' }, companyId);
+      db.prepare('UPDATE stores SET phone = ? WHERE supabase_store_id = ?').run(store.phone || null, store.id);
+    }
+    return { companies: companies.length, stores: stores.length };
+  })();
+}
+
+export function getWeeklyImportState(storeExternalId: string, periodStart: string, periodEnd: string, fingerprint: string) {
+  const row = db.prepare(`
+    SELECT b.invoice_id, b.source_fingerprint, i.invoice_number, i.invoice_date
+    FROM invoice_import_batches b JOIN invoices i ON i.id = b.invoice_id
+    WHERE b.source = 'vrbaker' AND b.store_external_id = ? AND b.period_start = ? AND b.period_end = ?
+  `).get(storeExternalId, periodStart, periodEnd) as any;
+  if (!row) return { billingState: 'ready' as const };
+  return {
+    billingState: row.source_fingerprint === fingerprint ? 'invoiced' as const : 'source_changed' as const,
+    assignedInvoiceId: row.invoice_id,
+    assignedInvoiceNumber: row.invoice_number,
+    assignedInvoiceDate: row.invoice_date,
+  };
+}
+
+export function createWeeklyInvoices(orders: WeeklyInvoiceInput[], invoiceDate: string) {
+  return createWeeklyInvoiceBatchTransaction(db, orders, invoiceDate);
 }

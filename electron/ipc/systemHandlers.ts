@@ -1,16 +1,26 @@
-import { ipcMain, dialog, BrowserWindow, shell, app } from 'electron';
+import { dialog, BrowserWindow, shell, app } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { autoUpdater } from 'electron-updater';
-import { db, backupDb, restoreDb, lastBackupTime } from '../database/db';
-import { getCloudStatus, connectGoogleDrive, saveToCloud, restoreFromCloud, disconnectCloud, deletePdfFromCloud } from '../database/cloudSync';
+import { createVerifiedSnapshot, restoreDb, lastBackupTime } from '../database/db';
+import { getCloudStatus, connectGoogleDrive, saveToCloud, restoreFromCloud, disconnectCloud, deletePdfFromCloud, syncViewerFromCloud } from '../database/cloudSync';
+import { handleTrustedIpc } from './trustedHandler';
+import { getDeviceRole, getDeviceState, setDeviceRole, type DeviceRole } from '../device/deviceRole';
+import {
+  resolvePdfPath,
+  toBoundedBuffer,
+  toValidatedPdfBuffer,
+  validateCloudFileId,
+  validatePdfFilename,
+} from '../security/fileValidation';
 
 export function registerSystemHandlers() {
-  ipcMain.handle('system:getAppVersion', () => {
+  handleTrustedIpc('system:getAppVersion', () => {
     return app.getVersion();
   });
 
-  ipcMain.handle('save-file', async (event, options: { buffer: Uint8Array, defaultPath: string, filters: any[] }) => {
+  handleTrustedIpc('save-file', async (event, options: { buffer: Uint8Array, defaultPath: string, filters: any[] }) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     
     try {
@@ -20,7 +30,7 @@ export function registerSystemHandlers() {
       });
 
       if (!canceled && filePath) {
-        fs.writeFileSync(filePath, Buffer.from(options.buffer));
+        fs.writeFileSync(filePath, toBoundedBuffer(options.buffer));
         return { success: true, filePath };
       }
       return { success: false, canceled: true };
@@ -30,15 +40,15 @@ export function registerSystemHandlers() {
     }
   });
 
-  ipcMain.handle('save-pdf-auto', async (event, options: { buffer: Uint8Array, filename: string }) => {
+  handleTrustedIpc('save-pdf-auto', async (event, options: { buffer: Uint8Array, filename: string }) => {
     try {
       const documentsPath = app.getPath('documents');
       const facturiDir = path.join(documentsPath, 'Facturi Vatra Romaneasca');
       if (!fs.existsSync(facturiDir)) {
         fs.mkdirSync(facturiDir, { recursive: true });
       }
-      const filePath = path.join(facturiDir, options.filename);
-      fs.writeFileSync(filePath, Buffer.from(options.buffer));
+      const filePath = resolvePdfPath(facturiDir, options.filename);
+      fs.writeFileSync(filePath, toValidatedPdfBuffer(options.buffer));
       return { success: true, filePath };
     } catch (err: any) {
       console.error('Eroare salvare auto:', err);
@@ -46,11 +56,11 @@ export function registerSystemHandlers() {
     }
   });
 
-  ipcMain.handle('open-pdf-file', async (_event, filename: string) => {
+  handleTrustedIpc('open-pdf-file', async (_event, filename: string) => {
     try {
       const documentsPath = app.getPath('documents');
       const facturiDir = path.join(documentsPath, 'Facturi Vatra Romaneasca');
-      const filePath = path.join(facturiDir, filename);
+      const filePath = resolvePdfPath(facturiDir, filename);
 
       if (fs.existsSync(filePath)) {
         await shell.openPath(filePath);
@@ -63,11 +73,12 @@ export function registerSystemHandlers() {
     }
   });
 
-  ipcMain.handle('delete-pdf-auto', async (_event, filename: string) => {
+  handleTrustedIpc('delete-pdf-auto', async (_event, filename: string) => {
     try {
       const documentsPath = app.getPath('documents');
       const facturiDir = path.join(documentsPath, 'Facturi Vatra Romaneasca');
-      const filePath = path.join(facturiDir, filename);
+      const safeFilename = validatePdfFilename(filename);
+      const filePath = resolvePdfPath(facturiDir, safeFilename);
 
       // 1. Ștergere de pe disk local
       if (fs.existsSync(filePath)) {
@@ -75,7 +86,7 @@ export function registerSystemHandlers() {
       }
 
       // 2. Ștergere de pe Google Drive
-      await deletePdfFromCloud(filename);
+      await deletePdfFromCloud(safeFilename);
 
       return { success: true };
     } catch (err: any) {
@@ -84,7 +95,7 @@ export function registerSystemHandlers() {
     }
   });
 
-  ipcMain.handle('manual-backup', async (event) => {
+  handleTrustedIpc('manual-backup', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return { success: false };
 
@@ -99,14 +110,15 @@ export function registerSystemHandlers() {
     }
 
     try {
-      await db.backup(result.filePath);
+      await createVerifiedSnapshot(result.filePath);
       return { success: true, path: result.filePath };
     } catch (e: any) {
-      return { success: false, error: e.message };
+      console.error('Manual backup failed:', e);
+      return { success: false, error: 'Backupul nu a putut fi creat sau verificat.' };
     }
   });
 
-  ipcMain.handle('restore-backup', async (event) => {
+  handleTrustedIpc('restore-backup', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return { success: false };
 
@@ -121,15 +133,15 @@ export function registerSystemHandlers() {
     }
 
     const filePath = result.filePaths[0];
-    const ok = restoreDb(filePath);
+    const ok = await restoreDb(filePath);
     return { success: ok };
   });
 
-  ipcMain.handle('get-last-backup-time', () => {
+  handleTrustedIpc('get-last-backup-time', () => {
     return lastBackupTime;
   });
 
-  ipcMain.handle('check-for-updates', async () => {
+  handleTrustedIpc('check-for-updates', async () => {
     try {
       const result = await autoUpdater.checkForUpdates();
       return { success: true, result };
@@ -138,50 +150,79 @@ export function registerSystemHandlers() {
     }
   });
 
-  ipcMain.handle('start-update-download', () => {
+  handleTrustedIpc('start-update-download', () => {
     autoUpdater.downloadUpdate();
     return { success: true };
   });
 
-  ipcMain.handle('install-update', () => {
+  handleTrustedIpc('install-update', () => {
     autoUpdater.quitAndInstall(false, true);
     return { success: true };
   });
 
-  ipcMain.handle('get-cloud-status', async () => {
+  handleTrustedIpc('get-cloud-status', async () => {
     return await getCloudStatus();
   });
 
-  ipcMain.handle('connect-google-drive', async () => {
-    return await connectGoogleDrive();
+  handleTrustedIpc('connect-google-drive', async (event) => {
+    const result = await connectGoogleDrive();
+    if (result.success && getDeviceRole() === 'viewer') {
+      const syncResult = await syncViewerFromCloud();
+      if (syncResult.updated) event.sender.send('database-replica-updated', syncResult);
+    }
+    return result;
   });
 
-  ipcMain.handle('save-to-cloud', async () => {
-    return await saveToCloud(false);
+  handleTrustedIpc('save-to-cloud', async () => {
+    const snapshotPath = path.join(app.getPath('temp'), `vr-hub-management-cloud-${randomUUID()}.db`);
+    try {
+      await createVerifiedSnapshot(snapshotPath);
+      return await saveToCloud(false, snapshotPath);
+    } catch (error) {
+      console.error('Manual cloud snapshot failed:', error);
+      return { success: false, error: 'Snapshotul pentru cloud nu a putut fi creat sau verificat.' };
+    } finally {
+      try { if (fs.existsSync(snapshotPath)) fs.unlinkSync(snapshotPath); } catch {}
+    }
   });
 
-  ipcMain.handle('restore-from-cloud', async (_event, fileId?: string) => {
-    return await restoreFromCloud(fileId);
+  handleTrustedIpc('restore-from-cloud', async (_event, fileId?: string) => {
+    return await restoreFromCloud(validateCloudFileId(fileId));
   });
 
-  ipcMain.handle('disconnect-cloud', async () => {
+  handleTrustedIpc('disconnect-cloud', async () => {
     return await disconnectCloud();
   });
 
-  ipcMain.handle('upload-pdf-to-cloud', async (_event, filename: string, buffer: Uint8Array) => {
+  handleTrustedIpc('upload-pdf-to-cloud', async (_event, filename: string, buffer: Uint8Array) => {
     const { uploadPdfToCloud } = require('../database/cloudSync');
-    return await uploadPdfToCloud(filename, buffer);
+    return await uploadPdfToCloud(validatePdfFilename(filename), toValidatedPdfBuffer(buffer));
   });
 
-  ipcMain.handle('get-sync-status', () => {
-    const { getSyncStatus } = require('../database/realtimeSync');
-    return getSyncStatus();
+  handleTrustedIpc('get-device-role', () => {
+    return getDeviceState();
   });
 
-  ipcMain.handle('init-realtime-sync', async () => {
-    const { initRealtimeSync } = require('../database/realtimeSync');
-    await initRealtimeSync();
-    return true;
+  handleTrustedIpc('set-device-role', (_event, role: DeviceRole) => {
+    return setDeviceRole(role);
+  });
+
+  handleTrustedIpc('sync-viewer-now', async (event) => {
+    const result = await syncViewerFromCloud();
+    if (result.updated) event.sender.send('database-replica-updated', result);
+    return result;
+  });
+
+  handleTrustedIpc('get-sync-status', async () => {
+    const state = getDeviceState();
+    const cloud = await getCloudStatus();
+    return {
+      active: cloud.isConnected,
+      role: state.role,
+      lastSync: state.role === 'viewer' ? state.lastRemoteModifiedTime || null : cloud.lastCloudBackup,
+      message: cloud.isConnected
+        ? state.role === 'viewer' ? 'Viewer conectat la Google Drive' : 'Writer conectat la Google Drive'
+        : 'Google Drive neconectat',
+    };
   });
 }
-

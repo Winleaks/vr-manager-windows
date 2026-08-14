@@ -58,7 +58,7 @@ export function BillingDashboard() {
       </div>
       
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-center text-slate-500">
-        Secțiune în construcție. Așteptăm detaliile platformei Lovable pentru sincronizarea automată.
+        Facturarea săptămânală folosește comenzile din VR Baker Platform prin API-ul dedicat read-only.
       </div>
     </div>
   );

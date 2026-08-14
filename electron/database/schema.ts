@@ -254,6 +254,28 @@ CREATE TABLE IF NOT EXISTS invoice_items (
   FOREIGN KEY(invoice_id) REFERENCES invoices(id)
 );
 
+CREATE TABLE IF NOT EXISTS invoice_import_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id INTEGER NOT NULL UNIQUE,
+  source TEXT NOT NULL DEFAULT 'vrbaker',
+  store_external_id TEXT NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  source_fingerprint TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+  UNIQUE(source, store_external_id, period_start, period_end),
+  CHECK(period_start <= period_end)
+);
+
+CREATE TABLE IF NOT EXISTS invoice_source_orders (
+  batch_id INTEGER NOT NULL,
+  external_order_id TEXT NOT NULL UNIQUE,
+  external_updated_at TEXT NOT NULL,
+  PRIMARY KEY(batch_id, external_order_id),
+  FOREIGN KEY(batch_id) REFERENCES invoice_import_batches(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS payments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   client_id INTEGER,
@@ -302,6 +324,8 @@ CREATE INDEX IF NOT EXISTS idx_stores_company ON stores(company_id);
 CREATE INDEX IF NOT EXISTS idx_stores_supabase ON stores(supabase_store_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_store_date ON invoices(store_id, invoice_date);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice ON invoice_items(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_import_period ON invoice_import_batches(period_start, period_end);
+CREATE INDEX IF NOT EXISTS idx_invoice_source_batch ON invoice_source_orders(batch_id);
 CREATE INDEX IF NOT EXISTS idx_payments_client ON payments(client_id);
 CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_cloud_products_supabase ON cloud_products(supabase_product_id);

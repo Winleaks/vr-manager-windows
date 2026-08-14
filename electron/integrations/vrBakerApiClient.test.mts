@@ -1,0 +1,53 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { VrBakerApiClient, validateWeeklyPeriod } from './vrBakerApiClient.ts';
+
+const TOKEN = 'a'.repeat(48);
+
+test('accepts only complete Monday-to-Sunday billing periods', () => {
+  assert.deepEqual(validateWeeklyPeriod('2026-08-03', '2026-08-09'), {
+    startDate: '2026-08-03', endDate: '2026-08-09',
+  });
+  assert.throws(() => validateWeeklyPeriod('2026-08-04', '2026-08-10'), /luni până duminică/);
+  assert.throws(() => validateWeeklyPeriod('2026-08-03', '2026-08-10'), /luni până duminică/);
+});
+
+test('retries transient responses but not authorization failures', async () => {
+  let transientCalls = 0;
+  const transientClient = new VrBakerApiClient(TOKEN, {
+    maxAttempts: 3,
+    wait: async () => {},
+    fetchImpl: (async () => {
+      transientCalls += 1;
+      return transientCalls < 3
+        ? new Response(JSON.stringify({ success: false, error: 'temporar' }), { status: 503 })
+        : new Response(JSON.stringify({ success: true, data: { status: 'ok' } }), { status: 200 });
+    }) as typeof fetch,
+  });
+  assert.equal((await transientClient.health()).status, 'ok');
+  assert.equal(transientCalls, 3);
+
+  let deniedCalls = 0;
+  const deniedClient = new VrBakerApiClient(TOKEN, {
+    wait: async () => {},
+    fetchImpl: (async () => {
+      deniedCalls += 1;
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), { status: 401 });
+    }) as typeof fetch,
+  });
+  await assert.rejects(() => deniedClient.health(), /Unauthorized/);
+  assert.equal(deniedCalls, 1);
+});
+
+test('rejects delivered orders until the driver application owns that status', async () => {
+  const deliveredClient = new VrBakerApiClient(TOKEN, {
+    maxAttempts: 1,
+    fetchImpl: (async () => new Response(JSON.stringify({ success: true, data: { orders: [{
+      id: '11111111-1111-4111-8111-111111111111', delivery_date: '2026-08-03', status: 'delivered',
+      updated_at: '2026-08-03T10:00:00Z',
+      client_store: { id: '22222222-2222-4222-8222-222222222222', name: 'Magazin', client_company: null },
+      order_items: [],
+    }], next_cursor: null } }), { status: 200 })) as typeof fetch,
+  });
+  await assert.rejects(() => deliveredClient.fetchWeeklyOrders('2026-08-03', '2026-08-09'), /status de comandă neacceptat/);
+});

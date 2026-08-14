@@ -2,13 +2,34 @@ import Database from 'better-sqlite3'
 import path from 'path'
 import { app } from 'electron'
 import fs from 'fs'
+import { randomUUID } from 'crypto'
 import { initialSchema, seedData } from './schema'
+import { createBackupFilename, selectBackupFilesToDelete } from './backupPolicy'
+import { verifyDatabaseFile } from './databaseValidation'
+import { migrateLegacyIdentity } from '../migration/identityMigration'
+
+export { verifyDatabaseFile } from './databaseValidation'
 
 const isDev = !app.isPackaged
 
 const baseDir = isDev 
   ? process.cwd() 
   : app.getPath('userData')
+
+if (!isDev) {
+  const appData = app.getPath('appData')
+  const migration = migrateLegacyIdentity({
+    targetUserData: baseDir,
+    legacyUserDataDirs: [
+      path.join(appData, 'VR - Management Hub'),
+      path.join(appData, 'vr-management-hub'),
+    ],
+    validateDatabase: verifyDatabaseFile,
+  })
+  if (migration.migrated) {
+    console.log('[IDENTITY MIGRATION] Datele aplicației anterioare au fost migrate și verificate.')
+  }
+}
 
 export const dbFolder = path.join(baseDir, 'baze de date')
 if (!fs.existsSync(dbFolder)) {
@@ -75,6 +96,8 @@ export function scanAllDatabases() {
     addTree('C:\\Program Files (x86)\\VR - Management Hub');
     addTree(path.join(home, 'Desktop'));
     addTree(path.join(home, 'Desktop', 'VR - Management Hub'));
+    addTree(path.join(app.getPath('appData'), 'VR - Management Hub'));
+    addTree(path.join(app.getPath('appData'), 'vr-management-hub'));
     addTree(path.join(home, 'Downloads'));
     try {
       const { getCloudTargetDirectory } = require('./cloudSync');
@@ -109,14 +132,21 @@ if (!fs.existsSync(dbPath)) {
   }
 }
 
-export let db = new Database(dbPath, { verbose: isDev ? console.log : undefined })
-db.pragma('journal_mode = WAL')
-db.pragma('foreign_keys = ON')
-db.pragma('synchronous = NORMAL')
-db.pragma('temp_store = MEMORY')
-db.pragma('busy_timeout = 5000')
+function openDatabase() {
+  const connection = new Database(dbPath, { verbose: isDev ? console.log : undefined })
+  connection.pragma('journal_mode = WAL')
+  connection.pragma('foreign_keys = ON')
+  connection.pragma('synchronous = NORMAL')
+  connection.pragma('temp_store = MEMORY')
+  connection.pragma('busy_timeout = 5000')
+  return connection
+}
 
+export let db = openDatabase()
+
+export let lastBackupAttemptTime: string | null = null;
 export let lastBackupTime: string | null = null;
+export let lastVerifiedBackupTime: string | null = null;
 
 export function initDb() {
   // 1. Execuția schemei și a indecșilor B-Tree
@@ -205,6 +235,36 @@ function runMigrations() {
           try { db.exec("ALTER TABLE companies ADD COLUMN phone TEXT;"); } catch (e) {}
           try { db.exec("ALTER TABLE stores ADD COLUMN phone TEXT;"); } catch (e) {}
         }
+      },
+      {
+        version: 6,
+        description: "Adăugare trasabilitate și protecție anti-duplicare pentru importurile VR Baker",
+        up: () => {
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS invoice_import_batches (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              invoice_id INTEGER NOT NULL UNIQUE,
+              source TEXT NOT NULL DEFAULT 'vrbaker',
+              store_external_id TEXT NOT NULL,
+              period_start DATE NOT NULL,
+              period_end DATE NOT NULL,
+              source_fingerprint TEXT NOT NULL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+              UNIQUE(source, store_external_id, period_start, period_end),
+              CHECK(period_start <= period_end)
+            );
+            CREATE TABLE IF NOT EXISTS invoice_source_orders (
+              batch_id INTEGER NOT NULL,
+              external_order_id TEXT NOT NULL UNIQUE,
+              external_updated_at TEXT NOT NULL,
+              PRIMARY KEY(batch_id, external_order_id),
+              FOREIGN KEY(batch_id) REFERENCES invoice_import_batches(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_invoice_import_period ON invoice_import_batches(period_start, period_end);
+            CREATE INDEX IF NOT EXISTS idx_invoice_source_batch ON invoice_source_orders(batch_id);
+          `);
+        }
       }
     ];
 
@@ -224,35 +284,127 @@ function runMigrations() {
   }
 }
 
-export function backupDb() {
-  const backupDir = path.join(dbFolder, 'backups')
+let maintenanceQueue: Promise<void> = Promise.resolve()
+let automaticBackupInFlight: Promise<BackupResult> | null = null
 
-  if (!fs.existsSync(backupDir)) {
-    fs.mkdirSync(backupDir, { recursive: true })
-  }
+export interface BackupResult {
+  success: boolean;
+  path?: string;
+  error?: string;
+}
 
-  const dateStr = new Date().toISOString().slice(0, 10)
-  const backupPath = path.join(backupDir, `backup_${dateStr}.db`)
-  
+function withDatabaseMaintenance<T>(operation: () => Promise<T>): Promise<T> {
+  const result = maintenanceQueue.then(operation, operation)
+  maintenanceQueue = result.then(() => undefined, () => undefined)
+  return result
+}
+
+export function waitForDatabaseReady() {
+  return maintenanceQueue
+}
+
+function safeUnlink(filePath: string) {
   try {
-    db.backup(backupPath)
-      .then(() => {
-        console.log('Backup successful to', backupPath);
-        const now = new Date();
-        const dateFormatted = now.toLocaleDateString('ro-RO', { day: '2-digit', month: '2-digit', year: 'numeric' });
-        const timeFormatted = now.toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' });
-        lastBackupTime = `${dateFormatted} - ${timeFormatted}`;
-        try {
-          const { saveToCloud } = require('./cloudSync');
-          saveToCloud(true);
-        } catch (errCloud) {
-          console.warn('Silent cloud sync failed:', errCloud);
-        }
-      })
-      .catch((err: any) => console.error('Backup failed:', err))
-  } catch(e) {
-    console.error('Backup sync error', e)
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+  } catch {}
+}
+
+function removeDatabaseSidecars(filePath: string) {
+  safeUnlink(`${filePath}-wal`)
+  safeUnlink(`${filePath}-shm`)
+}
+
+async function replaceFileAtomically(stagedPath: string, destinationPath: string) {
+  const previousPath = `${destinationPath}.previous-${randomUUID()}`
+  let previousMoved = false
+  try {
+    if (fs.existsSync(destinationPath)) {
+      fs.renameSync(destinationPath, previousPath)
+      previousMoved = true
+    }
+    fs.renameSync(stagedPath, destinationPath)
+    if (previousMoved) safeUnlink(previousPath)
+  } catch (error) {
+    safeUnlink(destinationPath)
+    if (previousMoved && fs.existsSync(previousPath)) fs.renameSync(previousPath, destinationPath)
+    throw error
   }
+}
+
+async function createVerifiedSnapshotUnlocked(destinationPath: string) {
+  const destinationDir = path.dirname(destinationPath)
+  fs.mkdirSync(destinationDir, { recursive: true })
+  const stagedPath = path.join(destinationDir, `.${path.basename(destinationPath)}.${randomUUID()}.tmp`)
+
+  try {
+    await db.backup(stagedPath)
+    verifyDatabaseFile(stagedPath)
+    await replaceFileAtomically(stagedPath, destinationPath)
+    return destinationPath
+  } finally {
+    safeUnlink(stagedPath)
+  }
+}
+
+async function copyDatabaseSnapshot(sourcePath: string, destinationPath: string) {
+  let source: Database.Database | null = null
+  try {
+    source = new Database(sourcePath, { readonly: true, fileMustExist: true })
+    await source.backup(destinationPath)
+  } finally {
+    source?.close()
+  }
+}
+
+export function createVerifiedSnapshot(destinationPath: string) {
+  return withDatabaseMaintenance(() => createVerifiedSnapshotUnlocked(destinationPath))
+}
+
+function pruneAutomaticBackups(backupDir: string) {
+  const filenames = fs.readdirSync(backupDir)
+  for (const filename of selectBackupFilesToDelete(filenames)) {
+    safeUnlink(path.join(backupDir, filename))
+  }
+}
+
+export function backupDb(): Promise<BackupResult> {
+  if (automaticBackupInFlight) return automaticBackupInFlight
+
+  automaticBackupInFlight = withDatabaseMaintenance(async () => {
+    const now = new Date()
+    lastBackupAttemptTime = now.toISOString()
+    const backupDir = path.join(dbFolder, 'backups')
+    const backupPath = path.join(backupDir, createBackupFilename(now))
+    await createVerifiedSnapshotUnlocked(backupPath)
+    try {
+      pruneAutomaticBackups(backupDir)
+    } catch (error) {
+      console.warn('Backup retention cleanup failed:', error)
+    }
+
+    lastVerifiedBackupTime = now.toISOString()
+    lastBackupTime = now.toLocaleString('ro-RO', {
+      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    })
+    console.log('Verified backup successful to', backupPath)
+    return { success: true, path: backupPath }
+  }).then(async (result) => {
+    try {
+      const { saveToCloud } = require('./cloudSync')
+      const cloudResult = await saveToCloud(true, result.path)
+      if (!cloudResult.success) console.warn('Silent cloud sync skipped or failed.')
+    } catch (error) {
+      console.warn('Silent cloud sync failed:', error)
+    }
+    return result
+  }).catch((error: unknown) => {
+    console.error('Backup failed:', error)
+    return { success: false, error: 'Backupul local nu a putut fi creat sau verificat.' }
+  }).finally(() => {
+    automaticBackupInFlight = null
+  })
+
+  return automaticBackupInFlight
 }
 
 export function closeDb() {
@@ -266,37 +418,60 @@ export function closeDb() {
   }
 }
 
-export function restoreDb(filePath: string) {
-  try {
-    closeDb();
-    
-    // Curățăm jurnalele WAL și SHM vechi pentru a nu anula datele proaspăt restaurate
-    if (fs.existsSync(`${dbPath}-wal`)) {
-      try { fs.unlinkSync(`${dbPath}-wal`); } catch (e) {}
-    }
-    if (fs.existsSync(`${dbPath}-shm`)) {
-      try { fs.unlinkSync(`${dbPath}-shm`); } catch (e) {}
-    }
+export function restoreDb(filePath: string): Promise<boolean> {
+  return withDatabaseMaintenance(async () => {
+    const operationId = randomUUID()
+    const stagedPath = `${dbPath}.restore-${operationId}.tmp`
+    const rollbackPath = `${dbPath}.rollback-${operationId}`
+    const backupDir = path.join(dbFolder, 'backups')
+    const restoreTimestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const preRestorePath = path.join(backupDir, `pre_restore_${restoreTimestamp}_${operationId}.db`)
+    let originalMoved = false
+    let replacementInstalled = false
+    let transitionStarted = false
 
-    fs.copyFileSync(filePath, dbPath);
-    console.log('Database file replaced from backup successfully.');
-    
-    // Re-deschidere conexiune Singleton DB cu toate setările optime
-    db = new Database(dbPath, { verbose: isDev ? console.log : undefined });
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-    db.pragma('synchronous = NORMAL');
-    db.pragma('temp_store = MEMORY');
-    db.pragma('busy_timeout = 5000');
-    return true;
-  } catch (err) {
-    console.error('Failed to restore database:', err);
     try {
-      db = new Database(dbPath, { verbose: isDev ? console.log : undefined });
-      db.pragma('journal_mode = WAL');
-      db.pragma('foreign_keys = ON');
-    } catch (e) {}
-    return false;
-  }
-}
+      verifyDatabaseFile(filePath)
+      await createVerifiedSnapshotUnlocked(preRestorePath)
+      await copyDatabaseSnapshot(filePath, stagedPath)
+      verifyDatabaseFile(stagedPath)
 
+      transitionStarted = true
+      closeDb()
+      removeDatabaseSidecars(dbPath)
+      if (fs.existsSync(dbPath)) {
+        fs.renameSync(dbPath, rollbackPath)
+        originalMoved = true
+      }
+      fs.renameSync(stagedPath, dbPath)
+      replacementInstalled = true
+
+      db = openDatabase()
+      initDb()
+      verifyDatabaseFile(dbPath)
+      safeUnlink(rollbackPath)
+      console.log('Database restored from a verified backup. Recovery snapshot:', preRestorePath)
+      return true
+    } catch (error) {
+      console.error('Failed to restore database:', error)
+      if (transitionStarted) {
+        closeDb()
+        removeDatabaseSidecars(dbPath)
+        if (replacementInstalled) safeUnlink(dbPath)
+        try {
+          if (originalMoved && fs.existsSync(rollbackPath)) fs.renameSync(rollbackPath, dbPath)
+        } catch (rollbackError) {
+          console.error('Failed to put the original database back in place. Recovery file retained:', rollbackPath, rollbackError)
+        }
+        try {
+          if (fs.existsSync(dbPath)) db = openDatabase()
+        } catch (reopenError) {
+          console.error('Failed to reopen the database after restore rollback:', reopenError)
+        }
+      }
+      return false
+    } finally {
+      safeUnlink(stagedPath)
+    }
+  })
+}

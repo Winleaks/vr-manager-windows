@@ -1,15 +1,16 @@
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { api } from '../shared/api';
 
 export async function exportToExcel(data: any[], filename: string, sheetName: string = 'Sheet1') {
-  const worksheet = XLSX.utils.json_to_sheet(data);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
-  
-  // Generate buffer
-  const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet(sheetName);
+  const columns = Array.from(new Set(data.flatMap(row => Object.keys(row))));
+  worksheet.columns = columns.map(key => ({ header: key, key }));
+  worksheet.addRows(data);
+
+  const excelBuffer = await workbook.xlsx.writeBuffer();
   
   // Save via IPC
   const res = await api.system.saveFile({

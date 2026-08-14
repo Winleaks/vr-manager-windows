@@ -170,13 +170,10 @@ export function BillingInvoices() {
 
     setIsSaving(true);
     try {
-      await api.billing.updateInvoice({
+      const saved = await api.billing.updateInvoice({
         id: editingInvoice.id,
         invoiceNumber: editForm.invoice_number.trim(),
         invoiceDate: editForm.invoice_date,
-        totalAmount: calculatedTotalAmount,
-        paidAmount: editForm.paid_amount,
-        status: editForm.status,
         items: editForm.items
       });
 
@@ -185,9 +182,9 @@ export function BillingInvoices() {
         ...editingInvoice,
         invoice_number: editForm.invoice_number.trim(),
         invoice_date: editForm.invoice_date,
-        total_amount: calculatedTotalAmount,
-        paid_amount: editForm.paid_amount,
-        status: editForm.status,
+        total_amount: saved.totalAmount,
+        paid_amount: saved.paidAmount,
+        status: saved.status,
         items: editForm.items
       };
       await handlePrintPdf(updatedInv, true);
@@ -509,28 +506,13 @@ export function BillingInvoices() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1.5">Status Plată</label>
-                  <select
-                    value={editForm.status}
-                    onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  >
-                    <option value="unpaid">Neachitat</option>
-                    <option value="paid">Achitat integral</option>
-                    <option value="partial">Achitat parțial</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1.5">Suma Plătită (£)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={editForm.paid_amount}
-                    onChange={(e) => setEditForm({ ...editForm, paid_amount: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  />
+                <div className="sm:col-span-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                  <div className="text-xs font-semibold uppercase text-emerald-700">Situație plată protejată</div>
+                  <div className="mt-1 text-sm text-emerald-900">
+                    {editForm.status === 'paid' ? 'Achitat integral' : editForm.status === 'partial' ? 'Achitat parțial' : 'Neachitat'}
+                    {' · '}£{editForm.paid_amount.toFixed(2)} înregistrat prin istoricul de încasări
+                  </div>
+                  <p className="mt-1 text-xs text-emerald-700">Suma și statusul se modifică numai prin înregistrarea unei plăți.</p>
                 </div>
               </div>
 

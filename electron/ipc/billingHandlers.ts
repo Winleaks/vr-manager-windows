@@ -1,514 +1,184 @@
-import { ipcMain } from 'electron';
 import * as billingRepo from '../database/repositories/billingRepo';
+import { handleTrustedIpc } from './trustedHandler';
+import { aggregateWeeklyOrders } from '../integrations/weeklyInvoiceImport';
+import { createVrBakerClient, syncVrBakerCatalog, syncVrBakerEntities } from '../integrations/vrBakerIntegration';
+import { hasVrBakerApiToken, removeLegacySupabaseCredential, setVrBakerApiToken } from '../integrations/vrBakerCredentials';
+import { validateWeeklyPeriod, VR_BAKER_API_ENDPOINT } from '../integrations/vrBakerApiClient';
+
+function message(error: unknown) {
+  return error instanceof Error ? error.message : 'Operațiunea a eșuat.';
+}
+
+function setting(key: string, value: unknown) {
+  billingRepo.setAppSetting(key, value === undefined || value === null ? '' : String(value));
+}
+
+async function prepareWeeklyPreview(startDate: string, endDate: string) {
+  validateWeeklyPeriod(startDate, endDate);
+  const client = createVrBakerClient();
+  const [orders, companies, stores, products] = await Promise.all([
+    client.fetchWeeklyOrders(startDate, endDate),
+    client.fetchCompanies(),
+    client.fetchStores(),
+    client.fetchProducts(),
+  ]);
+  billingRepo.syncEntitiesFromVrBaker(companies, stores);
+  billingRepo.syncProductsFromVrBaker(products);
+  return aggregateWeeklyOrders(orders).map((group) => ({
+    ...group,
+    ...billingRepo.getWeeklyImportState(group.store.id, startDate, endDate, group.sourceFingerprint),
+  }));
+}
 
 export function registerBillingHandlers() {
-  ipcMain.handle('billing:getClients', () => {
-    return billingRepo.getClients();
-  });
-
-  ipcMain.handle('billing:createClient', (_, data) => {
-    return billingRepo.createClient(data.name, data.supabaseClientId);
-  });
-
-  ipcMain.handle('billing:updateClient', (_, data) => {
+  handleTrustedIpc('billing:getClients', () => billingRepo.getClients());
+  handleTrustedIpc('billing:createClient', (_, data) => billingRepo.createClient(data.name, data.supabaseClientId));
+  handleTrustedIpc('billing:updateClient', (_, data) => {
     billingRepo.updateClient(data.id, data.name, data.supabaseClientId, data.isActive);
     return true;
   });
-
-  ipcMain.handle('billing:getCompanies', (_, clientId) => {
-    return billingRepo.getCompaniesByClientId(clientId);
-  });
-
-  ipcMain.handle('billing:createCompany', (_, data) => {
-    return billingRepo.createCompany(
-      data.clientId, data.name, data.cui, data.regCom, data.address, data.bankAccount, data.bankName
-    );
-  });
-
-  ipcMain.handle('billing:updateCompany', (_, data) => {
-    billingRepo.updateCompany(
-      data.id, data.name, data.cui, data.regCom, data.address, data.bankAccount, data.bankName, data.isActive
-    );
+  handleTrustedIpc('billing:getCompanies', (_, clientId) => billingRepo.getCompaniesByClientId(clientId));
+  handleTrustedIpc('billing:createCompany', (_, data) => billingRepo.createCompany(data.clientId, data.name, data.cui, data.regCom, data.address, data.bankAccount, data.bankName));
+  handleTrustedIpc('billing:updateCompany', (_, data) => {
+    billingRepo.updateCompany(data.id, data.name, data.cui, data.regCom, data.address, data.bankAccount, data.bankName, data.isActive);
     return true;
   });
-
-  ipcMain.handle('billing:getStores', (_, companyId) => {
-    return billingRepo.getStoresByCompanyId(companyId);
-  });
-
-  ipcMain.handle('billing:createStore', (_, data) => {
-    return billingRepo.createStore(data.companyId, data.name, data.address, data.supabaseStoreId);
-  });
-
-  ipcMain.handle('billing:getAllCompaniesAndStores', () => {
-    return billingRepo.getAllCompaniesAndStores();
-  });
-
-  ipcMain.handle('billing:getCompanyProfile', (_, companyId) => {
-    return billingRepo.getCompanyProfileDetails(companyId);
-  });
-
-  ipcMain.handle('billing:recordCompanyPayment', (_, data) => {
-    return billingRepo.recordCompanyPayment(data);
-  });
-
-  ipcMain.handle('billing:updateStore', (_, data) => {
+  handleTrustedIpc('billing:getStores', (_, companyId) => billingRepo.getStoresByCompanyId(companyId));
+  handleTrustedIpc('billing:createStore', (_, data) => billingRepo.createStore(data.companyId, data.name, data.address, data.supabaseStoreId));
+  handleTrustedIpc('billing:updateStore', (_, data) => {
     billingRepo.updateStore(data.id, data.name, data.address, data.supabaseStoreId, data.isActive);
     return true;
   });
+  handleTrustedIpc('billing:getAllCompaniesAndStores', () => billingRepo.getAllCompaniesAndStores());
+  handleTrustedIpc('billing:getCompanyProfile', (_, companyId) => billingRepo.getCompanyProfileDetails(companyId));
+  handleTrustedIpc('billing:recordCompanyPayment', (_, data) => billingRepo.recordCompanyPayment(data));
+  handleTrustedIpc('billing:getInvoices', (_, startDate, endDate) => billingRepo.getInvoicesByDateRange(startDate, endDate));
+  handleTrustedIpc('billing:updateInvoice', (_, data) => billingRepo.updateInvoiceWithItems(data.id, data.invoiceNumber, data.invoiceDate, data.items || []));
+  handleTrustedIpc('billing:deleteInvoice', (_, invoiceId: number) => billingRepo.deleteInvoice(invoiceId));
+  handleTrustedIpc('billing:getStats', () => billingRepo.getBillingStats());
+  handleTrustedIpc('billing:getProducts', () => billingRepo.getCloudProducts());
 
-  ipcMain.handle('billing:getInvoices', (_, startDate, endDate) => {
-    return billingRepo.getInvoicesByDateRange(startDate, endDate);
-  });
+  handleTrustedIpc('billing:getSettings', () => ({
+    invoiceSeries: billingRepo.getAppSetting('invoice_series') || 'FACT',
+    invoiceStartNumber: billingRepo.getAppSetting('invoice_start_number') || '1',
+    issuerName: billingRepo.getAppSetting('issuer_name') || '',
+    issuerAddress: billingRepo.getAppSetting('issuer_address') || '',
+    issuerCrn: billingRepo.getAppSetting('issuer_crn') || '',
+    issuerVat: billingRepo.getAppSetting('issuer_vat') || '',
+    invoiceBankName1: billingRepo.getAppSetting('invoice_bank_name_1') || billingRepo.getAppSetting('invoice_bank_name') || '',
+    invoiceAccountNumber: billingRepo.getAppSetting('invoice_account_number') || '',
+    invoiceSortCode: billingRepo.getAppSetting('invoice_sort_code') || '',
+    invoiceBankName2: billingRepo.getAppSetting('invoice_bank_name_2') || '',
+    invoiceAccountNumber2: billingRepo.getAppSetting('invoice_account_number_2') || '',
+    invoiceSortCode2: billingRepo.getAppSetting('invoice_sort_code_2') || '',
+    invoiceFooter: billingRepo.getAppSetting('invoice_footer') || '',
+    invoiceColor: billingRepo.getAppSetting('invoice_color') || '#4F46E5',
+    invoiceAlternateRowColor: billingRepo.getAppSetting('invoice_alternate_row_color') || '#4F46E5',
+    invoiceAlternateRowOpacity: Number(billingRepo.getAppSetting('invoice_alternate_row_opacity') || 5),
+    invoiceLogo: billingRepo.getAppSetting('invoice_logo') || '',
+  }));
 
-  ipcMain.handle('billing:updateInvoice', (_, data) => {
-    return billingRepo.updateInvoiceWithItems(
-      data.id,
-      data.invoiceNumber,
-      data.invoiceDate,
-      data.totalAmount,
-      data.paidAmount ?? 0,
-      data.status ?? 'unpaid',
-      data.items || []
-    );
-  });
-
-
-  ipcMain.handle('billing:getStats', () => {
-    return billingRepo.getBillingStats();
-  });
-
-  ipcMain.handle('billing:getSettings', () => {
-    return {
-      supabaseUrl: billingRepo.getAppSetting('supabase_url') || '',
-      supabaseKey: billingRepo.getAppSetting('supabase_key') || '',
-      supabaseEmail: billingRepo.getAppSetting('supabase_email') || '',
-      supabasePassword: billingRepo.getAppSetting('supabase_password') || '',
-      invoiceSeries: billingRepo.getAppSetting('invoice_series') || 'FACT',
-      invoiceStartNumber: billingRepo.getAppSetting('invoice_start_number') || '1',
-      issuerName: billingRepo.getAppSetting('issuer_name') || '',
-      issuerAddress: billingRepo.getAppSetting('issuer_address') || '',
-      issuerCrn: billingRepo.getAppSetting('issuer_crn') || '',
-      issuerVat: billingRepo.getAppSetting('issuer_vat') || '',
-      invoiceBankName1: billingRepo.getAppSetting('invoice_bank_name_1') || billingRepo.getAppSetting('invoice_bank_name') || '',
-      invoiceAccountNumber: billingRepo.getAppSetting('invoice_account_number') || '',
-      invoiceSortCode: billingRepo.getAppSetting('invoice_sort_code') || '',
-      invoiceBankName2: billingRepo.getAppSetting('invoice_bank_name_2') || '',
-      invoiceAccountNumber2: billingRepo.getAppSetting('invoice_account_number_2') || '',
-      invoiceSortCode2: billingRepo.getAppSetting('invoice_sort_code_2') || '',
-      invoiceFooter: billingRepo.getAppSetting('invoice_footer') || '',
-      invoiceColor: billingRepo.getAppSetting('invoice_color') || '#4F46E5',
-      invoiceAlternateRowColor: billingRepo.getAppSetting('invoice_alternate_row_color') || '#4F46E5',
-      invoiceAlternateRowOpacity: billingRepo.getAppSetting('invoice_alternate_row_opacity') !== null ? Number(billingRepo.getAppSetting('invoice_alternate_row_opacity')) : 5,
-      invoiceLogo: billingRepo.getAppSetting('invoice_logo') || '',
-    };
-  });
-
-  ipcMain.handle('billing:saveSettings', (_, data) => {
-    billingRepo.setAppSetting('supabase_url', data.supabaseUrl);
-    billingRepo.setAppSetting('supabase_key', data.supabaseKey);
-    billingRepo.setAppSetting('supabase_email', data.supabaseEmail);
-    billingRepo.setAppSetting('supabase_password', data.supabasePassword);
-    billingRepo.setAppSetting('invoice_series', data.invoiceSeries);
-    billingRepo.setAppSetting('invoice_start_number', data.invoiceStartNumber);
-    billingRepo.setAppSetting('issuer_name', data.issuerName);
-    billingRepo.setAppSetting('issuer_address', data.issuerAddress);
-    billingRepo.setAppSetting('issuer_crn', data.issuerCrn);
-    billingRepo.setAppSetting('issuer_vat', data.issuerVat);
-    billingRepo.setAppSetting('invoice_bank_name_1', data.invoiceBankName1);
-    billingRepo.setAppSetting('invoice_account_number', data.invoiceAccountNumber);
-    billingRepo.setAppSetting('invoice_sort_code', data.invoiceSortCode);
-    billingRepo.setAppSetting('invoice_bank_name_2', data.invoiceBankName2);
-    billingRepo.setAppSetting('invoice_account_number_2', data.invoiceAccountNumber2);
-    billingRepo.setAppSetting('invoice_sort_code_2', data.invoiceSortCode2);
-    billingRepo.setAppSetting('invoice_footer', data.invoiceFooter);
-    billingRepo.setAppSetting('invoice_color', data.invoiceColor);
-    billingRepo.setAppSetting('invoice_alternate_row_color', data.invoiceAlternateRowColor);
-    billingRepo.setAppSetting('invoice_alternate_row_opacity', data.invoiceAlternateRowOpacity?.toString());
-    billingRepo.setAppSetting('invoice_logo', data.invoiceLogo);
+  handleTrustedIpc('billing:saveSettings', (_, data) => {
+    setting('invoice_series', data.invoiceSeries);
+    setting('invoice_start_number', data.invoiceStartNumber);
+    setting('issuer_name', data.issuerName);
+    setting('issuer_address', data.issuerAddress);
+    setting('issuer_crn', data.issuerCrn);
+    setting('issuer_vat', data.issuerVat);
+    setting('invoice_bank_name_1', data.invoiceBankName1);
+    setting('invoice_account_number', data.invoiceAccountNumber);
+    setting('invoice_sort_code', data.invoiceSortCode);
+    setting('invoice_bank_name_2', data.invoiceBankName2);
+    setting('invoice_account_number_2', data.invoiceAccountNumber2);
+    setting('invoice_sort_code_2', data.invoiceSortCode2);
+    setting('invoice_footer', data.invoiceFooter);
+    setting('invoice_color', data.invoiceColor);
+    setting('invoice_alternate_row_color', data.invoiceAlternateRowColor);
+    setting('invoice_alternate_row_opacity', data.invoiceAlternateRowOpacity);
+    setting('invoice_logo', data.invoiceLogo);
     return true;
   });
 
-  ipcMain.handle('billing:syncSupabaseOrders', async (_, startDate, endDate) => {
+  handleTrustedIpc('billing:getVrBakerStatus', () => ({ endpoint: VR_BAKER_API_ENDPOINT, hasToken: hasVrBakerApiToken() }));
+  handleTrustedIpc('billing:configureVrBakerToken', async (_, token: string) => {
     try {
-      const url = billingRepo.getAppSetting('supabase_url');
-      const key = billingRepo.getAppSetting('supabase_key');
-      const email = billingRepo.getAppSetting('supabase_email');
-      const password = billingRepo.getAppSetting('supabase_password');
+      const client = createVrBakerClient(token?.trim());
+      await client.health();
+      setVrBakerApiToken(token);
+      removeLegacySupabaseCredential();
+      for (const key of ['supabase_url', 'supabase_key', 'supabase_email']) billingRepo.deleteAppSetting(key);
+      return { success: true, message: 'Tokenul VR Baker Platform a fost verificat și salvat securizat.' };
+    } catch (error) {
+      return { success: false, message: message(error) };
+    }
+  });
+  handleTrustedIpc('billing:testVrBakerConnection', async () => {
+    try {
+      await createVrBakerClient().health();
+      return { success: true, message: 'Conexiunea cu VR Baker Platform funcționează.' };
+    } catch (error) {
+      return { success: false, message: message(error) };
+    }
+  });
 
-      if (!url || !key || !email || !password) {
-        return { success: false, message: "Datele de conectare la Supabase lipsesc în setări." };
-      }
+  handleTrustedIpc('billing:previewWeeklyInvoices', async (_, startDate: string, endDate: string) => {
+    try {
+      const ordersByStore = await prepareWeeklyPreview(startDate, endDate);
+      return { success: true, message: `Au fost găsite ${ordersByStore.length} magazine cu comenzi open/locked.`, ordersByStore };
+    } catch (error) {
+      return { success: false, message: message(error), ordersByStore: [] };
+    }
+  });
 
-      // Native fetch approach to bypass Node/Vite bundling issues with supabase-js
-      const authRes = await fetch(`${url}/auth/v1/token?grant_type=password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': key
-        },
-        body: JSON.stringify({ email, password })
+  handleTrustedIpc('billing:createWeeklyInvoices', async (_, startDate: string, endDate: string, storeExternalIds: string[]) => {
+    try {
+      if (!Array.isArray(storeExternalIds) || storeExternalIds.length === 0 || storeExternalIds.length > 500) throw new Error('Selecția magazinelor este invalidă.');
+      const requested = new Set(storeExternalIds);
+      const groups = (await prepareWeeklyPreview(startDate, endDate)).filter((group) => requested.has(group.store.id));
+      if (groups.length !== requested.size) throw new Error('Unele magazine selectate nu mai există în exportul actual.');
+      const changed = groups.find((group) => group.billingState !== 'ready');
+      if (changed) throw new Error(changed.billingState === 'source_changed' ? 'Sursa unei facturi emise s-a modificat; este necesară rezolvare manuală.' : 'Factura pentru unul dintre magazine există deja.');
+      const prepared = groups.map((group) => {
+        const storeId = billingRepo.getStoreBySupabaseId(group.store.id);
+        if (!storeId) throw new Error(`Magazinul „${group.store.name}” nu a fost mapat local.`);
+        return {
+          storeId,
+          storeExternalId: group.store.id,
+          periodStart: startDate,
+          periodEnd: endDate,
+          sourceFingerprint: group.sourceFingerprint,
+          sourceOrders: group.sourceOrders,
+          items: group.items,
+        };
       });
-      const authData = await authRes.json();
-      if (!authRes.ok) {
-        return { success: false, message: `Eroare autentificare Supabase: ${authData.error_description || authData.msg || authData.message || 'Eroare necunoscută'}` };
-      }
-      const token = authData.access_token;
-
-      const query = new URLSearchParams();
-      query.append('select', 'id,delivery_date,status,notes,client_store:client_store_id(*,client_company:client_company_id(*)),order_items(qty_ordered,qty_delivered,unit_price_snapshot,products:product_id(*))');
-      query.append('delivery_date', `gte.${startDate}`);
-      query.append('delivery_date', `lte.${endDate}`);
-      query.append('status', 'neq.cancelled');
-
-      const ordersRes = await fetch(`${url}/rest/v1/orders?${query.toString()}`, {
-        headers: {
-          'apikey': key,
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      const orders = await ordersRes.json();
-
-      if (!ordersRes.ok) {
-        return { success: false, message: `Eroare extragere comenzi: ${orders.message || orders.details || 'Eroare necunoscută'}` };
-      }
-
-      if (!orders || orders.length === 0) {
-        return { success: true, newInvoices: 0, message: "Nu s-au găsit comenzi livrate în această perioadă." };
-      }
-
-      // Preluăm toate companiile și clienții din Supabase fără limitare de paginare (Range 0-9999)
-      const fetchTableData = async (tableName: string) => {
-        try {
-          const res = await fetch(`${url}/rest/v1/${tableName}?select=*&limit=10000`, {
-            method: 'GET',
-            headers: {
-              'apikey': key,
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-              'Range': '0-9999',
-              'Prefer': 'count=exact'
-            }
-          });
-          if (res.ok) {
-            const data = await res.json();
-            return Array.isArray(data) ? data : [];
-          }
-        } catch (e) {}
-        return [];
+      const invoiceDate = new Date().toISOString().slice(0, 10);
+      const created = billingRepo.createWeeklyInvoices(prepared, invoiceDate);
+      const byStore = new Map(created.map((row) => [row.storeExternalId, row]));
+      return {
+        success: true,
+        updatedOrders: groups.map((group) => ({
+          ...group,
+          billingState: 'invoiced',
+          assignedInvoiceId: byStore.get(group.store.id)?.invoiceId,
+          assignedInvoiceNumber: byStore.get(group.store.id)?.invoiceNumber,
+          assignedInvoiceDate: invoiceDate,
+        })),
       };
-
-      const compList = await fetchTableData('client_company');
-      const uuidToCompanyMap = new Map<string, any>();
-      for (const c of compList) {
-        if (c.id) {
-          const cleanId = String(c.id).trim().toLowerCase();
-          uuidToCompanyMap.set(cleanId, c);
-        }
-      }
-
-      let unassignedCompId: number | undefined;
-      const ordersByStore = new Map();
-      
-      for (const order of orders) {
-        if (!order.client_store) continue;
-        
-        const store = order.client_store;
-        const parentCompanyUuid = store.client_company_id ? String(store.client_company_id).trim().toLowerCase() : 
-                                 (store.client_company?.id ? String(store.client_company.id).trim().toLowerCase() : '');
-
-        let realCompany = parentCompanyUuid ? uuidToCompanyMap.get(parentCompanyUuid) : null;
-        let localCompanyId: number;
-
-        if (realCompany) {
-          // Sincronizăm Clientul și Compania Mamă reală în baza locală
-          const localClientId = billingRepo.upsertClientFromSupabase({
-            id: String(realCompany.id).trim(),
-            name: realCompany.name || 'Client'
-          });
-
-          localCompanyId = billingRepo.upsertCompanyFromSupabase({
-            id: String(realCompany.id).trim(),
-            name: realCompany.name || 'Companie Fără Nume',
-            vat_number: realCompany.vat_number || realCompany.cui || '',
-            registration_number: realCompany.registration_number || realCompany.reg_com || '',
-            address: realCompany.address || ''
-          }, localClientId);
-
-          store.client_company = realCompany;
-        } else {
-          // Magazin fără companie mamă asociată (client_company_id IS NULL)
-          if (!unassignedCompId) {
-            const unassignedClientId = billingRepo.upsertClientFromSupabase({ id: 'unassigned_client', name: 'Magazine Fără Companie Mamă' });
-            unassignedCompId = billingRepo.upsertCompanyFromSupabase({ id: 'unassigned_company', name: 'Magazine Neasociate' }, unassignedClientId);
-          }
-          localCompanyId = unassignedCompId;
-          store.client_company = { name: 'Magazine Neasociate', vat_number: '', registration_number: '', address: '' };
-        }
-
-        // Sincronizăm Magazinul în baza locală sub compania sa mamă reală
-        billingRepo.upsertStoreFromSupabase({
-          id: String(store.id).trim(),
-          name: store.name,
-          address: store.address || '',
-          client_company_id: parentCompanyUuid
-        }, localCompanyId);
-
-        const storeId = store.id;
-        
-        if (!ordersByStore.has(storeId)) {
-          ordersByStore.set(storeId, {
-            store: store,
-            items: []
-          });
-        }
-        
-        const storeData = ordersByStore.get(storeId);
-        
-        for (const item of order.order_items || []) {
-          const qty = item.qty_delivered ?? item.qty_ordered;
-          if (qty > 0) {
-            if (item.products?.name) {
-              billingRepo.upsertProductFromSupabase({
-                id: String(item.product_id || item.products.id || item.products.name),
-                name: item.products.name,
-                name_ro: item.products.name_ro || '',
-                variant_label: item.products.variant_label || '',
-                unit: item.products.unit || 'buc',
-                category: item.products.category || 'Patiserie',
-                price_standard: item.products.price_standard || item.products.price || item.unit_price_snapshot || 0,
-                available: item.products.available !== false
-              });
-            }
-
-            storeData.items.push({
-              productName: item.products?.name || 'Produs necunoscut',
-              name_ro: item.products?.name_ro || '',
-              variant_label: item.products?.variant_label || '',
-              quantity: qty,
-              unitPrice: item.unit_price_snapshot || 0,
-              totalPrice: qty * (item.unit_price_snapshot || 0)
-            });
-          }
-        }
-      }
-
-      return { 
-        success: true, 
-        message: "Comenzile au fost extrase cu succes din cloud.",
-        ordersByStore: Array.from(ordersByStore.values())
-      };
-    } catch (e: any) {
-      return { success: false, message: e.message };
+    } catch (error) {
+      return { success: false, message: message(error) };
     }
   });
 
-  ipcMain.handle('billing:createInvoicesFromSync', async (_event, orders: any[]) => {
+  handleTrustedIpc('billing:syncProducts', async () => {
     try {
-      // NOTE: getSettings is handled from frontend, here we might not need to manipulate settings or we do it if needed.
-      // Wait, there is a reference to getSettings() here which was wrong in the previous version (billingRepo.getSettings() doesn't exist).
-      // I will fix it since I am looking at it.
-      
-      const invoiceSeries = billingRepo.getAppSetting('invoice_series') || 'FACT';
-      let currentNumber = parseInt(billingRepo.getAppSetting('invoice_start_number') || '1', 10);
-      
-      const today = new Date().toISOString().split('T')[0];
-
-      for (const orderData of orders) {
-        const supabaseStoreId = orderData.store?.id;
-        const localStoreId = supabaseStoreId ? billingRepo.getStoreBySupabaseId(supabaseStoreId) : null;
-        
-        if (!localStoreId) {
-          throw new Error(`Magazinul "${orderData.store?.name || 'Necunoscut'}" nu a putut fi găsit în baza de date locală (Eroare Mapare Internă). Te rugăm să apeși din nou butonul "Preluare Comenzi" pentru a forța o sincronizare completă a clienților.`);
-        }
-
-        let storeId = localStoreId;
-        const invoiceNumber = currentNumber.toString();
-        const totalAmount = orderData.items.reduce((acc: number, item: any) => acc + item.totalPrice, 0);
-
-        const createdId = billingRepo.createInvoiceWithItems(storeId, invoiceNumber, today, totalAmount, orderData.items);
-        
-        orderData.assignedInvoiceId = createdId;
-        orderData.assignedInvoiceNumber = invoiceNumber;
-        orderData.assignedInvoiceDate = new Date().toLocaleDateString('ro-RO');
-
-        currentNumber++;
-      }
-
-      billingRepo.setAppSetting('invoice_start_number', currentNumber.toString());
-
-      return { success: true, updatedOrders: orders };
-    } catch (e: any) {
-      return { success: false, message: e.message };
-    }
+      const count = await syncVrBakerCatalog();
+      return { success: true, message: `${count} produse au fost sincronizate din VR Baker Platform.` };
+    } catch (error) { return { success: false, message: message(error) }; }
   });
-
-  ipcMain.handle('billing:deleteInvoice', (_, invoiceId: number) => {
-    return billingRepo.deleteInvoice(invoiceId);
-  });
-
-  ipcMain.handle('billing:getProducts', () => {
-    return billingRepo.getCloudProducts();
-  });
-
-  ipcMain.handle('billing:syncProducts', async () => {
+  handleTrustedIpc('billing:syncEntities', async () => {
     try {
-      const url = billingRepo.getAppSetting('supabase_url');
-      const key = billingRepo.getAppSetting('supabase_key');
-      const email = billingRepo.getAppSetting('supabase_email');
-      const password = billingRepo.getAppSetting('supabase_password');
-
-      if (!url || !key || !email || !password) {
-        return { success: false, message: "Datele de conectare la Supabase lipsesc în setări." };
-      }
-
-      const authRes = await fetch(`${url}/auth/v1/token?grant_type=password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': key },
-        body: JSON.stringify({ email, password })
-      });
-      if (!authRes.ok) return { success: false, message: "Eroare autentificare Supabase." };
-      const authData = await authRes.json();
-      const token = authData.access_token;
-
-      let prodRes = await fetch(`${url}/rest/v1/product?select=*&limit=10000`, {
-        headers: { 'apikey': key, 'Authorization': `Bearer ${token}`, 'Range': '0-9999' }
-      });
-      if (!prodRes.ok) {
-        prodRes = await fetch(`${url}/rest/v1/products?select=*&limit=10000`, {
-          headers: { 'apikey': key, 'Authorization': `Bearer ${token}`, 'Range': '0-9999' }
-        });
-      }
-
-      if (prodRes.ok) {
-        const products = await prodRes.json();
-        if (Array.isArray(products)) {
-          for (const p of products) {
-            billingRepo.upsertProductFromSupabase({
-              id: String(p.id),
-              name: p.name || 'Produs fără nume',
-              name_ro: p.name_ro || '',
-              variant_label: p.variant_label || '',
-              unit: p.unit || 'buc',
-              category: p.category || 'Patiserie',
-              price_standard: p.price_standard ?? p.price ?? p.unit_price ?? 0,
-              available: p.available !== false
-            });
-          }
-        }
-      }
-
-      return { success: true, message: "Produsele au fost sincronizate cu succes din server." };
-    } catch (e: any) {
-      return { success: false, message: e.message };
-    }
-  });
-
-  ipcMain.handle('billing:syncEntities', async () => {
-    try {
-      const url = billingRepo.getAppSetting('supabase_url');
-      const key = billingRepo.getAppSetting('supabase_key');
-      const email = billingRepo.getAppSetting('supabase_email');
-      const password = billingRepo.getAppSetting('supabase_password');
-
-      if (!url || !key || !email || !password) {
-        return { success: false, message: "Datele de conectare la Supabase lipsesc în setări." };
-      }
-
-      const authRes = await fetch(`${url}/auth/v1/token?grant_type=password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': key },
-        body: JSON.stringify({ email, password })
-      });
-      if (!authRes.ok) return { success: false, message: "Eroare autentificare Supabase." };
-      const authData = await authRes.json();
-      const token = authData.access_token;
-
-      // 1. Extragem TOATE Companiile din Supabase
-      const compRes = await fetch(`${url}/rest/v1/client_company?select=*&limit=10000`, {
-        headers: { 
-          'apikey': key, 
-          'Authorization': `Bearer ${token}`, 
-          'Range': '0-9999'
-        }
-      });
-
-      if (!compRes.ok) {
-        return { success: false, message: "Eroare la extragerea companiilor din Supabase." };
-      }
-      const rawCompanies = await compRes.json();
-      const companiesList = Array.isArray(rawCompanies) ? rawCompanies : [];
-
-      // Înregistrăm companiile mamă în SQLite și construim harta UUID -> localCompanyId
-      const uuidToLocalCompanyMap = new Map<string, number>();
-
-      for (const comp of companiesList) {
-        if (!comp.id) continue;
-        const cleanCompUuid = String(comp.id).trim();
-
-        const localClientId = billingRepo.upsertClientFromSupabase({
-          id: cleanCompUuid,
-          name: comp.name || 'Client'
-        });
-
-        const localCompanyId = billingRepo.upsertCompanyFromSupabase({
-          id: cleanCompUuid,
-          name: comp.name || 'Companie Fără Nume',
-          vat_number: comp.vat_number || comp.cui || '',
-          registration_number: comp.registration_number || comp.reg_com || '',
-          address: comp.address || ''
-        }, localClientId);
-
-        uuidToLocalCompanyMap.set(cleanCompUuid.toLowerCase(), localCompanyId);
-      }
-
-      // 2. Extragem TOATE Magazinele din Supabase
-      const storesRes = await fetch(`${url}/rest/v1/client_store?select=*&limit=10000`, {
-        headers: { 
-          'apikey': key, 
-          'Authorization': `Bearer ${token}`, 
-          'Range': '0-9999'
-        }
-      });
-
-      if (!storesRes.ok) {
-        return { success: false, message: "Eroare la extragerea magazinelor din Supabase." };
-      }
-      const rawStores = await storesRes.json();
-      const storesList = Array.isArray(rawStores) ? rawStores : [];
-
-      let unassignedCompId: number | undefined;
-
-      for (const store of storesList) {
-        if (!store.id) continue;
-        const storeUuid = String(store.id).trim();
-        const parentCompanyUuid = store.client_company_id ? String(store.client_company_id).trim().toLowerCase() : '';
-
-        let targetLocalCompanyId = parentCompanyUuid ? uuidToLocalCompanyMap.get(parentCompanyUuid) : undefined;
-
-        // Dacă magazinul chiar NU ARE client_company_id în Supabase, îl punem la neasociate
-        if (!targetLocalCompanyId) {
-          if (!unassignedCompId) {
-            const unassignedClientId = billingRepo.upsertClientFromSupabase({ id: 'unassigned_client', name: 'Magazine Fără Companie Mamă' });
-            unassignedCompId = billingRepo.upsertCompanyFromSupabase({ id: 'unassigned_company', name: 'Magazine Neasociate' }, unassignedClientId);
-          }
-          targetLocalCompanyId = unassignedCompId;
-        }
-
-        billingRepo.upsertStoreFromSupabase({
-          id: storeUuid,
-          name: store.name || 'Magazin Fără Nume',
-          address: store.address || '',
-          client_company_id: parentCompanyUuid
-        }, targetLocalCompanyId);
-      }
-
-      // Curățăm eventualele companii orfane duplicate din trecut
-      billingRepo.cleanupOrphanCompanies();
-
-      return { success: true, message: `Toate cele ${companiesList.length} companii și ${storesList.length} magazine au fost sincronizate cu succes!` };
-    } catch (e: any) {
-      return { success: false, message: e.message };
-    }
+      const result = await syncVrBakerEntities();
+      return { success: true, message: `${result.companies} companii și ${result.stores} magazine au fost sincronizate.` };
+    } catch (error) { return { success: false, message: message(error) }; }
   });
 }

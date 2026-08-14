@@ -1,3 +1,15 @@
+### VR - Hub Management v0.1.72
+
+- Autentificarea Google Drive folosește PKCE și nu mai include un client secret în pachetul desktop.
+- Redenumire completă a aplicației, installerului și identității Windows în `VR - Hub Management`.
+- Migrare atomică și idempotentă a bazei SQLite, backupurilor, credentialelor și rolului Writer/Viewer din instalările vechi.
+- Sincronizare Google Drive actualizată, cu migrare compatibilă și verificarea replicilor înainte de aplicare.
+- Roluri Writer/Viewer întărite și operațiuni de backup/restore cu validare și recuperare locală.
+- Integrare read-only securizată cu VR Baker Platform, fără expunerea credentialelor în interfața aplicației.
+- Facturare săptămânală tranzacțională pentru comenzile `open` și `locked`, cu protecție împotriva duplicatelor și detectarea modificărilor sursei.
+- Eliminarea vechiului flux desktop de autentificare email/parolă pentru importurile externe.
+- Întărirea validării IPC, operațiunilor de stoc, producție, casă, facturare, fișierelor PDF și sincronizării cloud.
+
 ### 📦 v0.1.70 - Modificări & Imbunătățiri Sistem Facturare PDF & Filtre
 
 - **Personalizare & Optimizare Facturi PDF:**
