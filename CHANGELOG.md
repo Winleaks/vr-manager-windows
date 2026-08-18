@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.78
+
+- Toate câmpurile numerice folosesc un singur control stabil pentru tastatură în Electron/Windows; câmpurile native `type=number` sunt interzise prin test automat.
+- Încasările, plățile, vânzările directe, facturarea, producția, rețetele și stocurile acceptă introducerea directă, lipirea și separatorul zecimal cu punct sau virgulă.
+- Evenimentele intermediare de tastatură nu mai blochează câmpul: valorile sunt normalizate sigur în loc să fie respinse integral.
+- Câmpurile text primesc global focus, cursor vizibil și selecție normală în aplicația Windows.
+
 ### VR - Hub Management v0.1.77
 
 - Toate câmpurile de sumă, cantitate, preț și stoc acceptă introducerea directă de la tastatură, inclusiv separatorul zecimal cu punct sau virgulă.

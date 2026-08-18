@@ -220,7 +220,7 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
               </label>
               <label className="block text-sm font-medium text-slate-700">
                 Suma (£)
-                <NumericInput decimalScale={2} required value={editAmount} onChange={(event) => setEditAmount(event.target.value)} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg" />
+                <NumericInput decimalScale={2} required value={editAmount} onValueChange={setEditAmount} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg" />
               </label>
               <label className="block text-sm font-medium text-slate-700">
                 Note

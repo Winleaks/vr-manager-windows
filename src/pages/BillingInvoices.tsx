@@ -556,7 +556,7 @@ export function BillingInvoices() {
                             <NumericInput
                               decimalScale={2}
                               value={item.quantity}
-                              onChange={(e) => handleItemChange(idx, 'quantity', e.target.value)}
+                              onValueChange={(value) => handleItemChange(idx, 'quantity', value)}
                               className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded text-slate-800 font-mono"
                             />
                           </td>
@@ -564,7 +564,7 @@ export function BillingInvoices() {
                             <NumericInput
                               decimalScale={2}
                               value={item.unitPrice}
-                              onChange={(e) => handleItemChange(idx, 'unitPrice', e.target.value)}
+                              onValueChange={(value) => handleItemChange(idx, 'unitPrice', value)}
                               className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded text-slate-800 font-mono"
                             />
                           </td>

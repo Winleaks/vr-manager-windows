@@ -212,7 +212,7 @@ export default function RawMaterials() {
                   <label className="block text-sm font-medium text-slate-700 mb-1">Stoc Curent</label>
                   <NumericInput
                     decimalScale={3} required
-                    value={formData.current_stock} onChange={e => setFormData({...formData, current_stock: e.target.value})}
+                    value={formData.current_stock} onValueChange={current_stock => setFormData(current => ({...current, current_stock}))}
                     className="w-full border border-slate-300 rounded-lg p-2.5 outline-none"
                   />
                 </div>
@@ -220,7 +220,7 @@ export default function RawMaterials() {
                   <label className="block text-sm font-medium text-slate-700 mb-1">Stoc Minim (Alertă)</label>
                   <NumericInput
                     decimalScale={3} required
-                    value={formData.minimum_stock} onChange={e => setFormData({...formData, minimum_stock: e.target.value})}
+                    value={formData.minimum_stock} onValueChange={minimum_stock => setFormData(current => ({...current, minimum_stock}))}
                     className="w-full border border-slate-300 rounded-lg p-2.5 outline-none"
                   />
                 </div>

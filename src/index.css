@@ -12,6 +12,13 @@ select {
   caret-color: #0f172a;
 }
 
+input:not(:disabled):not([readonly]),
+textarea:not(:disabled):not([readonly]) {
+  pointer-events: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 @theme {
   --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   --font-mono: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -85,4 +92,3 @@ select {
 .react-datepicker__day.custom-week-highlight:hover {
   background-color: #059669 !important;
 }
-

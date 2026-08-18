@@ -554,7 +554,7 @@ export function BillingClients() {
                     required
                     placeholder="0.00"
                     value={paymentForm.amount}
-                    onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })}
+                    onValueChange={(amount) => setPaymentForm(current => ({ ...current, amount }))}
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 text-lg font-mono focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                   />
                 </div>

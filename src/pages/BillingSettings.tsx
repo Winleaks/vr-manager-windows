@@ -196,7 +196,7 @@ export function BillingSettings() {
               </div>
               <div>
                 <label className="text-sm font-medium text-slate-700">Next Number</label>
-                <NumericInput integer name="invoiceStartNumber" value={settings.invoiceStartNumber} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 font-mono" />
+                <NumericInput integer name="invoiceStartNumber" value={settings.invoiceStartNumber} onValueChange={(invoiceStartNumber) => setSettings(current => ({ ...current, invoiceStartNumber }))} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 font-mono" />
               </div>
             </div>
 

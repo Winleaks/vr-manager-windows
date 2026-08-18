@@ -157,7 +157,7 @@ export default function StockMovements() {
                   decimalScale={2}
                   className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                   value={formData.new_stock}
-                  onChange={(e) => setFormData({...formData, new_stock: e.target.value})}
+                  onValueChange={(new_stock) => setFormData(current => ({...current, new_stock}))}
                   required
                 />
               </div>

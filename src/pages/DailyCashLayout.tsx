@@ -205,7 +205,7 @@ function DailyCashSidebar() {
                   decimalScale={2} required
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xl font-bold text-emerald-600 bg-white"
                   value={inData.amount}
-                  onChange={e => setInData({...inData, amount: e.target.value})}
+                  onValueChange={amount => setInData(current => ({...current, amount}))}
                 />
               </div>
               <div>
@@ -252,7 +252,7 @@ function DailyCashSidebar() {
                   decimalScale={2} required
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xl font-bold text-rose-600 bg-white"
                   value={outData.amount}
-                  onChange={e => setOutData({...outData, amount: e.target.value})}
+                  onValueChange={amount => setOutData(current => ({...current, amount}))}
                 />
               </div>
               <div>
@@ -300,7 +300,7 @@ function DailyCashSidebar() {
                   decimalScale={2} required
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xl font-bold text-orange-600 bg-white"
                   value={collectionData.amount}
-                  onChange={e => setCollectionData({...collectionData, amount: e.target.value})}
+                  onValueChange={amount => setCollectionData(current => ({...current, amount}))}
                 />
               </div>
               <div className="pt-2 flex justify-end gap-2">
@@ -374,7 +374,7 @@ function DailyCashSidebar() {
                         integer
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white text-slate-900 caret-slate-900"
                         value={currentSaleItem.quantity}
-                        onChange={e => setCurrentSaleItem({...currentSaleItem, quantity: e.target.value})}
+                        onValueChange={quantity => setCurrentSaleItem(current => ({...current, quantity}))}
                       />
                     </div>
                     <div className="w-24">
@@ -383,7 +383,7 @@ function DailyCashSidebar() {
                         decimalScale={2}
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white text-slate-900 caret-slate-900"
                         value={currentSaleItem.unit_price}
-                        onChange={e => setCurrentSaleItem({...currentSaleItem, unit_price: e.target.value})}
+                        onValueChange={unit_price => setCurrentSaleItem(current => ({...current, unit_price}))}
                       />
                     </div>
                     <button

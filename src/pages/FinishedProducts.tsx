@@ -312,7 +312,7 @@ export default function FinishedProducts() {
                     <div className="flex items-center gap-2">
                       <NumericInput
                         decimalScale={2} required
-                        value={recipeData.batch_size} onChange={e => setRecipeData({...recipeData, batch_size: e.target.value})}
+                        value={recipeData.batch_size} onValueChange={batch_size => setRecipeData(current => ({...current, batch_size}))}
                         className="w-32 border border-blue-200 rounded-lg p-2 outline-none focus:border-blue-500 bg-white"
                       />
                       <span className="font-medium text-blue-800">{currentProduct.production_unit}</span>
@@ -354,7 +354,7 @@ export default function FinishedProducts() {
                         <NumericInput
                           decimalScale={3} required placeholder="Cantitate"
                           value={item.quantity || ''}
-                          onChange={e => updateRecipeItem(index, 'quantity', e.target.value)}
+                          onValueChange={value => updateRecipeItem(index, 'quantity', value)}
                           className="w-full border border-slate-200 rounded-md p-2 outline-none focus:border-blue-500"
                         />
                       </div>

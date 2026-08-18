@@ -162,9 +162,9 @@ export default function Production() {
                       <NumericInput
                         decimalScale={2} required placeholder="Cant"
                         value={item.quantity_produced}
-                        onChange={e => {
+                        onValueChange={quantity => {
                           const newItems = [...items];
-                          newItems[index].quantity_produced = e.target.value;
+                          newItems[index].quantity_produced = quantity;
                           setItems(newItems);
                         }}
                         className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none text-sm"
