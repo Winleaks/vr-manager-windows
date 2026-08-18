@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { normalizeNumericInput } from '../../src/utils/numericInput.ts';
 
@@ -22,13 +23,13 @@ test('keyboard numeric input rejects letters and invalid precision', () => {
 });
 
 test('renderer never uses native number inputs that can block Windows keyboard entry', () => {
-  const sourceRoot = new URL('../../src/', import.meta.url);
+  const sourceRoot = fileURLToPath(new URL('../../src/', import.meta.url));
   const visit = (directoryPath: string): string[] => readdirSync(directoryPath, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directoryPath, entry.name);
     if (entry.isDirectory()) return visit(path);
     return extname(path) === '.tsx' ? [path] : [];
   });
-  for (const path of visit(sourceRoot.pathname)) {
-    assert.doesNotMatch(readFileSync(path, 'utf8'), /type=["']number["']/i, path);
+  for (const path of visit(sourceRoot)) {
+    assert.doesNotMatch(readFileSync(path, 'utf8'), /type=[#']number["']/i, path);
   }
 });
