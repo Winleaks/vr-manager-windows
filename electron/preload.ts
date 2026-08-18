@@ -93,8 +93,8 @@ export const desktopApi = {
     getActiveDay: () => ipcRenderer.invoke('get-active-cash-day'),
     getTransactions: (dayId: number) => ipcRenderer.invoke('get-cash-transactions', dayId),
     addTransaction: (data: any) => ipcRenderer.invoke('add-cash-transaction', data),
-    closeDay: (dayId: number, finalBalance: number) =>
-      ipcRenderer.invoke('close-cash-day', dayId, finalBalance),
+    closeDay: (dayId: number) => ipcRenderer.invoke('close-cash-day', dayId),
+    reopenDay: (dayId: number) => ipcRenderer.invoke('reopen-cash-day', dayId),
     initializeBalance: (dayId: number, actualBalance: number) =>
       ipcRenderer.invoke('initialize-cash-balance', dayId, actualBalance),
     updateReceipt: (data: { id: number; amount: number; reference_id: number; notes?: string | null }) =>
@@ -103,6 +103,8 @@ export const desktopApi = {
       ipcRenderer.invoke('get-cash-transactions-by-date', startDate, endDate, category),
     getHistoricalZReports: (startDate: string, endDate: string) =>
       ipcRenderer.invoke('get-historical-z-reports', startDate, endDate),
+    getDailyReport: (date: string) => ipcRenderer.invoke('get-daily-cash-report', date),
+    prepareWhatsAppReport: (date: string) => ipcRenderer.invoke('prepare-daily-cash-whatsapp', date),
     deleteTransaction: (transactionId: number) =>
       ipcRenderer.invoke('delete-cash-transaction', transactionId),
     onDayRolledOver: (callback: EventCallback) => subscribe('cash-day-rolled-over', callback),

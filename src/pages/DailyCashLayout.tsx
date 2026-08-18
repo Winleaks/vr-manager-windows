@@ -20,7 +20,7 @@ function DailyCashSidebar() {
   const location = useLocation();
   const isActive = (path: string) => location.pathname === path;
 
-  const { activeDay, drivers, employees, products, loadData, isModalOpen, openModal, closeModal } = useCashStore();
+  const { activeDay, drivers, employees, products, loadData, isModalOpen, closeModal } = useCashStore();
 
   // Form states
   const [inData, setInData] = useState({ category: 'driver_collection', amount: '', reference_id: '', notes: '' });
@@ -28,14 +28,6 @@ function DailyCashSidebar() {
   const [collectionData, setCollectionData] = useState({ name: 'Emi', amount: '', notes: '' });
   const [saleData, setSaleData] = useState({ reference_id: '', reference_name: '', items: [] as {finished_product_id: number, quantity: number, unit_price: number}[] });
   const [currentSaleItem, setCurrentSaleItem] = useState({ finished_product_id: '', quantity: '', unit_price: '' });
-
-  const handleCloseDay = async () => {
-    if (!activeDay) return;
-    if (window.confirm(`Ești sigur că vrei să închizi ziua cu soldul final de £${activeDay.current_balance}?`)) {
-      await api.dailyCash.closeDay(activeDay.id, activeDay.current_balance);
-      loadData();
-    }
-  };
 
   const handleInSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

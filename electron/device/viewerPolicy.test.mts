@@ -13,6 +13,7 @@ test('viewer can read data and control its local role', () => {
   assert.equal(isChannelAllowedForRole('viewer', 'set-device-role'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'sync-viewer-now'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'get-update-state'), true);
+  assert.equal(isChannelAllowedForRole('viewer', 'get-daily-cash-report'), true);
 });
 
 test('viewer denies business writes, cloud publishing and unknown channels', () => {
@@ -26,5 +27,7 @@ test('viewer denies business writes, cloud publishing and unknown channels', () 
   assert.equal(isChannelAllowedForRole('viewer', 'initialize-cash-balance'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'update-cash-receipt'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'delete-cash-transaction'), false);
+  assert.equal(isChannelAllowedForRole('viewer', 'reopen-cash-day'), false);
+  assert.equal(isChannelAllowedForRole('viewer', 'prepare-daily-cash-whatsapp'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'a-future-channel'), false);
 });

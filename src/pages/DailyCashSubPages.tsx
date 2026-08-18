@@ -14,7 +14,7 @@ interface PageProps {
 }
 
 export function TransactionHistoryPage({ title, category, icon, color, modalType }: PageProps) {
-  const { dateFilter, setDateFilter, openModal, loadData, drivers } = useCashStore();
+  const { activeDay, dateFilter, setDateFilter, openModal, loadData, drivers } = useCashStore();
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [editingReceipt, setEditingReceipt] = useState<any | null>(null);
@@ -111,7 +111,7 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
             endDate={dateFilter.endDate} 
             onChange={setDateFilter} 
           />
-          {deviceRole === 'writer' && (
+          {deviceRole === 'writer' && activeDay && (
             <button
               onClick={() => openModal(modalType)}
               className={`px-5 py-2.5 text-white font-medium rounded-lg flex items-center gap-2 shadow-sm transition-colors ${theme.btn}`}

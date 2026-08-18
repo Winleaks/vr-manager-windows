@@ -9,13 +9,14 @@ import {
   requirePositiveInteger,
   requireText,
 } from '../businessValidation.ts';
+import { localIsoDate } from '../cashDayRollover.ts';
 
 type SqliteDatabase = Database.Database;
 
 interface RecipeRow { id: number; batch_size: number }
 interface RecipeItemRow { raw_material_id: number; quantity: number; name: string; current_stock: number }
 interface ProductRow { id: number; name: string; current_stock: number; is_active: number }
-interface CashDayRow { id: number; opening_balance: number; is_closed: number }
+interface CashDayRow { id: number; date?: string; opening_balance: number; is_closed: number }
 
 export interface CashTransactionInput {
   cash_day_id: number;
@@ -350,34 +351,75 @@ export function addCashTransaction(connection: SqliteDatabase, data: CashTransac
   })();
 }
 
-export function closeCashDayTransaction(connection: SqliteDatabase, dayIdInput: number, closingBalanceInput: number) {
+export function closeCashDayTransaction(
+  connection: SqliteDatabase,
+  dayIdInput: number,
+  todayInput = localIsoDate(),
+) {
   const dayId = requirePositiveInteger(dayIdInput, 'Ziua de casă');
-  if (typeof closingBalanceInput !== 'number' || !Number.isFinite(closingBalanceInput)) {
-    throw new Error('Soldul final trebuie să fie un număr finit.');
-  }
+  const today = requireIsoDate(todayInput, 'Data curentă');
 
   return connection.transaction(() => {
     const day = connection.prepare(
-      'SELECT id, opening_balance, is_closed FROM cash_days WHERE id = ?',
+      'SELECT id, date, opening_balance, is_closed FROM cash_days WHERE id = ?',
     ).get(dayId) as CashDayRow | undefined;
     if (!day) throw new Error('Ziua de casă nu există.');
     if (day.is_closed) throw new Error('Ziua de casă este deja închisă.');
+    if (day.date !== today) throw new Error('Numai ziua curentă poate fi închisă manual.');
     const totals = connection.prepare(`
       SELECT
         COALESCE(SUM(CASE WHEN type = 'IN' THEN amount ELSE 0 END), 0) AS total_in,
         COALESCE(SUM(CASE WHEN type = 'OUT' THEN amount ELSE 0 END), 0) AS total_out
       FROM cash_transactions WHERE cash_day_id = ?
     `).get(dayId) as { total_in: number; total_out: number };
-    const calculatedBalance = day.opening_balance + totals.total_in - totals.total_out;
-    if (Math.abs(calculatedBalance - closingBalanceInput) > 0.01) {
-      throw new Error('Soldul final nu corespunde tranzacțiilor zilei.');
-    }
+    const calculatedBalance = Math.round(
+      (Number(day.opening_balance) + Number(totals.total_in) - Number(totals.total_out)) * 100,
+    ) / 100;
     const result = connection.prepare(`
       UPDATE cash_days SET is_closed = 1, closing_balance = ?, closed_at = CURRENT_TIMESTAMP
       WHERE id = ? AND is_closed = 0
-    `).run(closingBalanceInput, dayId);
+    `).run(calculatedBalance, dayId);
     if (result.changes !== 1) throw new Error('Ziua de casă nu a putut fi închisă.');
-    return true;
+    connection.prepare(`
+      INSERT INTO cash_day_events (cash_day_id, event_type, balance)
+      VALUES (?, 'manual_close', ?)
+    `).run(dayId, calculatedBalance);
+    return { dayId, date: day.date, closingBalance: calculatedBalance };
+  })();
+}
+
+export function reopenCashDayTransaction(
+  connection: SqliteDatabase,
+  dayIdInput: number,
+  todayInput = localIsoDate(),
+) {
+  const dayId = requirePositiveInteger(dayIdInput, 'Ziua de casă');
+  const today = requireIsoDate(todayInput, 'Data curentă');
+
+  return connection.transaction(() => {
+    const day = connection.prepare(
+      'SELECT id, date, opening_balance, closing_balance, is_closed FROM cash_days WHERE id = ?',
+    ).get(dayId) as (CashDayRow & { closing_balance: number | null }) | undefined;
+    if (!day) throw new Error('Ziua de casă nu există.');
+    if (!day.is_closed) throw new Error('Ziua de casă este deja deschisă.');
+    if (day.date !== today) throw new Error('Numai ziua calendaristică actuală poate fi redeschisă.');
+    const otherOpenDay = connection.prepare(
+      'SELECT id FROM cash_days WHERE is_closed = 0 AND id <> ? LIMIT 1',
+    ).get(dayId);
+    if (otherOpenDay) throw new Error('Există deja o altă zi de casă deschisă.');
+
+    const previousBalance = day.closing_balance;
+    const result = connection.prepare(`
+      UPDATE cash_days
+      SET is_closed = 0, closing_balance = NULL, closed_at = NULL
+      WHERE id = ? AND is_closed = 1
+    `).run(dayId);
+    if (result.changes !== 1) throw new Error('Ziua de casă nu a putut fi redeschisă.');
+    connection.prepare(`
+      INSERT INTO cash_day_events (cash_day_id, event_type, balance)
+      VALUES (?, 'reopen', ?)
+    `).run(dayId, previousBalance);
+    return { dayId, date: day.date };
   })();
 }
 

@@ -265,6 +265,23 @@ function runMigrations() {
             CREATE INDEX IF NOT EXISTS idx_invoice_source_batch ON invoice_source_orders(batch_id);
           `);
         }
+      },
+      {
+        version: 7,
+        description: "Adăugare jurnal pentru închideri și rapoarte Daily Cash",
+        up: () => {
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS cash_day_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              cash_day_id INTEGER NOT NULL,
+              event_type TEXT NOT NULL CHECK(event_type IN ('manual_close', 'automatic_close', 'reopen', 'report_prepared')),
+              balance REAL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY(cash_day_id) REFERENCES cash_days(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_cash_day_events_day ON cash_day_events(cash_day_id, created_at);
+          `);
+        }
       }
     ];
 

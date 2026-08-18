@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.79
+
+- Daily Cash generează un raport PDF autoritar, structurat și paginat, cu solduri, totaluri pe categorii și tranzacții detaliate în GBP.
+- Butonul `Trimite pe WhatsApp` folosește Windows Share cu PDF-ul deja inclus; operatorul alege WhatsApp și apoi destinatarul, fără introducerea sau salvarea unui număr.
+- Writer-ul poate închide manual ziua și poate redeschide numai ziua calendaristică actuală; zilele închise blochează modificările și păstrează jurnalul operațiunilor.
+- Închiderea automată de la 00:00 preia corect soldul final inclusiv după o închidere manuală, iar Viewer-ele rămân fără drepturi de modificare sau partajare.
+
 ### VR - Hub Management v0.1.78
 
 - Toate câmpurile numerice folosesc un singur control stabil pentru tastatură în Electron/Windows; câmpurile native `type=number` sunt interzise prin test automat.

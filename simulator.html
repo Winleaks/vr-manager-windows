@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ro">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VR - Hub Management Simulator</title>
+    <script>
+      (() => {
+        const today = new Date().toLocaleDateString('en-CA');
+        const cashDay = {
+          id: 1,
+          date: today,
+          opening_balance: 783.19,
+          current_balance: 783.19,
+          is_closed: 0,
+          balance_initialized: false,
+        };
+        let transactions = [
+          {
+            id: 1,
+            cash_day_id: 1,
+            type: 'IN',
+            category: 'driver_collection',
+            amount: 100,
+            reference_id: 1,
+            driver_name: 'Șofer Demo',
+            notes: 'Încasare demonstrativă',
+            created_at: new Date().toISOString(),
+            cash_day_closed: 0,
+          },
+        ];
+        const cashSnapshot = () => {
+          const totalIn = transactions.filter((item) => item.type === 'IN').reduce((sum, item) => sum + Number(item.amount), 0);
+          const totalOut = transactions.filter((item) => item.type === 'OUT').reduce((sum, item) => sum + Number(item.amount), 0);
+          const balance = Math.round((cashDay.opening_balance + totalIn - totalOut) * 100) / 100;
+          cashDay.current_balance = balance;
+          return {
+            dayId: cashDay.id,
+            date: cashDay.date,
+            status: cashDay.is_closed ? 'FINAL' : 'PROVIZORIU',
+            isClosed: Boolean(cashDay.is_closed),
+            canReopen: Boolean(cashDay.is_closed) && cashDay.date === today,
+            openingBalance: cashDay.opening_balance,
+            totalIn,
+            totalOut,
+            netCashFlow: totalIn - totalOut,
+            balance: cashDay.is_closed ? cashDay.closing_balance : balance,
+            transactionCount: transactions.length,
+          };
+        };
+        const handlers = {
+          'system.getDeviceRole': async () => ({ role: 'writer' }),
+          'system.getAppVersion': async () => '0.1.78',
+          'system.getLastBackupTime': async () => null,
+          'system.getSyncStatus': async () => ({ active: false, lastSync: null, role: 'writer', message: 'Simulator local' }),
+          'system.getUpdateState': async () => ({ status: 'idle', updateInfo: null, progress: 0, error: null }),
+          'dailyCash.getActiveDay': async () => cashDay.is_closed ? null : ({ ...cashDay }),
+          'dailyCash.getTransactions': async () => transactions.slice(),
+          'dailyCash.getTransactionsByDateRange': async () => transactions.slice(),
+          'dailyCash.getDailyReport': async (date) => date === today ? cashSnapshot() : null,
+          'dailyCash.closeDay': async () => {
+            const report = cashSnapshot();
+            cashDay.is_closed = 1;
+            cashDay.closing_balance = report.balance;
+            transactions = transactions.map((item) => ({ ...item, cash_day_closed: 1 }));
+            return { dayId: cashDay.id, date: today, closingBalance: report.balance };
+          },
+          'dailyCash.reopenDay': async () => {
+            cashDay.is_closed = 0;
+            cashDay.closing_balance = null;
+            transactions = transactions.map((item) => ({ ...item, cash_day_closed: 0 }));
+            return { dayId: cashDay.id, date: today };
+          },
+          'dailyCash.prepareWhatsAppReport': async () => ({
+            success: true,
+            filePath: `C:\\Users\\Demo\\Documents\\VR - Hub Management\\Daily Cash Reports\\Raport_Daily_Cash_${today}.pdf`,
+            deliveryMethod: 'windows-share',
+          }),
+          'dailyCash.initializeBalance': async (_dayId, balance) => {
+            const difference = Math.round((Number(balance) - cashDay.current_balance) * 100) / 100;
+            if (difference !== 0) {
+              transactions.unshift({
+                id: Date.now(), cash_day_id: 1, type: difference > 0 ? 'IN' : 'OUT',
+                category: 'cash_adjustment', amount: Math.abs(difference),
+                notes: `Inițializare unică sold casă: £${Number(balance).toFixed(2)}`,
+                created_at: new Date().toISOString(), cash_day_closed: 0,
+              });
+            }
+            cashDay.current_balance = Number(balance);
+            cashDay.balance_initialized = true;
+            return { currentBalance: Number(balance) };
+          },
+          'dailyCash.deleteTransaction': async (id) => {
+            transactions = transactions.filter((item) => item.id !== id || item.category === 'cash_adjustment');
+            return true;
+          },
+          'drivers.getAll': async () => [{ id: 1, name: 'Șofer Demo', is_active: 1 }],
+          'employees.getAll': async () => [{ id: 1, name: 'Angajat Demo', role: 'Operator', is_active: 1 }],
+          'finishedProducts.getAll': async () => [{ id: 1, name: 'Produs Demo', current_stock: 50, is_active: 1 }],
+          'rawMaterials.getAll': async () => [],
+          'categories.get': async () => [],
+          'productions.getAll': async () => [],
+          'stockMovements.getAll': async () => [],
+          'billing.getStats': async () => ({}),
+          'billing.getInvoices': async () => [],
+          'billing.getClients': async () => [],
+          'billing.getProducts': async () => [],
+        };
+        window.desktopApi = new Proxy({}, {
+          get(_target, group) {
+            return new Proxy({}, {
+              get(_groupTarget, method) {
+                const key = `${String(group)}.${String(method)}`;
+                if (handlers[key]) return handlers[key];
+                if (String(method).startsWith('on')) return () => () => {};
+                return async () => [];
+              },
+            });
+          },
+        });
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -169,6 +169,15 @@ CREATE TABLE IF NOT EXISTS cash_days (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS cash_day_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cash_day_id INTEGER NOT NULL,
+  event_type TEXT NOT NULL CHECK(event_type IN ('manual_close', 'automatic_close', 'reopen', 'report_prepared')),
+  balance REAL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(cash_day_id) REFERENCES cash_days(id)
+);
+
 CREATE TABLE IF NOT EXISTS cash_transactions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   cash_day_id INTEGER NOT NULL,
@@ -317,6 +326,7 @@ CREATE INDEX IF NOT EXISTS idx_productions_product_date ON productions(finished_
 CREATE INDEX IF NOT EXISTS idx_stock_movements_raw_material ON stock_movements(raw_material_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_finished_product_movements_fp ON finished_product_movements(finished_product_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_cash_transactions_day ON cash_transactions(cash_day_id);
+CREATE INDEX IF NOT EXISTS idx_cash_day_events_day ON cash_day_events(cash_day_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_cash_transaction_items_tx ON cash_transaction_items(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_companies_supabase ON companies(supabase_company_id);
 CREATE INDEX IF NOT EXISTS idx_companies_cui ON companies(cui);

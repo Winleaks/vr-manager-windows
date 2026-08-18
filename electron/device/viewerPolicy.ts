@@ -32,6 +32,7 @@ const VIEWER_ALLOWED_CHANNELS = new Set([
   'get-cash-transactions',
   'get-cash-transactions-by-date',
   'get-historical-z-reports',
+  'get-daily-cash-report',
   'billing:getClients',
   'billing:getCompanies',
   'billing:getStores',

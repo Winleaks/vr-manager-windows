@@ -8,6 +8,7 @@ import {
   millisecondsUntilNextLocalMidnight,
   rolloverCashDay,
 } from './cashDayRollover.ts';
+import { closeCashDayTransaction } from './repositories/inventoryTransactions.ts';
 
 function createDatabase() {
   const connection = new Database(':memory:');
@@ -56,6 +57,9 @@ test('midnight rollover closes the stale day, carries its balance, and moves tod
       'SELECT is_closed, closing_balance FROM cash_days WHERE id = ?',
     ).get(oldDayId) as any;
     assert.deepEqual(oldDay, { is_closed: 1, closing_balance: 1100 });
+    assert.deepEqual(connection.prepare(
+      'SELECT event_type, balance FROM cash_day_events WHERE cash_day_id = ?',
+    ).get(oldDayId), { event_type: 'automatic_close', balance: 1100 });
     const currentDay = connection.prepare(
       "SELECT id, opening_balance, is_closed FROM cash_days WHERE date = '2026-08-14'",
     ).get() as any;
@@ -75,4 +79,27 @@ test('local cash dates and the midnight timer do not use UTC day boundaries', ()
   const localTime = new Date(2026, 7, 14, 23, 59, 30, 0);
   assert.equal(localIsoDate(localTime), '2026-08-14');
   assert.equal(millisecondsUntilNextLocalMidnight(localTime), 30_000);
+});
+
+test('midnight opens a new day after the previous day was closed manually', () => {
+  const connection = createDatabase();
+  try {
+    const previousDayId = Number(connection.prepare(
+      "INSERT INTO cash_days (date, opening_balance) VALUES ('2026-08-17', 90)",
+    ).run().lastInsertRowid);
+    connection.prepare(`
+      INSERT INTO cash_transactions (cash_day_id, type, category, amount)
+      VALUES (?, 'IN', 'driver_collection', 10)
+    `).run(previousDayId);
+    closeCashDayTransaction(connection, previousDayId, '2026-08-17');
+
+    const result = rolloverCashDay(connection, '2026-08-18');
+    assert.equal(result.rolledOver, true);
+    const current = connection.prepare(
+      "SELECT date, opening_balance, is_closed FROM cash_days WHERE date = '2026-08-18'",
+    ).get() as any;
+    assert.deepEqual(current, { date: '2026-08-18', opening_balance: 100, is_closed: 0 });
+  } finally {
+    connection.close();
+  }
 });

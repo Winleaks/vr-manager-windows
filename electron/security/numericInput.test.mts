@@ -30,6 +30,6 @@ test('renderer never uses native number inputs that can block Windows keyboard e
     return extname(path) === '.tsx' ? [path] : [];
   });
   for (const path of visit(sourceRoot)) {
-    assert.doesNotMatch(readFileSync(path, 'utf8'), /type=[#']number["']/i, path);
+    assert.doesNotMatch(readFileSync(path, 'utf8'), /type=["']number["']/i, path);
   }
 });
