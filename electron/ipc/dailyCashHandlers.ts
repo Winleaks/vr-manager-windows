@@ -46,11 +46,8 @@ export function registerDailyCashHandlers() {
   handleTrustedIpc('close-cash-day', (_e, dayId, finalBalance) => {
     return cashRepo.closeDay(dayId, finalBalance);
   });
-  handleTrustedIpc('update-cash-day-opening-balance', (_e, dayId, openingBalance) => {
-    return cashRepo.updateOpeningBalance(dayId, openingBalance);
-  });
-  handleTrustedIpc('reconcile-current-cash-balance', (_e, dayId, actualBalance) => {
-    return cashRepo.reconcileCurrentBalance(dayId, actualBalance);
+  handleTrustedIpc('initialize-cash-balance', (_e, dayId, actualBalance) => {
+    return cashRepo.initializeBalance(dayId, actualBalance);
   });
   handleTrustedIpc('update-cash-receipt', (_e, data) => {
     return cashRepo.updateReceipt(data);

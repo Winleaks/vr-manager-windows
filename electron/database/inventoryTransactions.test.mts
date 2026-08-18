@@ -8,8 +8,7 @@ import {
   closeCashDayTransaction,
   createProductionTransaction,
   deleteCashTransaction,
-  reconcileCurrentCashBalance,
-  updateCashDayOpeningBalance,
+  initializeCashBalanceOnce,
   updateCashReceiptTransaction,
 } from './repositories/inventoryTransactions.ts';
 
@@ -95,7 +94,7 @@ test('cash sale rejects insufficient stock without leaving partial accounting ro
   }
 });
 
-test('cash day accepts £1893.24 opening balance and open receipts can be edited or deleted', () => {
+test('open receipts can be edited or deleted and missing rows report an error', () => {
   const connection = createDatabase();
   try {
     const dayId = Number(connection.prepare(
@@ -105,16 +104,6 @@ test('cash day accepts £1893.24 opening balance and open receipts can be edited
       "INSERT INTO drivers (name) VALUES ('Șofer test')",
     ).run().lastInsertRowid);
 
-    assert.equal(updateCashDayOpeningBalance(connection, dayId, 1893.24), true);
-    assert.equal(
-      (connection.prepare('SELECT opening_balance AS value FROM cash_days WHERE id = ?').get(dayId) as any).value,
-      1893.24,
-    );
-    assert.throws(
-      () => updateCashDayOpeningBalance(connection, dayId, 1893.241),
-      /maximum două zecimale/,
-    );
-
     const receiptId = addCashTransaction(connection, {
       cash_day_id: dayId,
       type: 'IN',
@@ -123,10 +112,6 @@ test('cash day accepts £1893.24 opening balance and open receipts can be edited
       reference_id: driverId,
       notes: 'Inițial',
     });
-    assert.throws(
-      () => updateCashDayOpeningBalance(connection, dayId, 2000),
-      /înainte de prima tranzacție/,
-    );
     assert.equal(updateCashReceiptTransaction(connection, {
       id: receiptId,
       amount: 123.45,
@@ -143,6 +128,7 @@ test('cash day accepts £1893.24 opening balance and open receipts can be edited
       (connection.prepare('SELECT COUNT(*) AS value FROM cash_transactions WHERE id = ?').get(receiptId) as any).value,
       0,
     );
+    assert.throws(() => deleteCashTransaction(connection, receiptId), /nu există/);
 
     const closedReceiptId = addCashTransaction(connection, {
       cash_day_id: dayId,
@@ -151,7 +137,7 @@ test('cash day accepts £1893.24 opening balance and open receipts can be edited
       amount: 10,
       reference_id: driverId,
     });
-    assert.equal(closeCashDayTransaction(connection, dayId, 1903.24), true);
+    assert.equal(closeCashDayTransaction(connection, dayId, 10), true);
     assert.throws(() => updateCashReceiptTransaction(connection, {
       id: closedReceiptId,
       amount: 12,
@@ -162,7 +148,7 @@ test('cash day accepts £1893.24 opening balance and open receipts can be edited
   }
 });
 
-test('cash balance reconciliation preserves history and adjusts the current physical balance', () => {
+test('cash balance is initialized once at £578.25 and remains transaction-driven', () => {
   const connection = createDatabase();
   try {
     const dayId = Number(connection.prepare(
@@ -177,25 +163,51 @@ test('cash balance reconciliation preserves history and adjusts the current phys
       VALUES (?, 'OUT', 'purchase', 50, 'Istoric existent')
     `).run(dayId);
 
-    const adjustmentId = reconcileCurrentCashBalance(connection, dayId, 1893.24);
-    assert.ok(adjustmentId && adjustmentId > 0);
+    const initialization = initializeCashBalanceOnce(connection, dayId, 578.25);
+    assert.ok(initialization.adjustmentId && initialization.adjustmentId > 0);
+    assert.equal(initialization.currentBalance, 578.25);
     const rows = connection.prepare(
       'SELECT type, category, amount FROM cash_transactions WHERE cash_day_id = ? ORDER BY id',
     ).all(dayId) as Array<{ type: string; category: string; amount: number }>;
     assert.equal(rows.length, 3);
-    assert.deepEqual(rows[2], { type: 'IN', category: 'cash_adjustment', amount: 693.24 });
+    assert.deepEqual(rows[2], { type: 'OUT', category: 'cash_adjustment', amount: 621.75 });
     const totals = connection.prepare(`
       SELECT
         SUM(CASE WHEN type = 'IN' THEN amount ELSE 0 END) AS total_in,
         SUM(CASE WHEN type = 'OUT' THEN amount ELSE 0 END) AS total_out
       FROM cash_transactions WHERE cash_day_id = ?
     `).get(dayId) as { total_in: number; total_out: number };
-    assert.equal(Math.round((1000 + totals.total_in - totals.total_out) * 100) / 100, 1893.24);
-    assert.equal(reconcileCurrentCashBalance(connection, dayId, 1893.24), null);
+    assert.equal(Math.round((1000 + totals.total_in - totals.total_out) * 100) / 100, 578.25);
+    assert.equal(
+      (connection.prepare("SELECT value FROM app_settings WHERE key = 'daily_cash_balance_initialized_v1'").get() as any).value,
+      '578.25',
+    );
+    assert.throws(
+      () => initializeCashBalanceOnce(connection, dayId, 600),
+      /deja configurat/,
+    );
+    assert.throws(
+      () => deleteCashTransaction(connection, initialization.adjustmentId!),
+      /protejată/,
+    );
     assert.equal(
       (connection.prepare('SELECT COUNT(*) AS value FROM cash_transactions WHERE cash_day_id = ?').get(dayId) as any).value,
       3,
     );
+
+    addCashTransaction(connection, {
+      cash_day_id: dayId,
+      type: 'IN',
+      category: 'driver_collection',
+      amount: 21.75,
+    });
+    const updatedTotals = connection.prepare(`
+      SELECT
+        SUM(CASE WHEN type = 'IN' THEN amount ELSE 0 END) AS total_in,
+        SUM(CASE WHEN type = 'OUT' THEN amount ELSE 0 END) AS total_out
+      FROM cash_transactions WHERE cash_day_id = ?
+    `).get(dayId) as { total_in: number; total_out: number };
+    assert.equal(Math.round((1000 + updatedTotals.total_in - updatedTotals.total_out) * 100) / 100, 600);
   } finally {
     connection.close();
   }

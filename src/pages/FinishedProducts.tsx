@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { Plus, Edit, BookOpen, X, Trash2, Folder } from 'lucide-react';
 import { CategoryModal } from '../shared/CategoryModal';
+import { NumericInput } from '../components/NumericInput';
 
 export default function FinishedProducts() {
   const [items, setItems] = useState<any[]>([]);
@@ -105,9 +106,9 @@ export default function FinishedProducts() {
     e.preventDefault();
     try {
       await api.recipes.save(
-        currentProduct.id, 
-        parseFloat(recipeData.batch_size), 
-        recipeData.notes, 
+        currentProduct.id,
+        parseFloat(recipeData.batch_size),
+        recipeData.notes,
         recipeData.items.map((i: any) => ({
           raw_material_id: parseInt(i.raw_material_id),
           quantity: parseFloat(i.quantity)
@@ -147,14 +148,14 @@ export default function FinishedProducts() {
           <p className="text-slate-500 mt-1">Gestionare produse finite și rețete</p>
         </div>
         <div className="flex gap-3">
-          <button 
+          <button
             onClick={() => setIsCategoryModalOpen(true)}
             className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors shadow-sm"
           >
             <Folder size={18} className="text-slate-500" />
             Gestionează Categorii
           </button>
-          <button 
+          <button
             onClick={() => handleOpenModal()}
             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors shadow-sm"
           >
@@ -186,14 +187,14 @@ export default function FinishedProducts() {
                 <td className="p-4 text-slate-500">{item.production_unit}</td>
                 <td className="p-4 text-center">
                   <div className="flex justify-center gap-2">
-                    <button 
+                    <button
                       onClick={() => handleOpenRecipe(item)}
                       className="flex items-center gap-1 px-3 py-1.5 bg-orange-50 text-orange-600 hover:bg-orange-100 rounded-lg text-sm font-medium transition-colors"
                       title="Editare Rețetă"
                     >
                       <BookOpen size={16} /> Rețetă
                     </button>
-                    <button 
+                    <button
                       onClick={() => handleOpenModal(item)}
                       className="p-1.5 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
                       title="Editare Produs"
@@ -230,7 +231,7 @@ export default function FinishedProducts() {
             <form onSubmit={handleSave} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Nume Produs</label>
-                <input 
+                <input
                   type="text" required
                   value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}
                   className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none"
@@ -240,7 +241,7 @@ export default function FinishedProducts() {
                 <div>
                   <div className="flex justify-between items-center mb-1">
                     <label className="block text-sm font-medium text-slate-700">Categorie</label>
-                    <button 
+                    <button
                       type="button"
                       onClick={() => setIsCategoryModalOpen(true)}
                       className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-semibold flex items-center gap-1"
@@ -248,7 +249,7 @@ export default function FinishedProducts() {
                       + categorii
                     </button>
                   </div>
-                  <select 
+                  <select
                     value={formData.category_id} onChange={e => setFormData({...formData, category_id: e.target.value})}
                     className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                   >
@@ -258,7 +259,7 @@ export default function FinishedProducts() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Unitate Măsură</label>
-                  <select 
+                  <select
                     value={formData.production_unit} onChange={e => setFormData({...formData, production_unit: e.target.value})}
                     className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                   >
@@ -269,7 +270,7 @@ export default function FinishedProducts() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Note (Opțional)</label>
-                <textarea 
+                <textarea
                   value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})}
                   className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none h-20"
                 />
@@ -302,15 +303,15 @@ export default function FinishedProducts() {
                 <X size={24} />
               </button>
             </div>
-            
+
             <form onSubmit={handleSaveRecipe} className="flex flex-col flex-1 overflow-hidden">
               <div className="p-6 overflow-y-auto flex-1">
                 <div className="flex items-center gap-4 mb-6 p-4 bg-blue-50 rounded-lg border border-blue-100">
                   <div className="flex-1">
                     <label className="block text-sm font-semibold text-blue-900 mb-1">Cantitate rezultată (Șarjă)</label>
                     <div className="flex items-center gap-2">
-                      <input 
-                        type="number" step="0.01" required min="0.01"
+                      <NumericInput
+                        decimalScale={2} required
                         value={recipeData.batch_size} onChange={e => setRecipeData({...recipeData, batch_size: e.target.value})}
                         className="w-32 border border-blue-200 rounded-lg p-2 outline-none focus:border-blue-500 bg-white"
                       />
@@ -324,8 +325,8 @@ export default function FinishedProducts() {
 
                 <div className="mb-4 flex justify-between items-center">
                   <h3 className="font-bold text-slate-800">Ingrediente Necesare</h3>
-                  <button 
-                    type="button" 
+                  <button
+                    type="button"
                     onClick={addRecipeItem}
                     className="text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-medium transition-colors flex items-center gap-1"
                   >
@@ -337,9 +338,9 @@ export default function FinishedProducts() {
                   {recipeData.items.map((item: any, index: number) => (
                     <div key={index} className="flex items-center gap-3 bg-white border border-slate-200 p-3 rounded-lg">
                       <div className="flex-1">
-                        <select 
+                        <select
                           required
-                          value={item.raw_material_id} 
+                          value={item.raw_material_id}
                           onChange={e => updateRecipeItem(index, 'raw_material_id', e.target.value)}
                           className="w-full border border-slate-200 rounded-md p-2 outline-none focus:border-blue-500"
                         >
@@ -350,15 +351,15 @@ export default function FinishedProducts() {
                         </select>
                       </div>
                       <div className="w-32">
-                        <input 
-                          type="number" step="0.001" required min="0.001" placeholder="Cantitate"
-                          value={item.quantity || ''} 
+                        <NumericInput
+                          decimalScale={3} required placeholder="Cantitate"
+                          value={item.quantity || ''}
                           onChange={e => updateRecipeItem(index, 'quantity', e.target.value)}
                           className="w-full border border-slate-200 rounded-md p-2 outline-none focus:border-blue-500"
                         />
                       </div>
-                      <button 
-                        type="button" 
+                      <button
+                        type="button"
                         onClick={() => removeRecipeItem(index)}
                         className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
                       >
@@ -366,7 +367,7 @@ export default function FinishedProducts() {
                       </button>
                     </div>
                   ))}
-                  
+
                   {recipeData.items.length === 0 && (
                     <div className="text-center p-8 border-2 border-dashed border-slate-200 rounded-xl text-slate-500">
                       Nu ai adăugat niciun ingredient pentru această rețetă.
@@ -374,7 +375,7 @@ export default function FinishedProducts() {
                   )}
                 </div>
               </div>
-              
+
               <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 shrink-0">
                 <button type="button" onClick={() => setIsRecipeModalOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg font-medium transition-colors">
                   Închide
@@ -388,7 +389,7 @@ export default function FinishedProducts() {
         </div>
       )}
 
-      <CategoryModal 
+      <CategoryModal
         isOpen={isCategoryModalOpen}
         onClose={() => {
           setIsCategoryModalOpen(false);

@@ -35,20 +35,27 @@ export interface CashReceiptUpdateInput {
   notes?: string | null;
 }
 
-export function reconcileCurrentCashBalance(
+const CASH_BALANCE_INITIALIZED_KEY = 'daily_cash_balance_initialized_v1';
+
+export function initializeCashBalanceOnce(
   connection: SqliteDatabase,
   dayIdInput: number,
   actualBalanceInput: number,
 ) {
   const dayId = requirePositiveInteger(dayIdInput, 'Ziua de casă');
-  const actualBalance = requireMoneyNonNegative(actualBalanceInput, 'Soldul curent');
+  const actualBalance = requireMoneyNonNegative(actualBalanceInput, 'Soldul inițial');
 
   return connection.transaction(() => {
+    const existingInitialization = connection.prepare(
+      'SELECT value FROM app_settings WHERE key = ?',
+    ).get(CASH_BALANCE_INITIALIZED_KEY);
+    if (existingInitialization) throw new Error('Soldul inițial al casei a fost deja configurat și nu mai poate fi modificat.');
+
     const day = connection.prepare(
       'SELECT id, opening_balance, is_closed FROM cash_days WHERE id = ?',
     ).get(dayId) as CashDayRow | undefined;
     if (!day) throw new Error('Ziua de casă nu există.');
-    if (day.is_closed) throw new Error('Soldul unei zile închise nu poate fi ajustat.');
+    if (day.is_closed) throw new Error('Soldul unei zile închise nu poate fi inițializat.');
 
     const totals = connection.prepare(`
       SELECT
@@ -60,46 +67,24 @@ export function reconcileCurrentCashBalance(
       (Number(day.opening_balance) + Number(totals.total_in) - Number(totals.total_out)) * 100,
     ) / 100;
     const difference = Math.round((actualBalance - currentBalance) * 100) / 100;
-    if (difference === 0) return null;
 
-    const result = connection.prepare(`
-      INSERT INTO cash_transactions (cash_day_id, type, category, amount, notes)
-      VALUES (?, ?, 'cash_adjustment', ?, ?)
-    `).run(
-      dayId,
-      difference > 0 ? 'IN' : 'OUT',
-      Math.abs(difference),
-      `Ajustare la soldul fizic verificat: £${actualBalance.toFixed(2)}`,
-    );
-    return Number(result.lastInsertRowid);
-  })();
-}
-
-export function updateCashDayOpeningBalance(
-  connection: SqliteDatabase,
-  dayIdInput: number,
-  openingBalanceInput: number,
-) {
-  const dayId = requirePositiveInteger(dayIdInput, 'Ziua de casă');
-  const openingBalance = requireMoneyNonNegative(openingBalanceInput, 'Soldul de deschidere');
-
-  return connection.transaction(() => {
-    const day = connection.prepare(
-      'SELECT id, is_closed FROM cash_days WHERE id = ?',
-    ).get(dayId) as { id: number; is_closed: number } | undefined;
-    if (!day) throw new Error('Ziua de casă nu există.');
-    if (day.is_closed) throw new Error('Soldul unei zile închise nu poate fi modificat.');
-    const transactionCount = Number((connection.prepare(
-      'SELECT COUNT(*) AS count FROM cash_transactions WHERE cash_day_id = ?',
-    ).get(dayId) as { count: number }).count);
-    if (transactionCount > 0) {
-      throw new Error('Soldul de deschidere poate fi modificat numai înainte de prima tranzacție.');
+    let adjustmentId: number | null = null;
+    if (difference !== 0) {
+      adjustmentId = Number(connection.prepare(`
+        INSERT INTO cash_transactions (cash_day_id, type, category, amount, notes)
+        VALUES (?, ?, 'cash_adjustment', ?, ?)
+      `).run(
+        dayId,
+        difference > 0 ? 'IN' : 'OUT',
+        Math.abs(difference),
+        `Inițializare unică sold casă: £${actualBalance.toFixed(2)}`,
+      ).lastInsertRowid);
     }
-    const result = connection.prepare(
-      'UPDATE cash_days SET opening_balance = ? WHERE id = ? AND is_closed = 0',
-    ).run(openingBalance, dayId);
-    if (result.changes !== 1) throw new Error('Soldul de deschidere nu a putut fi actualizat.');
-    return true;
+
+    connection.prepare(
+      'INSERT INTO app_settings (key, value) VALUES (?, ?)',
+    ).run(CASH_BALANCE_INITIALIZED_KEY, actualBalance.toFixed(2));
+    return { adjustmentId, currentBalance: actualBalance };
   })();
 }
 
@@ -400,12 +385,15 @@ export function deleteCashTransaction(connection: SqliteDatabase, transactionIdI
   const transactionId = requirePositiveInteger(transactionIdInput, 'Tranzacția de casă');
   return connection.transaction(() => {
     const cashTransaction = connection.prepare(`
-      SELECT t.id, d.is_closed
+      SELECT t.id, t.category, d.is_closed
       FROM cash_transactions t JOIN cash_days d ON d.id = t.cash_day_id
       WHERE t.id = ?
-    `).get(transactionId) as { id: number; is_closed: number } | undefined;
+    `).get(transactionId) as { id: number; category: string; is_closed: number } | undefined;
     if (!cashTransaction) throw new Error('Tranzacția de casă nu există.');
     if (cashTransaction.is_closed) throw new Error('Tranzacțiile unei zile închise nu pot fi șterse.');
+    if (cashTransaction.category === 'cash_adjustment') {
+      throw new Error('Inițializarea soldului este protejată și nu poate fi ștearsă.');
+    }
 
     const items = connection.prepare(
       'SELECT finished_product_id, quantity FROM cash_transaction_items WHERE transaction_id = ?',
@@ -420,7 +408,8 @@ export function deleteCashTransaction(connection: SqliteDatabase, transactionIdI
       "DELETE FROM finished_product_movements WHERE reference_type = 'cash_transaction' AND reference_id = ?",
     ).run(transactionId);
     connection.prepare('DELETE FROM cash_transaction_items WHERE transaction_id = ?').run(transactionId);
-    connection.prepare('DELETE FROM cash_transactions WHERE id = ?').run(transactionId);
+    const deleted = connection.prepare('DELETE FROM cash_transactions WHERE id = ?').run(transactionId);
+    if (deleted.changes !== 1) throw new Error('Tranzacția nu a putut fi ștearsă.');
     return true;
   })();
 }

@@ -23,8 +23,7 @@ test('viewer denies business writes, cloud publishing and unknown channels', () 
   assert.equal(isChannelAllowedForRole('viewer', 'billing:testVrBakerConnection'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:previewWeeklyInvoices'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:createWeeklyInvoices'), false);
-  assert.equal(isChannelAllowedForRole('viewer', 'update-cash-day-opening-balance'), false);
-  assert.equal(isChannelAllowedForRole('viewer', 'reconcile-current-cash-balance'), false);
+  assert.equal(isChannelAllowedForRole('viewer', 'initialize-cash-balance'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'update-cash-receipt'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'delete-cash-transaction'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'a-future-channel'), false);

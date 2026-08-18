@@ -95,10 +95,8 @@ export const desktopApi = {
     addTransaction: (data: any) => ipcRenderer.invoke('add-cash-transaction', data),
     closeDay: (dayId: number, finalBalance: number) =>
       ipcRenderer.invoke('close-cash-day', dayId, finalBalance),
-    updateOpeningBalance: (dayId: number, openingBalance: number) =>
-      ipcRenderer.invoke('update-cash-day-opening-balance', dayId, openingBalance),
-    reconcileCurrentBalance: (dayId: number, actualBalance: number) =>
-      ipcRenderer.invoke('reconcile-current-cash-balance', dayId, actualBalance),
+    initializeBalance: (dayId: number, actualBalance: number) =>
+      ipcRenderer.invoke('initialize-cash-balance', dayId, actualBalance),
     updateReceipt: (data: { id: number; amount: number; reference_id: number; notes?: string | null }) =>
       ipcRenderer.invoke('update-cash-receipt', data),
     getTransactionsByDateRange: (startDate: string, endDate: string, category?: string) =>

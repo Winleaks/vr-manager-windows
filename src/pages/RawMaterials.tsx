@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { Plus, Edit, Trash2, X, Folder } from 'lucide-react';
 import { CategoryModal } from '../shared/CategoryModal';
+import { NumericInput } from '../components/NumericInput';
 
 export default function RawMaterials() {
   const [items, setItems] = useState<any[]>([]);
@@ -86,14 +87,14 @@ export default function RawMaterials() {
           <p className="text-slate-500 mt-1">Gestionare stoc și ingrediente de bază</p>
         </div>
         <div className="flex gap-3">
-          <button 
+          <button
             onClick={() => setIsCategoryModalOpen(true)}
             className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors shadow-sm"
           >
             <Folder size={18} className="text-slate-500" />
             Gestionează Categorii
           </button>
-          <button 
+          <button
             onClick={() => handleOpenModal()}
             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors shadow-sm"
           >
@@ -132,7 +133,7 @@ export default function RawMaterials() {
                 <td className="p-4 text-slate-500">{item.unit}</td>
                 <td className="p-4 text-right text-slate-500">{item.minimum_stock}</td>
                 <td className="p-4 text-center">
-                  <button 
+                  <button
                     onClick={() => handleOpenModal(item)}
                     className="p-2 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
                   >
@@ -166,7 +167,7 @@ export default function RawMaterials() {
             <form onSubmit={handleSave} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Nume Materie Primă</label>
-                <input 
+                <input
                   type="text" required
                   value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}
                   className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
@@ -176,7 +177,7 @@ export default function RawMaterials() {
                 <div>
                   <div className="flex justify-between items-center mb-1">
                     <label className="block text-sm font-medium text-slate-700">Categorie</label>
-                    <button 
+                    <button
                       type="button"
                       onClick={() => setIsCategoryModalOpen(true)}
                       className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-semibold flex items-center gap-1"
@@ -184,7 +185,7 @@ export default function RawMaterials() {
                       + categorii
                     </button>
                   </div>
-                  <select 
+                  <select
                     value={formData.category_id} onChange={e => setFormData({...formData, category_id: e.target.value})}
                     className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                   >
@@ -194,7 +195,7 @@ export default function RawMaterials() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Unitate Măsură</label>
-                  <select 
+                  <select
                     value={formData.unit} onChange={e => setFormData({...formData, unit: e.target.value})}
                     className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                   >
@@ -209,16 +210,16 @@ export default function RawMaterials() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Stoc Curent</label>
-                  <input 
-                    type="number" step="0.001" required
+                  <NumericInput
+                    decimalScale={3} required
                     value={formData.current_stock} onChange={e => setFormData({...formData, current_stock: e.target.value})}
                     className="w-full border border-slate-300 rounded-lg p-2.5 outline-none"
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Stoc Minim (Alertă)</label>
-                  <input 
-                    type="number" step="0.001" required
+                  <NumericInput
+                    decimalScale={3} required
                     value={formData.minimum_stock} onChange={e => setFormData({...formData, minimum_stock: e.target.value})}
                     className="w-full border border-slate-300 rounded-lg p-2.5 outline-none"
                   />
@@ -237,7 +238,7 @@ export default function RawMaterials() {
         </div>
       )}
 
-      <CategoryModal 
+      <CategoryModal
         isOpen={isCategoryModalOpen}
         onClose={() => {
           setIsCategoryModalOpen(false);

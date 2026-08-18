@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
-import { 
-  Banknote, 
-  Settings, 
+import {
+  Banknote,
+  Settings,
   LayoutDashboard,
   PlusCircle,
   ShoppingCart,
@@ -14,6 +14,7 @@ import { api } from '../shared/api';
 import { DailyCash } from './DailyCash';
 import { TransactionHistoryPage, HistoricalZPage } from './DailyCashSubPages';
 import { useCashStore } from '../store/cashStore';
+import { NumericInput } from '../components/NumericInput';
 
 function DailyCashSidebar() {
   const location = useLocation();
@@ -32,7 +33,7 @@ function DailyCashSidebar() {
     if (!activeDay) return;
     if (window.confirm(`Ești sigur că vrei să închizi ziua cu soldul final de £${activeDay.current_balance}?`)) {
       await api.dailyCash.closeDay(activeDay.id, activeDay.current_balance);
-      loadData(); 
+      loadData();
     }
   };
 
@@ -111,7 +112,7 @@ function DailyCashSidebar() {
     if (!activeDay) return;
 
     const totalAmount = saleData.items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
-    
+
     await api.dailyCash.addTransaction({
       cash_day_id: activeDay.id,
       type: 'IN',
@@ -121,7 +122,7 @@ function DailyCashSidebar() {
       reference_name: saleData.reference_name || null,
       items: saleData.items
     });
-    
+
     closeModal();
     setSaleData({ reference_id: '', reference_name: '', items: [] });
     loadData();
@@ -136,7 +137,7 @@ function DailyCashSidebar() {
           </div>
           Daily Cash
         </div>
-        
+
         <div className="flex-1 flex flex-col overflow-y-auto">
           <nav className="p-4 space-y-1">
             <Link to="/" className="flex items-center gap-3 p-3 rounded-lg font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors mb-4">
@@ -188,7 +189,7 @@ function DailyCashSidebar() {
             <form onSubmit={handleInSubmit} className="p-5 space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">Șofer</label>
-                <select 
+                <select
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                   value={inData.reference_id}
                   onChange={e => setInData({...inData, reference_id: e.target.value})}
@@ -200,8 +201,8 @@ function DailyCashSidebar() {
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">Suma (£)</label>
-                <input 
-                  type="number" step="0.01" min="0" required
+                <NumericInput
+                  decimalScale={2} required
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xl font-bold text-emerald-600 bg-white"
                   value={inData.amount}
                   onChange={e => setInData({...inData, amount: e.target.value})}
@@ -209,7 +210,7 @@ function DailyCashSidebar() {
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">Note (Opțional)</label>
-                <input 
+                <input
                   type="text"
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                   value={inData.notes}
@@ -236,7 +237,7 @@ function DailyCashSidebar() {
             <form onSubmit={handleOutSubmit} className="p-5 space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">Tip Cheltuială</label>
-                <select 
+                <select
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                   value={outData.category}
                   onChange={e => setOutData({...outData, category: e.target.value})}
@@ -247,8 +248,8 @@ function DailyCashSidebar() {
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">Suma (£)</label>
-                <input 
-                  type="number" step="0.01" min="0" required
+                <NumericInput
+                  decimalScale={2} required
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xl font-bold text-rose-600 bg-white"
                   value={outData.amount}
                   onChange={e => setOutData({...outData, amount: e.target.value})}
@@ -256,7 +257,7 @@ function DailyCashSidebar() {
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">Detalii (Obligatoriu)</label>
-                <input 
+                <input
                   type="text" required
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                   value={outData.notes}
@@ -284,7 +285,7 @@ function DailyCashSidebar() {
             <form onSubmit={handleCollectionSubmit} className="p-5 space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">Către cine?</label>
-                <select 
+                <select
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                   value={collectionData.name}
                   onChange={e => setCollectionData({...collectionData, name: e.target.value})}
@@ -295,8 +296,8 @@ function DailyCashSidebar() {
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">Suma (£)</label>
-                <input 
-                  type="number" step="0.01" min="0" required
+                <NumericInput
+                  decimalScale={2} required
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xl font-bold text-orange-600 bg-white"
                   value={collectionData.amount}
                   onChange={e => setCollectionData({...collectionData, amount: e.target.value})}
@@ -319,17 +320,17 @@ function DailyCashSidebar() {
               <h3 className="font-bold text-emerald-800 flex items-center gap-2"><ShoppingCart size={20}/> Vânzare Directă</h3>
               <button onClick={closeModal} className="text-slate-400 hover:text-slate-600">&times;</button>
             </div>
-            
+
             <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
               {/* Partea Stanga: Client & Produse */}
               <div className="w-full md:w-2/3 p-5 border-r border-slate-100 overflow-y-auto space-y-6">
-                
+
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
                   <h4 className="font-bold text-slate-700 text-sm border-b border-slate-200 pb-2 mb-2">1. Client / Angajat</h4>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs text-slate-500 mb-1">Selectează Angajat</label>
-                      <select 
+                      <select
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
                         value={saleData.reference_id}
                         onChange={e => setSaleData({...saleData, reference_id: e.target.value, reference_name: ''})}
@@ -340,8 +341,8 @@ function DailyCashSidebar() {
                     </div>
                     <div>
                       <label className="block text-xs text-slate-500 mb-1">SAU Persoană Fizică (Nume)</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         disabled={!!saleData.reference_id}
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm disabled:bg-slate-100 bg-white"
                         value={saleData.reference_name}
@@ -356,7 +357,7 @@ function DailyCashSidebar() {
                   <div className="flex gap-2 items-end">
                     <div className="flex-1">
                       <label className="block text-xs text-slate-500 mb-1">Produs Finit</label>
-                      <select 
+                      <select
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
                         value={currentSaleItem.finished_product_id}
                         onChange={e => setCurrentSaleItem({...currentSaleItem, finished_product_id: e.target.value})}
@@ -369,8 +370,8 @@ function DailyCashSidebar() {
                     </div>
                     <div className="w-24">
                       <label className="block text-xs text-slate-500 mb-1">Cant.</label>
-                      <input 
-                        type="number" step="1" min="1" inputMode="numeric"
+                      <NumericInput
+                        integer
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white text-slate-900 caret-slate-900"
                         value={currentSaleItem.quantity}
                         onChange={e => setCurrentSaleItem({...currentSaleItem, quantity: e.target.value})}
@@ -378,15 +379,15 @@ function DailyCashSidebar() {
                     </div>
                     <div className="w-24">
                       <label className="block text-xs text-slate-500 mb-1">Preț unit.</label>
-                      <input 
-                        type="number" step="0.01" min="0" inputMode="decimal"
+                      <NumericInput
+                        decimalScale={2}
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white text-slate-900 caret-slate-900"
                         value={currentSaleItem.unit_price}
                         onChange={e => setCurrentSaleItem({...currentSaleItem, unit_price: e.target.value})}
                       />
                     </div>
-                    <button 
-                      type="button" 
+                    <button
+                      type="button"
                       onClick={addSaleItem}
                       className="bg-indigo-100 text-indigo-700 hover:bg-indigo-200 px-4 py-2 rounded-lg font-medium transition-colors h-[38px] flex items-center justify-center"
                     >
@@ -430,11 +431,11 @@ function DailyCashSidebar() {
                   <div className="flex justify-between items-end mb-4">
                     <span className="text-slate-500 font-bold">TOTAL DE PLATĂ</span>
                     <span className="text-3xl font-bold text-indigo-700">
-                      {saleData.items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0).toFixed(2)} 
+                      {saleData.items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0).toFixed(2)}
                       <span className="text-base text-indigo-400 ml-1">£</span>
                     </span>
                   </div>
-                  <button 
+                  <button
                     onClick={handleSaleSubmit}
                     className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold text-lg transition-colors flex justify-center items-center gap-2"
                   >

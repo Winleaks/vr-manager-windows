@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../shared/api';
+import { NumericInput } from '../components/NumericInput';
 
 export default function StockMovements() {
   const [movements, setMovements] = useState<any[]>([]);
@@ -54,7 +55,7 @@ export default function StockMovements() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-slate-800">Istoric & Ajustare Stoc</h1>
-        <button 
+        <button
           onClick={() => setIsAdjustModalOpen(true)}
           className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded shadow-md transition-colors font-medium"
         >
@@ -124,18 +125,18 @@ export default function StockMovements() {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
               <h2 className="text-xl font-semibold text-slate-800">Ajustare Manuală Stoc</h2>
-              <button 
+              <button
                 onClick={() => setIsAdjustModalOpen(false)}
                 className="text-slate-400 hover:text-slate-600"
               >
                 ✕
               </button>
             </div>
-            
+
             <form onSubmit={handleAdjustSubmit} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Materia Primă</label>
-                <select 
+                <select
                   className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                   value={formData.raw_material_id}
                   onChange={(e) => setFormData({...formData, raw_material_id: e.target.value})}
@@ -149,12 +150,11 @@ export default function StockMovements() {
                   ))}
                 </select>
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Noul Stoc (Realitate)</label>
-                <input 
-                  type="number" 
-                  step="0.01"
+                <NumericInput
+                  decimalScale={2}
                   className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                   value={formData.new_stock}
                   onChange={(e) => setFormData({...formData, new_stock: e.target.value})}
@@ -164,7 +164,7 @@ export default function StockMovements() {
 
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Motiv / Notă</label>
-                <textarea 
+                <textarea
                   className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                   value={formData.reason}
                   onChange={(e) => setFormData({...formData, reason: e.target.value})}
@@ -175,14 +175,14 @@ export default function StockMovements() {
               </div>
 
               <div className="pt-4 flex justify-end gap-3">
-                <button 
+                <button
                   type="button"
                   onClick={() => setIsAdjustModalOpen(false)}
                   className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium transition-colors"
                 >
                   Anulează
                 </button>
-                <button 
+                <button
                   type="submit"
                   className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg shadow-sm transition-colors font-medium"
                 >

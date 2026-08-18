@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.77
+
+- Toate câmpurile de sumă, cantitate, preț și stoc acceptă introducerea directă de la tastatură, inclusiv separatorul zecimal cu punct sau virgulă.
+- Soldul Daily Cash poate fi inițializat o singură dată la `£578.25`, apoi este administrat automat din încasări și plăți, fără editare manuală.
+- Inițializarea soldului este protejată împotriva modificării sau ștergerii ulterioare și rămâne disponibilă numai pe calculatorul Writer.
+- Ștergerea tranzacțiilor din Daily Cash reîncarcă imediat soldul și istoricul, iar erorile pentru zile închise sau intrări inexistente sunt afișate operatorului.
+
 ### VR - Hub Management v0.1.76
 
 - Încasările și celelalte operațiuni Daily Cash sunt filtrate după data locală reală la care au fost înregistrate, nu după data unei sesiuni vechi.

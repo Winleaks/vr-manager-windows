@@ -9,6 +9,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import { format } from 'date-fns';
 import { ro } from 'date-fns/locale';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
+import { NumericInput } from '../components/NumericInput';
 
 interface InvoiceItem {
   id?: number;
@@ -552,18 +553,16 @@ export function BillingInvoices() {
                             />
                           </td>
                           <td className="p-2">
-                            <input
-                              type="number"
-                              step="0.01"
+                            <NumericInput
+                              decimalScale={2}
                               value={item.quantity}
                               onChange={(e) => handleItemChange(idx, 'quantity', e.target.value)}
                               className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded text-slate-800 font-mono"
                             />
                           </td>
                           <td className="p-2">
-                            <input
-                              type="number"
-                              step="0.01"
+                            <NumericInput
+                              decimalScale={2}
                               value={item.unitPrice}
                               onChange={(e) => handleItemChange(idx, 'unitPrice', e.target.value)}
                               className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded text-slate-800 font-mono"

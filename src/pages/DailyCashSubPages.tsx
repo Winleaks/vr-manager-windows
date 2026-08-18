@@ -3,6 +3,7 @@ import { useCashStore } from '../store/cashStore';
 import { DateRangePicker } from '../components/DateRangePicker';
 import { PlusCircle, FileText, Truck, User, Pencil, Trash2 } from 'lucide-react';
 import { api } from '../shared/api';
+import { NumericInput } from '../components/NumericInput';
 
 interface PageProps {
   title: string;
@@ -219,7 +220,7 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
               </label>
               <label className="block text-sm font-medium text-slate-700">
                 Suma (£)
-                <input type="number" min="0.01" step="0.01" required value={editAmount} onChange={(event) => setEditAmount(event.target.value)} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg" />
+                <NumericInput decimalScale={2} required value={editAmount} onChange={(event) => setEditAmount(event.target.value)} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg" />
               </label>
               <label className="block text-sm font-medium text-slate-700">
                 Note

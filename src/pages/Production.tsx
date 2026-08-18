@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { Plus, Check, Factory } from 'lucide-react';
+import { NumericInput } from '../components/NumericInput';
 
 export default function Production() {
   const [productions, setProductions] = useState<any[]>([]);
@@ -55,7 +56,7 @@ export default function Production() {
           <h1 className="text-3xl font-bold text-slate-800">Producție Zilnică</h1>
           <p className="text-slate-500 mt-1">Înregistrează produsele fabricate și consumul de materii prime se calculează automat.</p>
         </div>
-        <button 
+        <button
           onClick={() => {
             setProductionDate(new Date().toISOString().split('T')[0]);
             setNotes('');
@@ -119,7 +120,7 @@ export default function Production() {
             <form onSubmit={handleSave} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Data Producției</label>
-                <input 
+                <input
                   type="date" required
                   value={productionDate} onChange={e => setProductionDate(e.target.value)}
                   className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none"
@@ -129,21 +130,21 @@ export default function Production() {
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
                   <label className="block text-sm font-medium text-slate-700">Produse Fabricate</label>
-                  <button 
-                    type="button" 
+                  <button
+                    type="button"
                     onClick={() => setItems([...items, { finished_product_id: '', quantity_produced: '1' }])}
                     className="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1"
                   >
                     <Plus size={16} /> Adaugă produs
                   </button>
                 </div>
-                
+
                 {items.map((item, index) => (
                   <div key={index} className="flex gap-3 items-end p-3 bg-slate-50 border border-slate-100 rounded-lg">
                     <div className="flex-1">
-                      <select 
+                      <select
                         required
-                        value={item.finished_product_id} 
+                        value={item.finished_product_id}
                         onChange={e => {
                           const newItems = [...items];
                           newItems[index].finished_product_id = e.target.value;
@@ -158,9 +159,9 @@ export default function Production() {
                       </select>
                     </div>
                     <div className="w-24">
-                      <input 
-                        type="number" step="0.01" min="0.01" inputMode="decimal" required placeholder="Cant"
-                        value={item.quantity_produced} 
+                      <NumericInput
+                        decimalScale={2} required placeholder="Cant"
+                        value={item.quantity_produced}
                         onChange={e => {
                           const newItems = [...items];
                           newItems[index].quantity_produced = e.target.value;
@@ -170,7 +171,7 @@ export default function Production() {
                       />
                     </div>
                     {items.length > 1 && (
-                      <button 
+                      <button
                         type="button"
                         onClick={() => {
                           const newItems = items.filter((_, i) => i !== index);
@@ -187,7 +188,7 @@ export default function Production() {
 
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Note (Opțional, de ex. "Șarja 1 - Schimb de zi")</label>
-                <textarea 
+                <textarea
                   value={notes} onChange={e => setNotes(e.target.value)}
                   className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none h-20"
                 />

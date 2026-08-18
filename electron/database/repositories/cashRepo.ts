@@ -5,8 +5,7 @@ import {
   addCashTransaction,
   closeCashDayTransaction,
   deleteCashTransaction,
-  reconcileCurrentCashBalance,
-  updateCashDayOpeningBalance,
+  initializeCashBalanceOnce,
   updateCashReceiptTransaction,
   type CashReceiptUpdateInput,
   type CashTransactionInput,
@@ -53,19 +52,18 @@ export const cashRepo = {
     }
     currentBalance = Math.round(currentBalance * 100) / 100;
     
-    return { ...activeDay, current_balance: currentBalance };
+    const balanceInitialization = db.prepare(
+      "SELECT value FROM app_settings WHERE key = 'daily_cash_balance_initialized_v1'",
+    ).get();
+    return { ...activeDay, current_balance: currentBalance, balance_initialized: Boolean(balanceInitialization) };
   },
 
   closeDay: (dayId: number, closingBalance: number) => {
     return closeCashDayTransaction(db, dayId, closingBalance);
   },
 
-  updateOpeningBalance: (dayId: number, openingBalance: number) => {
-    return updateCashDayOpeningBalance(db, dayId, openingBalance);
-  },
-
-  reconcileCurrentBalance: (dayId: number, actualBalance: number) => {
-    return reconcileCurrentCashBalance(db, dayId, actualBalance);
+  initializeBalance: (dayId: number, actualBalance: number) => {
+    return initializeCashBalanceOnce(db, dayId, actualBalance);
   },
 
   updateReceipt: (data: CashReceiptUpdateInput) => {

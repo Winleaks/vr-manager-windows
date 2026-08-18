@@ -6,6 +6,7 @@ import {
   ChevronRight, Printer, AlertTriangle, ShieldCheck, Info, Loader2, Search, X
 } from 'lucide-react';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
+import { NumericInput } from '../components/NumericInput';
 
 interface Company {
   id: number;
@@ -548,9 +549,8 @@ export function BillingClients() {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Suma Încasată (£)</label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumericInput
+                    decimalScale={2}
                     required
                     placeholder="0.00"
                     value={paymentForm.amount}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Save, Check, Database, Building2, Palette, FileImage } from 'lucide-react';
 import { api } from '../shared/api';
+import { NumericInput } from '../components/NumericInput';
 
 export function BillingSettings() {
   const [settings, setSettings] = useState({
@@ -195,7 +196,7 @@ export function BillingSettings() {
               </div>
               <div>
                 <label className="text-sm font-medium text-slate-700">Next Number</label>
-                <input type="number" name="invoiceStartNumber" value={settings.invoiceStartNumber} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 font-mono" />
+                <NumericInput integer name="invoiceStartNumber" value={settings.invoiceStartNumber} onChange={handleChange} className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 font-mono" />
               </div>
             </div>
 
