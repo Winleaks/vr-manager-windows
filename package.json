@@ -1,7 +1,7 @@
 {
   "name": "vr-hub-management",
   "private": true,
-  "version": "0.1.79",
+  "version": "0.1.80",
   "description": "Platformă desktop integrată pentru management, producție, facturare și operațiuni VR",
   "author": "Razvan Cristofor",
   "main": "dist-electron/main.js",
