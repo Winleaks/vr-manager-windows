@@ -1,15 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { api } from '../shared/api';
-import { Plus, Edit, BookOpen, X, Trash2, Folder } from 'lucide-react';
-import { CategoryModal } from '../shared/CategoryModal';
+import { Plus, BookOpen, X, Trash2, RefreshCw, CloudDownload } from 'lucide-react';
 import { NumericInput } from '../components/NumericInput';
 
 export default function FinishedProducts() {
   const [items, setItems] = useState<any[]>([]);
-  const [categories, setCategories] = useState<any[]>([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<any>(null);
+  const [deviceRole, setDeviceRole] = useState<'writer' | 'viewer'>('viewer');
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
+  const [syncError, setSyncError] = useState('');
 
   // Recipe Modal
   const [isRecipeModalOpen, setIsRecipeModalOpen] = useState(false);
@@ -17,71 +16,46 @@ export default function FinishedProducts() {
   const [recipeData, setRecipeData] = useState<any>({ batch_size: 1, notes: '', items: [] });
   const [rawMaterials, setRawMaterials] = useState<any[]>([]);
 
-  const [formData, setFormData] = useState({
-    name: '',
-    category_id: '',
-    production_unit: 'buc',
-    notes: ''
-  });
-
-  useEffect(() => {
-    loadData();
-    loadRawMaterials();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     const data = await api.finishedProducts.getAll();
     setItems(data);
-    const cats = await api.categories.get('finished_product');
-    setCategories(cats);
-  };
+  }, []);
 
-  const loadRawMaterials = async () => {
+  const loadRawMaterials = useCallback(async () => {
     const data = await api.rawMaterials.getAll();
     setRawMaterials(data);
-  };
+  }, []);
 
-  const handleOpenModal = (item?: any) => {
-    if (item) {
-      setEditingItem(item);
-      setFormData({
-        name: item.name,
-        category_id: item.category_id?.toString() || '',
-        production_unit: item.production_unit,
-        notes: item.notes || ''
-      });
-    } else {
-      setEditingItem(null);
-      setFormData({
-        name: '',
-        category_id: '',
-        production_unit: 'buc',
-        notes: ''
-      });
-    }
-    setIsModalOpen(true);
-  };
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const payload = {
-      ...formData,
-      category_id: formData.category_id ? parseInt(formData.category_id) : null
-    };
-
+  const synchronizeProducts = useCallback(async (showSuccess = true) => {
+    setSyncing(true);
+    setSyncError('');
     try {
-      if (editingItem) {
-        await api.finishedProducts.update(editingItem.id, payload);
-      } else {
-        await api.finishedProducts.add(payload);
-      }
-      setIsModalOpen(false);
-      loadData();
-    } catch (err) {
-      alert("Eroare la salvare! Posibil nume duplicat.");
-      console.error(err);
+      const response = await api.finishedProducts.syncFromVrBaker();
+      if (!response.success) throw new Error(response.message);
+      await loadData();
+      if (showSuccess) setSyncMessage(response.message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Produsele nu au putut fi actualizate.';
+      setSyncError(message);
+      if (showSuccess) window.alert(message);
+    } finally {
+      setSyncing(false);
     }
-  };
+  }, [loadData]);
+
+  useEffect(() => {
+    const initialize = async () => {
+      await Promise.all([loadData(), loadRawMaterials()]);
+      try {
+        const role = await api.system.getDeviceRole();
+        setDeviceRole(role.role);
+        if (role.role === 'writer') await synchronizeProducts(false);
+      } catch (error) {
+        console.error(error);
+      }
+    };
+    void initialize();
+  }, [loadData, loadRawMaterials, synchronizeProducts]);
 
   const handleOpenRecipe = async (product: any) => {
     setCurrentProduct(product);
@@ -142,28 +116,32 @@ export default function FinishedProducts() {
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex flex-wrap justify-between items-center gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-bold text-slate-800">Produse Finite</h1>
-          <p className="text-slate-500 mt-1">Gestionare produse finite și rețete</p>
+          <p className="text-slate-500 mt-1">Produse sincronizate automat din VR Baker Platform și rețetele locale de producție</p>
         </div>
-        <div className="flex gap-3">
+        {deviceRole === 'writer' && (
           <button
-            onClick={() => setIsCategoryModalOpen(true)}
-            className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors shadow-sm"
+            type="button"
+            onClick={() => void synchronizeProducts(true)}
+            disabled={syncing}
+            className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors shadow-sm"
           >
-            <Folder size={18} className="text-slate-500" />
-            Gestionează Categorii
+            <RefreshCw size={18} className={syncing ? 'animate-spin' : ''} />
+            {syncing ? 'Se actualizează...' : 'Actualizează produse'}
           </button>
-          <button
-            onClick={() => handleOpenModal()}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors shadow-sm"
-          >
-            <Plus size={20} />
-            Adaugă Produs
-          </button>
-        </div>
+        )}
       </div>
+
+      {syncMessage && (
+        <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">{syncMessage}</div>
+      )}
+      {syncError && (
+        <div role="alert" className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+          Catalogul local este disponibil, dar actualizarea automată a eșuat: {syncError}
+        </div>
+      )}
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <table className="w-full text-left border-collapse">
@@ -172,6 +150,8 @@ export default function FinishedProducts() {
               <th className="p-4 font-semibold">Nume Produs</th>
               <th className="p-4 font-semibold">Categorie</th>
               <th className="p-4 font-semibold">UM</th>
+              <th className="p-4 font-semibold text-right">Preț standard</th>
+              <th className="p-4 font-semibold text-right">Stoc</th>
               <th className="p-4 font-semibold text-center">Acțiuni</th>
             </tr>
           </thead>
@@ -185,6 +165,10 @@ export default function FinishedProducts() {
                   </span>
                 </td>
                 <td className="p-4 text-slate-500">{item.production_unit}</td>
+                <td className="p-4 text-right font-medium text-slate-600">£{Number(item.standard_price || 0).toFixed(2)}</td>
+                <td className={`p-4 text-right font-bold ${Number(item.current_stock) < 0 ? 'text-rose-600' : 'text-slate-700'}`}>
+                  {Number(item.current_stock || 0).toFixed(2)}
+                </td>
                 <td className="p-4 text-center">
                   <div className="flex justify-center gap-2">
                     <button
@@ -194,99 +178,21 @@ export default function FinishedProducts() {
                     >
                       <BookOpen size={16} /> Rețetă
                     </button>
-                    <button
-                      onClick={() => handleOpenModal(item)}
-                      className="p-1.5 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
-                      title="Editare Produs"
-                    >
-                      <Edit size={18} />
-                    </button>
                   </div>
                 </td>
               </tr>
             ))}
             {items.length === 0 && (
               <tr>
-                <td colSpan={4} className="p-8 text-center text-slate-500">
-                  Nu există produse finite adăugate.
+                <td colSpan={6} className="p-10 text-center text-slate-500">
+                  <CloudDownload size={36} className="mx-auto mb-3 text-slate-300" />
+                  Nu există produse sincronizate din VR Baker Platform.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-
-      {/* Product Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
-            <div className="flex justify-between items-center p-6 border-b border-slate-100">
-              <h2 className="text-xl font-bold text-slate-800">
-                {editingItem ? 'Editare Produs' : 'Adaugă Produs'}
-              </h2>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
-                <X size={24} />
-              </button>
-            </div>
-            <form onSubmit={handleSave} className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Nume Produs</label>
-                <input
-                  type="text" required
-                  value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}
-                  className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-sm font-medium text-slate-700">Categorie</label>
-                    <button
-                      type="button"
-                      onClick={() => setIsCategoryModalOpen(true)}
-                      className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-semibold flex items-center gap-1"
-                    >
-                      + categorii
-                    </button>
-                  </div>
-                  <select
-                    value={formData.category_id} onChange={e => setFormData({...formData, category_id: e.target.value})}
-                    className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                  >
-                    <option value="">Fără categorie</option>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Unitate Măsură</label>
-                  <select
-                    value={formData.production_unit} onChange={e => setFormData({...formData, production_unit: e.target.value})}
-                    className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                  >
-                    <option value="buc">Bucăți (buc)</option>
-                    <option value="kg">Kilograme (kg)</option>
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Note (Opțional)</label>
-                <textarea
-                  value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})}
-                  className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none h-20"
-                />
-              </div>
-              <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium transition-colors">
-                  Anulează
-                </button>
-                <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors shadow-sm">
-                  Salvează
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* Recipe Modal */}
       {isRecipeModalOpen && currentProduct && (
@@ -312,7 +218,7 @@ export default function FinishedProducts() {
                     <div className="flex items-center gap-2">
                       <NumericInput
                         decimalScale={2} required
-                        value={recipeData.batch_size} onValueChange={batch_size => setRecipeData(current => ({...current, batch_size}))}
+                        value={recipeData.batch_size} onValueChange={batch_size => setRecipeData((current: any) => ({...current, batch_size}))}
                         className="w-32 border border-blue-200 rounded-lg p-2 outline-none focus:border-blue-500 bg-white"
                       />
                       <span className="font-medium text-blue-800">{currentProduct.production_unit}</span>
@@ -389,15 +295,6 @@ export default function FinishedProducts() {
         </div>
       )}
 
-      <CategoryModal
-        isOpen={isCategoryModalOpen}
-        onClose={() => {
-          setIsCategoryModalOpen(false);
-          loadData();
-        }}
-        type="finished_product"
-        title="Categorii Produse Finite"
-      />
     </div>
   );
 }

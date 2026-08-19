@@ -379,7 +379,17 @@ function DailyCashSidebar() {
                       <select
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
                         value={currentSaleItem.finished_product_id}
-                        onChange={e => setCurrentSaleItem({...currentSaleItem, finished_product_id: e.target.value})}
+                        onChange={e => {
+                          const finishedProductId = e.target.value;
+                          const selectedProduct = products.find(product => String(product.id) === finishedProductId);
+                          setCurrentSaleItem(current => ({
+                            ...current,
+                            finished_product_id: finishedProductId,
+                            unit_price: Number(selectedProduct?.standard_price) > 0
+                              ? Number(selectedProduct.standard_price).toFixed(2)
+                              : current.unit_price,
+                          }));
+                        }}
                       >
                         <option value="">-- Alege Produs --</option>
                         {products.map(p => (

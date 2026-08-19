@@ -266,6 +266,8 @@ export class VrBakerApiClient {
   async fetchProducts() {
     const data = await this.request<unknown[]>('products.list', { available: true, limit: 1000 });
     if (!Array.isArray(data)) throw new Error('Catalogul VR Baker este invalid.');
+    if (data.length === 0) throw new Error('Catalogul VR Baker este gol; produsele locale nu au fost modificate.');
+    if (data.length >= 1000) throw new Error('Catalogul VR Baker a atins limita API; sincronizarea a fost oprită pentru a evita un import incomplet.');
     return data.map(parseProduct);
   }
 

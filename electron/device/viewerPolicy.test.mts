@@ -29,5 +29,6 @@ test('viewer denies business writes, cloud publishing and unknown channels', () 
   assert.equal(isChannelAllowedForRole('viewer', 'delete-cash-transaction'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'reopen-cash-day'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'prepare-daily-cash-whatsapp'), false);
+  assert.equal(isChannelAllowedForRole('viewer', 'sync-finished-products'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'a-future-channel'), false);
 });

@@ -1,5 +1,6 @@
 import { finishedProductRepo } from '../database/repositories/finishedProductRepo';
 import { handleTrustedIpc } from './trustedHandler';
+import { createVrBakerClient } from '../integrations/vrBakerIntegration';
 
 export function registerFinishedProductHandlers() {
   handleTrustedIpc('get-finished-products', () => {
@@ -10,15 +11,20 @@ export function registerFinishedProductHandlers() {
     return finishedProductRepo.getById(id);
   });
 
-  handleTrustedIpc('add-finished-product', (_, data) => {
-    return finishedProductRepo.create(data);
-  });
-
-  handleTrustedIpc('update-finished-product', (_, id: number, data) => {
-    return finishedProductRepo.update(id, data);
-  });
-
-  handleTrustedIpc('delete-finished-product', (_, id: number) => {
-    return finishedProductRepo.delete(id);
+  handleTrustedIpc('sync-finished-products', async () => {
+    try {
+      const products = await createVrBakerClient().fetchProducts();
+      const result = finishedProductRepo.syncFromVrBaker(products);
+      return {
+        success: true,
+        result,
+        message: `${result.received} produse au fost actualizate din VR Baker Platform. ${result.archivedManual} produse manuale au fost arhivate.`,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Produsele nu au putut fi actualizate.',
+      };
+    }
   });
 }

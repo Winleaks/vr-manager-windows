@@ -7,6 +7,8 @@ import { initialSchema, seedData } from './schema'
 import { createBackupFilename, selectBackupFilesToDelete } from './backupPolicy'
 import { verifyDatabaseFile } from './databaseValidation'
 import { migrateLegacyIdentity } from '../migration/identityMigration'
+import { repairInvalidFinishedProductStocks } from './stockDataRepair'
+import { ensureFinishedProductCatalogSchema } from './finishedProductCatalog'
 
 export { verifyDatabaseFile } from './databaseValidation'
 
@@ -281,6 +283,23 @@ function runMigrations() {
             );
             CREATE INDEX IF NOT EXISTS idx_cash_day_events_day ON cash_day_events(cash_day_id, created_at);
           `);
+        }
+      },
+      {
+        version: 8,
+        description: "Reparare stocuri invalide pentru produse finite din bazele vechi",
+        up: () => {
+          const repairs = repairInvalidFinishedProductStocks(db);
+          if (repairs.length > 0) {
+            console.log(`[MIGRATION] Au fost normalizate ${repairs.length} stocuri de produse finite.`);
+          }
+        }
+      },
+      {
+        version: 9,
+        description: "Conectare produse finite la catalogul VR Baker Platform",
+        up: () => {
+          ensureFinishedProductCatalogSchema(db);
         }
       }
     ];

@@ -1,9 +1,11 @@
 import { db } from '../db';
+import type { VrBakerProduct } from '../../integrations/vrBakerApiClient';
+import { syncFinishedProductCatalog } from '../finishedProductCatalog';
 
 export const finishedProductRepo = {
   getAll: () => {
     return db.prepare(`
-      SELECT fp.*, c.name as category_name 
+      SELECT fp.*, COALESCE(c.name, fp.source_category) as category_name
       FROM finished_products fp
       LEFT JOIN categories c ON fp.category_id = c.id
       WHERE fp.is_active = 1
@@ -50,5 +52,7 @@ export const finishedProductRepo = {
     // Soft delete
     db.prepare('UPDATE finished_products SET is_active = 0 WHERE id = ?').run(id);
     return true;
-  }
+  },
+
+  syncFromVrBaker: (products: VrBakerProduct[]) => syncFinishedProductCatalog(db, products),
 };

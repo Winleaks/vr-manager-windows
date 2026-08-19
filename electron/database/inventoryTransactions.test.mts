@@ -55,7 +55,7 @@ test('production updates product and material stocks atomically', () => {
   }
 });
 
-test('cash sale rejects insufficient stock without leaving partial accounting rows', () => {
+test('cash sale may take finished stock negative and remains fully transactional', () => {
   const connection = createDatabase();
   try {
     const productId = Number(connection.prepare(
@@ -75,19 +75,32 @@ test('cash sale rejects insufficient stock without leaving partial accounting ro
     assert.ok(transactionId > 0);
     assert.equal((connection.prepare('SELECT current_stock AS value FROM finished_products WHERE id = ?').get(productId) as any).value, 3);
 
-    assert.throws(() => addCashTransaction(connection, {
+    const negativeStockTransactionId = addCashTransaction(connection, {
       cash_day_id: dayId,
       type: 'IN',
       category: 'direct_sale',
       amount: 12,
       items: [{ finished_product_id: productId, quantity: 4, unit_price: 3 }],
-    }), /Stoc insuficient/);
-    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM cash_transactions').get() as any).value, 1);
-    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM cash_transaction_items').get() as any).value, 1);
-    assert.equal((connection.prepare('SELECT current_stock AS value FROM finished_products WHERE id = ?').get(productId) as any).value, 3);
+    });
+    assert.ok(negativeStockTransactionId > transactionId);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM cash_transactions').get() as any).value, 2);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM cash_transaction_items').get() as any).value, 2);
+    assert.equal((connection.prepare('SELECT current_stock AS value FROM finished_products WHERE id = ?').get(productId) as any).value, -1);
+
+    const materialId = Number(connection.prepare(
+      "INSERT INTO raw_materials (name, unit, current_stock) VALUES ('Făină vânzare', 'kg', 10)",
+    ).run().lastInsertRowid);
+    const recipeId = Number(connection.prepare(
+      'INSERT INTO recipes (finished_product_id, batch_size) VALUES (?, 1)',
+    ).run(productId).lastInsertRowid);
+    connection.prepare(
+      'INSERT INTO recipe_items (recipe_id, raw_material_id, quantity) VALUES (?, ?, 1)',
+    ).run(recipeId, materialId);
+    createProductionTransaction(connection, productId, 2, '2026-08-11');
+    assert.equal((connection.prepare('SELECT current_stock AS value FROM finished_products WHERE id = ?').get(productId) as any).value, 1);
 
     const closed = closeCashDayTransaction(connection, dayId, '2026-08-11');
-    assert.equal(closed.closingBalance, 16);
+    assert.equal(closed.closingBalance, 28);
     assert.equal((connection.prepare('SELECT is_closed AS value FROM cash_days WHERE id = ?').get(dayId) as any).value, 1);
     assert.throws(() => deleteCashTransaction(connection, transactionId), /zile închise/);
   } finally {

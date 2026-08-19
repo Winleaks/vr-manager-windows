@@ -10,6 +10,7 @@ import {
   requireText,
 } from '../businessValidation.ts';
 import { localIsoDate } from '../cashDayRollover.ts';
+import { storedFiniteNumber } from '../stockDataRepair.ts';
 
 type SqliteDatabase = Database.Database;
 
@@ -17,6 +18,14 @@ interface RecipeRow { id: number; batch_size: number }
 interface RecipeItemRow { raw_material_id: number; quantity: number; name: string; current_stock: number }
 interface ProductRow { id: number; name: string; current_stock: number; is_active: number }
 interface CashDayRow { id: number; date?: string; opening_balance: number; is_closed: number }
+
+function requireStoredStock(value: unknown, label: string) {
+  const stock = storedFiniteNumber(value);
+  if (stock === null) {
+    throw new Error(`${label} nu este configurat corect. Repornește aplicația pentru repararea automată a datelor.`);
+  }
+  return stock;
+}
 
 export interface CashTransactionInput {
   cash_day_id: number;
@@ -139,7 +148,7 @@ export function createProductionTransaction(
       'SELECT id, name, current_stock, is_active FROM finished_products WHERE id = ?',
     ).get(productId) as ProductRow | undefined;
     if (!product || !product.is_active) throw new Error('Produsul finit nu există sau este inactiv.');
-    requireFiniteNonNegative(product.current_stock, 'Stocul produsului finit');
+    product.current_stock = requireStoredStock(product.current_stock, 'Stocul produsului finit');
 
     const recipe = connection.prepare(
       'SELECT id, batch_size FROM recipes WHERE finished_product_id = ?',
@@ -293,17 +302,13 @@ export function addCashTransaction(connection: SqliteDatabase, data: CashTransac
           'SELECT id, name, current_stock, is_active FROM finished_products WHERE id = ?',
         ).get(productId) as ProductRow | undefined;
         if (!product || !product.is_active) throw new Error('Un produs vândut nu există sau este inactiv.');
-        requireFiniteNonNegative(product.current_stock, `Stocul produsului ${product.name}`);
+        product.current_stock = requireStoredStock(product.current_stock, `Stocul produsului ${product.name}`);
         requestedByProduct.set(productId, { product, quantity: itemQuantity });
       }
     }
     if (items.length > 0 && Math.abs(calculatedAmount - amount) > 0.01) {
       throw new Error('Suma tranzacției nu corespunde produselor vândute.');
     }
-    for (const { product, quantity } of requestedByProduct.values()) {
-      if (quantity > product.current_stock + 1e-9) throw new Error(`Stoc insuficient pentru ${product.name}.`);
-    }
-
     const transactionResult = connection.prepare(`
       INSERT INTO cash_transactions
         (cash_day_id, type, category, amount, reference_id, reference_name, notes)
