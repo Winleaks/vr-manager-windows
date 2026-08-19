@@ -1,3 +1,11 @@
+### VR - Hub Management v0.1.81
+
+- Produsele finite se sincronizează automat din catalogul VR Baker Platform la deschiderea paginii și pot fi reîmprospătate manual prin butonul `Actualizează produse`.
+- Produsele manuale sunt asociate după nume când există în catalog, iar cele rămase sunt arhivate fără ștergerea istoricului, rețetelor sau stocului existent.
+- Prețul standard din catalog este completat automat în Vânzare Directă și poate fi ajustat înainte de încasare.
+- Vânzările directe pot duce stocul produselor finite sub zero; producția ulterioară corectează automat soldul.
+- Viewer-ele folosesc exclusiv catalogul replicat prin SQLite și nu contactează VR Baker Platform.
+
 ### VR - Hub Management v0.1.80
 
 - Butonul `Încasează (Cash)` din Vânzare Directă înregistrează bonul cu protecție la apăsări repetate și actualizează imediat datele afișate.

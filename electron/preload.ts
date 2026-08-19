@@ -23,9 +23,7 @@ export const desktopApi = {
   finishedProducts: {
     getAll: () => ipcRenderer.invoke('get-finished-products'),
     getById: (id: number) => ipcRenderer.invoke('get-finished-product', id),
-    add: (data: any) => ipcRenderer.invoke('add-finished-product', data),
-    update: (id: number, data: any) => ipcRenderer.invoke('update-finished-product', id, data),
-    delete: (id: number) => ipcRenderer.invoke('delete-finished-product', id),
+    syncFromVrBaker: () => ipcRenderer.invoke('sync-finished-products'),
   },
   recipes: {
     getByProductId: (productId: number) => ipcRenderer.invoke('get-recipe', productId),

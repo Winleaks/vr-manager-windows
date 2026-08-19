@@ -51,3 +51,11 @@ test('rejects delivered orders until the driver application owns that status', a
   });
   await assert.rejects(() => deliveredClient.fetchWeeklyOrders('2026-08-03', '2026-08-09'), /status de comandă neacceptat/);
 });
+
+test('refuses an empty product catalog before local reconciliation', async () => {
+  const client = new VrBakerApiClient(TOKEN, {
+    maxAttempts: 1,
+    fetchImpl: (async () => new Response(JSON.stringify({ success: true, data: [] }), { status: 200 })) as typeof fetch,
+  });
+  await assert.rejects(() => client.fetchProducts(), /catalogul VR Baker este gol/i);
+});
