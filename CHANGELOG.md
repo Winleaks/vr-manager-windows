@@ -1,3 +1,9 @@
+### VR - Hub Management v0.1.80
+
+- Butonul `Încasează (Cash)` din Vânzare Directă înregistrează bonul cu protecție la apăsări repetate și actualizează imediat datele afișate.
+- Erorile reale de validare, zi închisă, produs inactiv sau stoc insuficient sunt afișate operatorului fără pierderea produselor introduse pe bon.
+- Cantitatea, prețul unitar și totalul sunt validate înainte de înregistrarea tranzacției.
+
 ### VR - Hub Management v0.1.79
 
 - Daily Cash generează un raport PDF autoritar, structurat și paginat, cu solduri, totaluri pe categorii și tranzacții detaliate în GBP.
