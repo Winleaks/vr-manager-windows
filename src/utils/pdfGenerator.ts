@@ -215,14 +215,14 @@ export function generateInvoicePDF(
   const tableRows: any[] = [];
 
   invoiceData.items.forEach((item, index) => {
-    let mainTitle = fixRomanianDiacritics(item.productName || 'Produs');
+    let mainTitle = fixRomanianDiacritics(item.productName || 'Product').toLocaleUpperCase('en-GB');
     if (item.variant_label) {
-      mainTitle += ` [${fixRomanianDiacritics(item.variant_label)}]`;
+      mainTitle += ` [${fixRomanianDiacritics(item.variant_label).toLocaleUpperCase('en-GB')}]`;
     }
     
     let descriptionText = mainTitle;
     if (item.name_ro) {
-      descriptionText += ` / ${fixRomanianDiacritics(item.name_ro)}`;
+      descriptionText += `\n${fixRomanianDiacritics(item.name_ro).toLocaleUpperCase('ro-RO')}`;
     }
 
     tableRows.push([
@@ -344,4 +344,3 @@ export function generateInvoicePDF(
   const arrayBuffer = doc.output('arraybuffer');
   return new Uint8Array(arrayBuffer);
 }
-

@@ -38,10 +38,11 @@ test('catalog schema migration preserves legacy finished products', () => {
     ensureFinishedProductCatalogSchema(connection);
     ensureFinishedProductCatalogSchema(connection);
     assert.deepEqual(connection.prepare(`
-      SELECT name, current_stock, external_product_id, catalog_source, source_category, standard_price
+      SELECT name, name_ro, current_stock, external_product_id, catalog_source, source_category, standard_price
       FROM finished_products
     `).get(), {
       name: 'Produs vechi',
+      name_ro: 'Produs vechi',
       current_stock: -3,
       external_product_id: null,
       catalog_source: 'manual',
@@ -81,11 +82,12 @@ test('VR Baker catalog replaces manual products while preserving matched stock a
       deactivatedRemote: 0,
     });
     assert.deepEqual(connection.prepare(`
-      SELECT id, name, current_stock, external_product_id, catalog_source, standard_price, is_active
+      SELECT id, name, name_ro, current_stock, external_product_id, catalog_source, standard_price, is_active
       FROM finished_products WHERE id = ?
     `).get(matchedId), {
       id: matchedId,
-      name: 'Pâine - 500g',
+      name: 'Bread - 500g',
+      name_ro: 'Pâine - 500g',
       current_stock: -2,
       external_product_id: breadId,
       catalog_source: 'vrbaker',
@@ -106,8 +108,8 @@ test('VR Baker catalog replaces manual products while preserving matched stock a
     assert.equal(second.updated, 1);
     assert.equal(second.deactivatedRemote, 1);
     assert.deepEqual(connection.prepare(`
-      SELECT name, current_stock, standard_price FROM finished_products WHERE id = ?
-    `).get(matchedId), { name: 'Pâine - 600g', current_stock: -2, standard_price: 3 });
+      SELECT name, name_ro, current_stock, standard_price FROM finished_products WHERE id = ?
+    `).get(matchedId), { name: 'Bread - 600g', name_ro: 'Pâine - 600g', current_stock: -2, standard_price: 3 });
     assert.equal((connection.prepare(
       'SELECT is_active FROM finished_products WHERE external_product_id = ?',
     ).get(cakeId) as { is_active: number }).is_active, 0);

@@ -22,17 +22,27 @@ export function ensureFinishedProductCatalogSchema(connection: SqliteDatabase) {
     'PRAGMA table_info(finished_products)',
   ).all() as Array<{ name: string }>).map((column) => column.name));
   if (!columns.has('external_product_id')) connection.exec('ALTER TABLE finished_products ADD COLUMN external_product_id TEXT;');
+  if (!columns.has('name_ro')) connection.exec('ALTER TABLE finished_products ADD COLUMN name_ro TEXT;');
   if (!columns.has('catalog_source')) connection.exec("ALTER TABLE finished_products ADD COLUMN catalog_source TEXT NOT NULL DEFAULT 'manual';");
   if (!columns.has('source_category')) connection.exec('ALTER TABLE finished_products ADD COLUMN source_category TEXT;');
   if (!columns.has('standard_price')) connection.exec('ALTER TABLE finished_products ADD COLUMN standard_price REAL NOT NULL DEFAULT 0;');
+  connection.exec("UPDATE finished_products SET name_ro = name WHERE name_ro IS NULL OR trim(name_ro) = '';");
   connection.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_finished_products_external ON finished_products(external_product_id) WHERE external_product_id IS NOT NULL;');
 }
 
-function displayName(product: VrBakerProduct) {
-  const base = product.nameRo?.trim() || product.name.trim();
+function localizedDisplayName(baseName: string, product: VrBakerProduct, locale: string) {
+  const base = baseName.trim();
   const variant = product.variantLabel?.trim();
-  if (!variant || base.toLocaleLowerCase('ro-RO').includes(variant.toLocaleLowerCase('ro-RO'))) return base;
+  if (!variant || base.toLocaleLowerCase(locale).includes(variant.toLocaleLowerCase(locale))) return base;
   return `${base} - ${variant}`;
+}
+
+function englishDisplayName(product: VrBakerProduct) {
+  return localizedDisplayName(product.name, product, 'en-GB');
+}
+
+function romanianDisplayName(product: VrBakerProduct) {
+  return localizedDisplayName(product.nameRo?.trim() || product.name, product, 'ro-RO');
 }
 
 function uniqueDisplayName(
@@ -40,7 +50,7 @@ function uniqueDisplayName(
   product: VrBakerProduct,
   currentId?: number,
 ) {
-  const desired = displayName(product);
+  const desired = englishDisplayName(product);
   const candidates = [
     desired,
     product.name.trim() !== desired ? `${desired} (${product.name.trim()})` : '',
@@ -57,7 +67,8 @@ function uniqueDisplayName(
 
 function findManualMatch(connection: SqliteDatabase, product: VrBakerProduct) {
   const names = Array.from(new Set([
-    displayName(product),
+    englishDisplayName(product),
+    romanianDisplayName(product),
     product.name,
     product.nameRo || '',
   ].map((name) => name.trim()).filter(Boolean)));
@@ -102,24 +113,26 @@ export function syncFinishedProductCatalog(
       if (local) {
         connection.prepare(`
           UPDATE finished_products
-          SET name = ?, production_unit = ?, external_product_id = ?, catalog_source = 'vrbaker',
-              source_category = ?, standard_price = ?, is_active = 1, updated_at = CURRENT_TIMESTAMP
+          SET name = ?, name_ro = ?, production_unit = ?, external_product_id = ?, catalog_source = 'vrbaker',
+              source_category = ?, standard_price = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `).run(
           name,
+          romanianDisplayName(product),
           product.unit,
           product.id,
           product.category,
           product.priceStandard,
+          product.available ? 1 : 0,
           local.id,
         );
         updated += 1;
       } else {
         connection.prepare(`
           INSERT INTO finished_products
-            (name, production_unit, external_product_id, catalog_source, source_category, standard_price, is_active)
-          VALUES (?, ?, ?, 'vrbaker', ?, ?, 1)
-        `).run(name, product.unit, product.id, product.category, product.priceStandard);
+            (name, name_ro, production_unit, external_product_id, catalog_source, source_category, standard_price, is_active)
+          VALUES (?, ?, ?, ?, 'vrbaker', ?, ?, ?)
+        `).run(name, romanianDisplayName(product), product.unit, product.id, product.category, product.priceStandard, product.available ? 1 : 0);
         created += 1;
       }
     }

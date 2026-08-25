@@ -1,6 +1,6 @@
 import { finishedProductRepo } from '../database/repositories/finishedProductRepo';
 import { handleTrustedIpc } from './trustedHandler';
-import { createVrBakerClient } from '../integrations/vrBakerIntegration';
+import { syncVrBakerCatalog } from '../integrations/vrBakerIntegration';
 
 export function registerFinishedProductHandlers() {
   handleTrustedIpc('get-finished-products', () => {
@@ -13,8 +13,8 @@ export function registerFinishedProductHandlers() {
 
   handleTrustedIpc('sync-finished-products', async () => {
     try {
-      const products = await createVrBakerClient().fetchProducts();
-      const result = finishedProductRepo.syncFromVrBaker(products);
+      const syncResult = await syncVrBakerCatalog();
+      const result = syncResult.finishedProducts;
       return {
         success: true,
         result,

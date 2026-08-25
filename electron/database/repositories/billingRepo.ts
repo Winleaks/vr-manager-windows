@@ -277,6 +277,9 @@ export function getCompanyProfileDetails(companyId: number) {
         items: items.map(it => ({
           id: it.id,
           productName: it.product_name,
+          name_ro: it.product_name_ro,
+          variant_label: it.variant_label,
+          unit: it.unit,
           quantity: it.quantity,
           unitPrice: it.unit_price,
           totalPrice: it.total_price
@@ -357,6 +360,9 @@ export function getInvoicesByDateRange(startDate?: string, endDate?: string) {
       items: items.map(item => ({
         id: item.id,
         productName: item.product_name,
+        name_ro: item.product_name_ro,
+        variant_label: item.variant_label,
+        unit: item.unit,
         quantity: item.quantity,
         unitPrice: item.unit_price,
         totalPrice: item.total_price
@@ -369,7 +375,7 @@ export function updateInvoiceWithItems(
   id: number,
   invoiceNumber: string,
   invoiceDate: string,
-  items: { productName: string, quantity: number, unitPrice: number, totalPrice: number }[]
+  items: { productName: string, name_ro?: string, variant_label?: string, unit?: string, quantity: number, unitPrice: number, totalPrice: number }[]
 ) {
   return updateInvoiceTransaction(db, id, invoiceNumber, invoiceDate, items);
 }
@@ -399,71 +405,46 @@ export function getCloudProducts() {
   return db.prepare('SELECT * FROM cloud_products ORDER BY name').all();
 }
 
-export function upsertProductFromSupabase(product: {
-  id: string,
-  name: string,
-  name_ro?: string,
-  variant_label?: string,
-  unit?: string,
-  category?: string,
-  price_standard?: number,
-  available?: boolean
-}) {
-  let localProd = db.prepare('SELECT id FROM cloud_products WHERE supabase_product_id = ?').get(product.id) as any;
-  if (!localProd && product.name) {
-    localProd = db.prepare('SELECT id FROM cloud_products WHERE LOWER(name) = LOWER(?)').get(product.name) as any;
+export function syncProductsFromVrBaker(products: VrBakerProduct[]) {
+  if (!Array.isArray(products) || products.length > 1000) throw new Error('Catalogul VR Baker este prea mare.');
+  if (new Set(products.map((product) => product.id)).size !== products.length) {
+    throw new Error('Catalogul VR Baker conține produse duplicate.');
   }
-
-  const availVal = product.available === false ? 0 : 1;
-
-  if (localProd) {
-    db.prepare(`
+  return db.transaction(() => {
+    const findByExternalId = db.prepare('SELECT id FROM cloud_products WHERE supabase_product_id = ?');
+    const findByName = db.prepare('SELECT id FROM cloud_products WHERE LOWER(name) = LOWER(?)');
+    const update = db.prepare(`
       UPDATE cloud_products
       SET name = ?, name_ro = ?, variant_label = ?, unit = ?, category = ?, price_standard = ?, available = ?, supabase_product_id = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(
-      product.name,
-      product.name_ro || null,
-      product.variant_label || null,
-      product.unit || null,
-      product.category || null,
-      product.price_standard || 0,
-      availVal,
-      product.id,
-      localProd.id
-    );
-    return localProd.id as number;
-  } else {
-    const info = db.prepare(`
+    `);
+    const insert = db.prepare(`
       INSERT INTO cloud_products (supabase_product_id, name, name_ro, variant_label, unit, category, price_standard, available)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      product.id,
-      product.name,
-      product.name_ro || null,
-      product.variant_label || null,
-      product.unit || null,
-      product.category || null,
-      product.price_standard || 0,
-      availVal
-    );
-    return info.lastInsertRowid as number;
-  }
-}
-
-export function syncProductsFromVrBaker(products: VrBakerProduct[]) {
-  return db.transaction(() => {
+    `);
     for (const product of products) {
-      upsertProductFromSupabase({
-        id: product.id,
-        name: product.name,
-        name_ro: product.nameRo,
-        variant_label: product.variantLabel,
-        unit: product.unit,
-        category: product.category,
-        price_standard: product.priceStandard,
-        available: product.available,
-      });
+      const local = (findByExternalId.get(product.id) || findByName.get(product.name)) as { id: number } | undefined;
+      const values = [
+        product.name,
+        product.nameRo || null,
+        product.variantLabel || null,
+        product.unit || null,
+        product.category || null,
+        product.priceStandard,
+        product.available ? 1 : 0,
+      ] as const;
+      if (local) update.run(...values, product.id, local.id);
+      else insert.run(product.id, ...values);
+    }
+    if (products.length > 0) {
+      const placeholders = products.map(() => '?').join(', ');
+      db.prepare(`
+        UPDATE cloud_products
+        SET available = 0, updated_at = CURRENT_TIMESTAMP
+        WHERE supabase_product_id IS NOT NULL
+          AND supabase_product_id NOT IN (${placeholders})
+          AND available != 0
+      `).run(...products.map((product) => product.id));
     }
     return products.length;
   })();

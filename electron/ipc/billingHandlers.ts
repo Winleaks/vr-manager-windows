@@ -16,14 +16,10 @@ function setting(key: string, value: unknown) {
 async function prepareWeeklyPreview(startDate: string, endDate: string) {
   validateWeeklyPeriod(startDate, endDate);
   const client = createVrBakerClient();
-  const [orders, companies, stores, products] = await Promise.all([
-    client.fetchWeeklyOrders(startDate, endDate),
-    client.fetchCompanies(),
-    client.fetchStores(),
-    client.fetchProducts(),
-  ]);
+  const orders = await client.fetchWeeklyOrders(startDate, endDate);
+  const stores = [...new Map(orders.map((order) => [order.store.id, order.store])).values()];
+  const companies = [...new Map(stores.flatMap((store) => store.company ? [[store.company.id, store.company] as const] : [])).values()];
   billingRepo.syncEntitiesFromVrBaker(companies, stores);
-  billingRepo.syncProductsFromVrBaker(products);
   return aggregateWeeklyOrders(orders).map((group) => ({
     ...group,
     ...billingRepo.getWeeklyImportState(group.store.id, startDate, endDate, group.sourceFingerprint),
@@ -171,8 +167,8 @@ export function registerBillingHandlers() {
 
   handleTrustedIpc('billing:syncProducts', async () => {
     try {
-      const count = await syncVrBakerCatalog();
-      return { success: true, message: `${count} produse au fost sincronizate din VR Baker Platform.` };
+      const result = await syncVrBakerCatalog();
+      return { success: true, message: `${result.received} produse au fost sincronizate o singură dată pentru producție și facturare.` };
     } catch (error) { return { success: false, message: message(error) }; }
   });
   handleTrustedIpc('billing:syncEntities', async () => {

@@ -9,6 +9,8 @@ import { verifyDatabaseFile } from './databaseValidation'
 import { migrateLegacyIdentity } from '../migration/identityMigration'
 import { repairInvalidFinishedProductStocks } from './stockDataRepair'
 import { ensureFinishedProductCatalogSchema } from './finishedProductCatalog'
+import { ensureRawMaterialLocalizationSchema } from './rawMaterialLocalization'
+import { ensureInvoiceItemLocalizationSchema } from './invoiceItemLocalization'
 
 export { verifyDatabaseFile } from './databaseValidation'
 
@@ -300,6 +302,21 @@ function runMigrations() {
         description: "Conectare produse finite la catalogul VR Baker Platform",
         up: () => {
           ensureFinishedProductCatalogSchema(db);
+        }
+      },
+      {
+        version: 10,
+        description: "Adăugare denumiri bilingve pentru materiile prime locale",
+        up: () => {
+          ensureRawMaterialLocalizationSchema(db);
+        }
+      },
+      {
+        version: 11,
+        description: "Păstrare denumiri bilingve în pozițiile facturilor",
+        up: () => {
+          ensureFinishedProductCatalogSchema(db);
+          ensureInvoiceItemLocalizationSchema(db);
         }
       }
     ];

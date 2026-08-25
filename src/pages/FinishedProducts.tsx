@@ -2,6 +2,7 @@ import React, { useCallback, useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { Plus, BookOpen, X, Trash2, RefreshCw, CloudDownload } from 'lucide-react';
 import { NumericInput } from '../components/NumericInput';
+import { BilingualProductName } from '../components/BilingualProductName';
 
 export default function FinishedProducts() {
   const [items, setItems] = useState<any[]>([]);
@@ -49,7 +50,6 @@ export default function FinishedProducts() {
       try {
         const role = await api.system.getDeviceRole();
         setDeviceRole(role.role);
-        if (role.role === 'writer') await synchronizeProducts(false);
       } catch (error) {
         console.error(error);
       }
@@ -158,7 +158,9 @@ export default function FinishedProducts() {
           <tbody className="divide-y divide-slate-100">
             {items.map((item, i) => (
               <tr key={i} className="hover:bg-slate-50 transition-colors">
-                <td className="p-4 font-medium text-slate-800">{item.name}</td>
+                <td className="p-4">
+                  <BilingualProductName name={item.name} nameRo={item.name_ro} />
+                </td>
                 <td className="p-4 text-slate-600">
                   <span className="bg-slate-100 text-slate-700 px-2 py-1 rounded-md text-xs font-medium">
                     {item.category_name || '-'}

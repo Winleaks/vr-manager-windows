@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS suppliers (
 CREATE TABLE IF NOT EXISTS raw_materials (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
+  name_ro TEXT,
   category_id INTEGER,
   unit TEXT NOT NULL,
   current_stock REAL NOT NULL DEFAULT 0,
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS raw_materials (
 CREATE TABLE IF NOT EXISTS finished_products (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
+  name_ro TEXT,
   category_id INTEGER,
   production_unit TEXT NOT NULL DEFAULT 'buc',
   current_stock REAL NOT NULL DEFAULT 0,
@@ -261,6 +263,9 @@ CREATE TABLE IF NOT EXISTS invoice_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   invoice_id INTEGER NOT NULL,
   product_name TEXT NOT NULL,
+  product_name_ro TEXT,
+  variant_label TEXT,
+  unit TEXT,
   quantity REAL NOT NULL,
   unit_price REAL NOT NULL,
   total_price REAL NOT NULL,

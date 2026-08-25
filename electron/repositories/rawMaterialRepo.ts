@@ -3,6 +3,7 @@ import { db } from '../database/db'
 export interface RawMaterial {
   id?: number
   name: string
+  name_ro?: string | null
   category_id?: number | null
   unit: string
   current_stock: number
@@ -12,6 +13,19 @@ export interface RawMaterial {
   created_at?: string
   updated_at?: string
   category_name?: string
+}
+
+function validatedLabel(value: unknown, label: string) {
+  if (typeof value !== 'string') throw new Error(`${label} este obligatoriu.`)
+  const normalized = value.normalize('NFC').trim()
+  const hasControlCharacter = [...normalized].some((character) => {
+    const code = character.charCodeAt(0)
+    return code <= 31 || code === 127
+  })
+  if (normalized.length < 1 || normalized.length > 200 || hasControlCharacter) {
+    throw new Error(`${label} trebuie să conțină între 1 și 200 de caractere.`)
+  }
+  return normalized
 }
 
 export function getAllRawMaterials() {
@@ -26,16 +40,20 @@ export function getAllRawMaterials() {
 export function addRawMaterial(rm: RawMaterial) {
   const transaction = db.transaction(() => {
     const stmt = db.prepare(`
-      INSERT INTO raw_materials (name, category_id, unit, current_stock, minimum_stock, supplier_id, notes)
-      VALUES (@name, @category_id, @unit, @current_stock, @minimum_stock, @supplier_id, @notes)
+      INSERT INTO raw_materials (name, name_ro, category_id, unit, current_stock, minimum_stock, supplier_id, notes)
+      VALUES (@name, @name_ro, @category_id, @unit, @current_stock, @minimum_stock, @supplier_id, @notes)
     `)
-    const initialStock = rm.current_stock || 0
+    const initialStock = Number(rm.current_stock ?? 0)
+    const minimumStock = Number(rm.minimum_stock ?? 0)
+    if (!Number.isFinite(initialStock)) throw new Error('Stocul curent trebuie să fie un număr finit.')
+    if (!Number.isFinite(minimumStock) || minimumStock < 0) throw new Error('Stocul minim trebuie să fie un număr finit pozitiv sau zero.')
     const result = stmt.run({
-      name: rm.name,
+      name: validatedLabel(rm.name, 'Numele în engleză'),
+      name_ro: validatedLabel(rm.name_ro, 'Numele în română'),
       category_id: rm.category_id || null,
       unit: rm.unit,
       current_stock: initialStock,
-      minimum_stock: rm.minimum_stock || 0,
+      minimum_stock: minimumStock,
       supplier_id: rm.supplier_id || null,
       notes: rm.notes || null
     })
@@ -65,21 +83,25 @@ export function updateRawMaterial(id: number, rm: RawMaterial) {
     const oldRow = db.prepare('SELECT current_stock FROM raw_materials WHERE id = ?').get(id) as { current_stock: number } | undefined
     const stockBefore = oldRow ? oldRow.current_stock : 0
     const newStock = rm.current_stock !== undefined && rm.current_stock !== null ? Number(rm.current_stock) : stockBefore
+    const minimumStock = Number(rm.minimum_stock ?? 0)
+    if (!Number.isFinite(newStock)) throw new Error('Stocul curent trebuie să fie un număr finit.')
+    if (!Number.isFinite(minimumStock) || minimumStock < 0) throw new Error('Stocul minim trebuie să fie un număr finit pozitiv sau zero.')
     const delta = newStock - stockBefore
 
     const stmt = db.prepare(`
       UPDATE raw_materials 
-      SET name = @name, category_id = @category_id, unit = @unit, current_stock = @current_stock, minimum_stock = @minimum_stock, 
+      SET name = @name, name_ro = @name_ro, category_id = @category_id, unit = @unit, current_stock = @current_stock, minimum_stock = @minimum_stock,
           supplier_id = @supplier_id, notes = @notes, updated_at = CURRENT_TIMESTAMP
       WHERE id = @id
     `)
     const result = stmt.run({
       id,
-      name: rm.name,
+      name: validatedLabel(rm.name, 'Numele în engleză'),
+      name_ro: validatedLabel(rm.name_ro, 'Numele în română'),
       category_id: rm.category_id || null,
       unit: rm.unit,
       current_stock: newStock,
-      minimum_stock: rm.minimum_stock || 0,
+      minimum_stock: minimumStock,
       supplier_id: rm.supplier_id || null,
       notes: rm.notes || null
     })
@@ -130,4 +152,3 @@ export function deleteCategory(id: number) {
   })
   return transaction()
 }
-

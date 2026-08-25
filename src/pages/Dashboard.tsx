@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../shared/api';
+import { BilingualProductName } from '../components/BilingualProductName';
 import { exportToExcel, exportToPDF } from '../utils/exports';
 import { Package, AlertTriangle, TrendingUp, Download } from 'lucide-react';
 
@@ -168,7 +169,7 @@ export default function Dashboard() {
                   const deficit = item.minimum_stock - item.current_stock;
                   return (
                     <tr key={index} className="hover:bg-red-50/30 transition-colors">
-                      <td className="p-3.5 font-bold text-slate-800">{item.name}</td>
+                      <td className="p-3.5"><BilingualProductName name={item.name} nameRo={item.name_ro} /></td>
                       <td className="p-3.5 text-slate-600">
                         <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-xs font-medium">
                           {item.category_name || '-'}

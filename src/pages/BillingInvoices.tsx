@@ -14,6 +14,9 @@ import { NumericInput } from '../components/NumericInput';
 interface InvoiceItem {
   id?: number;
   productName: string;
+  name_ro?: string;
+  variant_label?: string;
+  unit?: string;
   quantity: number;
   unitPrice: number;
   totalPrice: number;

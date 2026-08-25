@@ -1,3 +1,12 @@
+### VR - Hub Management v0.1.82
+
+- Materiile prime rămân gestionate manual în aplicația Windows și primesc denumiri bilingve: engleză sus, română dedesubt, cu suport complet pentru diacritice.
+- O singură actualizare a catalogului VR Baker sincronizează tranzacțional produsele finite folosite în producție și facturare, fără interogări duplicate.
+- Sincronizarea automată la simpla deschidere a paginii a fost eliminată; catalogul este interogat numai când operatorul Writer apasă butonul de actualizare.
+- Facturarea săptămânală folosește direct snapshotul produselor din comenzi și păstrează pe factură denumirea în engleză, denumirea în română, varianta și unitatea.
+- PDF-urile facturilor afișează denumirea în engleză cu majuscule și denumirea în română pe rândul următor, fără a modifica facturile istorice.
+- Produsele manuale vechi și toate stocurile, rețetele și istoricul local sunt păstrate; baza VR Baker Platform rămâne exclusiv read-only.
+
 ### VR - Hub Management v0.1.81
 
 - Produsele finite se sincronizează automat din catalogul VR Baker Platform la deschiderea paginii și pot fi reîmprospătate manual prin butonul `Actualizează produse`.

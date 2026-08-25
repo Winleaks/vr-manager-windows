@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { Package, RefreshCw, CheckCircle, XCircle, Tag } from 'lucide-react';
+import { BilingualProductName } from '../components/BilingualProductName';
 
 export function BillingProducts() {
   const [products, setProducts] = useState<any[]>([]);
@@ -14,6 +15,7 @@ export function BillingProducts() {
       setProducts(data || []);
     } catch (e) {
       console.error(e);
+      window.alert(e instanceof Error ? e.message : 'Catalogul local nu a putut fi încărcat.');
     } finally {
       setLoading(false);
     }
@@ -22,10 +24,12 @@ export function BillingProducts() {
   const handleSyncWithServer = async () => {
     try {
       setSyncing(true);
-      await api.billing.syncProducts();
+      const response = await api.billing.syncProducts();
+      if (!response.success) throw new Error(response.message);
       await fetchProducts();
     } catch (e) {
       console.error(e);
+      window.alert(e instanceof Error ? e.message : 'Produsele nu au putut fi sincronizate.');
     } finally {
       setSyncing(false);
     }
@@ -83,8 +87,7 @@ export function BillingProducts() {
             <table className="w-full text-sm text-left">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
-                  <th className="px-6 py-4 font-medium">Name (Engleză)</th>
-                  <th className="px-6 py-4 font-medium">Romanian Name (Nume RO)</th>
+                  <th className="px-6 py-4 font-medium">Denumire produs</th>
                   <th className="px-6 py-4 font-medium">Variant Label</th>
                   <th className="px-6 py-4 font-medium">Unitate (Unit)</th>
                   <th className="px-6 py-4 font-medium text-right">Standard Price</th>
@@ -94,11 +97,8 @@ export function BillingProducts() {
               <tbody className="divide-y divide-slate-100">
                 {products.map((p) => (
                   <tr key={p.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4 font-bold text-slate-800">
-                      {p.name}
-                    </td>
-                    <td className="px-6 py-4 text-slate-600 italic">
-                      {p.name_ro || '—'}
+                    <td className="px-6 py-4">
+                      <BilingualProductName name={p.name} nameRo={p.name_ro} />
                     </td>
                     <td className="px-6 py-4">
                       {p.variant_label ? (
