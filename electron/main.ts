@@ -25,6 +25,8 @@ process.env.PUBLIC = app.isPackaged ? DIST_PATH : path.join(DIST_PATH, '../publi
 
 let win: BrowserWindow | null
 let cashDayRolloverTimer: ReturnType<typeof setTimeout> | null = null
+const CASH_RECONCILIATION_TARGET = 241.74
+const CASH_RECONCILIATION_MARKER = 'daily_cash_reconciliation_v0_1_83_241_74'
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
@@ -99,7 +101,7 @@ app.on('before-quit', () => {
   closeDb();
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   app.setAppUserModelId('com.winleaks.vrhubmanagement')
   if (process.platform === 'win32' && getDeviceRole() === 'writer') {
     try {
@@ -129,6 +131,27 @@ app.whenReady().then(() => {
     callback(false)
   })
   initDb()
+  if (getDeviceRole() === 'writer') {
+    try {
+      const preReconciliationBackup = await backupDb()
+      if (!preReconciliationBackup.success) {
+        throw new Error('Backupul de siguranță nu a putut fi creat; soldul nu a fost modificat.')
+      }
+      const activeDay = cashRepo.getActiveDay(true)
+      if (!activeDay) throw new Error('Nu există o zi de casă deschisă.')
+      const reconciliation = cashRepo.reconcileBalanceOnce(
+        activeDay.id,
+        CASH_RECONCILIATION_TARGET,
+        CASH_RECONCILIATION_MARKER,
+      )
+      if (reconciliation.applied) {
+        console.log('[DAILY CASH] Soldul Writer a fost reconciliat o singură dată la £241.74.')
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Operația nu a putut fi finalizată.'
+      dialog.showErrorBox('Reconcilierea Daily Cash a eșuat', message)
+    }
+  }
   // Writer publică snapshot-uri; Viewer descarcă doar versiuni Drive mai noi.
   const runAutomaticBackup = async () => {
     if (getDeviceRole() !== 'writer') return

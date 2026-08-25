@@ -47,6 +47,61 @@ export interface CashReceiptUpdateInput {
 
 const CASH_BALANCE_INITIALIZED_KEY = 'daily_cash_balance_initialized_v1';
 
+export function reconcileCashBalanceOnce(
+  connection: SqliteDatabase,
+  dayIdInput: number,
+  actualBalanceInput: number,
+  markerKeyInput: string,
+) {
+  const dayId = requirePositiveInteger(dayIdInput, 'Ziua de casă');
+  const actualBalance = requireMoneyNonNegative(actualBalanceInput, 'Soldul reconciliat');
+  const markerKey = requireText(markerKeyInput, 'Identificatorul reconcilierii', 100);
+
+  return connection.transaction(() => {
+    const previous = connection.prepare(
+      'SELECT value FROM app_settings WHERE key = ?',
+    ).get(markerKey) as { value: string } | undefined;
+    if (previous) {
+      return { applied: false, adjustmentId: null, currentBalance: Number(previous.value) };
+    }
+
+    const day = connection.prepare(
+      'SELECT id, opening_balance, is_closed FROM cash_days WHERE id = ?',
+    ).get(dayId) as CashDayRow | undefined;
+    if (!day) throw new Error('Ziua de casă nu există.');
+    if (day.is_closed) throw new Error('Soldul unei zile închise nu poate fi reconciliat.');
+
+    const totals = connection.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN type = 'IN' THEN amount ELSE 0 END), 0) AS total_in,
+        COALESCE(SUM(CASE WHEN type = 'OUT' THEN amount ELSE 0 END), 0) AS total_out
+      FROM cash_transactions WHERE cash_day_id = ?
+    `).get(dayId) as { total_in: number; total_out: number };
+    const currentBalance = Math.round(
+      (Number(day.opening_balance) + Number(totals.total_in) - Number(totals.total_out)) * 100,
+    ) / 100;
+    const difference = Math.round((actualBalance - currentBalance) * 100) / 100;
+
+    let adjustmentId: number | null = null;
+    if (difference !== 0) {
+      adjustmentId = Number(connection.prepare(`
+        INSERT INTO cash_transactions (cash_day_id, type, category, amount, notes)
+        VALUES (?, ?, 'cash_adjustment', ?, ?)
+      `).run(
+        dayId,
+        difference > 0 ? 'IN' : 'OUT',
+        Math.abs(difference),
+        `Reconciliere unică sold casă: £${actualBalance.toFixed(2)}`,
+      ).lastInsertRowid);
+    }
+
+    connection.prepare(
+      'INSERT INTO app_settings (key, value) VALUES (?, ?)',
+    ).run(markerKey, actualBalance.toFixed(2));
+    return { applied: true, adjustmentId, previousBalance: currentBalance, currentBalance: actualBalance };
+  })();
+}
+
 export function initializeCashBalanceOnce(
   connection: SqliteDatabase,
   dayIdInput: number,

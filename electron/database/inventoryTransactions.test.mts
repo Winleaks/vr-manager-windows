@@ -9,6 +9,7 @@ import {
   createProductionTransaction,
   deleteCashTransaction,
   initializeCashBalanceOnce,
+  reconcileCashBalanceOnce,
   reopenCashDayTransaction,
   updateCashReceiptTransaction,
 } from './repositories/inventoryTransactions.ts';
@@ -255,6 +256,73 @@ test('cash balance is initialized once at £578.25 and remains transaction-drive
       FROM cash_transactions WHERE cash_day_id = ?
     `).get(dayId) as { total_in: number; total_out: number };
     assert.equal(Math.round((1000 + updatedTotals.total_in - updatedTotals.total_out) * 100) / 100, 600);
+  } finally {
+    connection.close();
+  }
+});
+
+test('Writer reconciliation reaches £241.74 once without rewriting cash history', () => {
+  const connection = createDatabase();
+  try {
+    const dayId = Number(connection.prepare(
+      "INSERT INTO cash_days (date, opening_balance) VALUES ('2026-08-25', 500)",
+    ).run().lastInsertRowid);
+    connection.prepare(`
+      INSERT INTO cash_transactions (cash_day_id, type, category, amount, notes)
+      VALUES (?, 'IN', 'driver_collection', 50, 'Istoric păstrat')
+    `).run(dayId);
+    connection.prepare(`
+      INSERT INTO cash_transactions (cash_day_id, type, category, amount, notes)
+      VALUES (?, 'OUT', 'purchase', 25, 'Istoric păstrat')
+    `).run(dayId);
+
+    const marker = 'daily_cash_reconciliation_v0_1_83_241_74';
+    const first = reconcileCashBalanceOnce(connection, dayId, 241.74, marker);
+    assert.deepEqual(first, {
+      applied: true,
+      adjustmentId: first.adjustmentId,
+      previousBalance: 525,
+      currentBalance: 241.74,
+    });
+    assert.ok(first.adjustmentId && first.adjustmentId > 0);
+    assert.deepEqual(connection.prepare(`
+      SELECT type, category, amount, notes FROM cash_transactions WHERE id = ?
+    `).get(first.adjustmentId), {
+      type: 'OUT',
+      category: 'cash_adjustment',
+      amount: 283.26,
+      notes: 'Reconciliere unică sold casă: £241.74',
+    });
+
+    const second = reconcileCashBalanceOnce(connection, dayId, 241.74, marker);
+    assert.deepEqual(second, { applied: false, adjustmentId: null, currentBalance: 241.74 });
+    assert.equal(
+      (connection.prepare("SELECT COUNT(*) AS value FROM cash_transactions WHERE category = 'cash_adjustment'").get() as any).value,
+      1,
+    );
+    assert.equal(
+      (connection.prepare('SELECT COUNT(*) AS value FROM cash_transactions').get() as any).value,
+      3,
+    );
+  } finally {
+    connection.close();
+  }
+});
+
+test('cash reconciliation refuses a closed day and does not write its marker', () => {
+  const connection = createDatabase();
+  try {
+    const dayId = Number(connection.prepare(`
+      INSERT INTO cash_days (date, opening_balance, closing_balance, is_closed)
+      VALUES ('2026-08-24', 100, 100, 1)
+    `).run().lastInsertRowid);
+    const marker = 'daily_cash_reconciliation_closed_test';
+    assert.throws(
+      () => reconcileCashBalanceOnce(connection, dayId, 241.74, marker),
+      /zile închise/,
+    );
+    assert.equal((connection.prepare('SELECT value FROM app_settings WHERE key = ?').get(marker) as any), undefined);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM cash_transactions').get() as any).value, 0);
   } finally {
     connection.close();
   }

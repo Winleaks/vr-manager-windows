@@ -7,6 +7,7 @@ import {
   closeCashDayTransaction,
   deleteCashTransaction,
   initializeCashBalanceOnce,
+  reconcileCashBalanceOnce,
   reopenCashDayTransaction,
   updateCashReceiptTransaction,
   type CashReceiptUpdateInput,
@@ -45,6 +46,10 @@ export const cashRepo = {
 
   initializeBalance: (dayId: number, actualBalance: number) => {
     return initializeCashBalanceOnce(db, dayId, actualBalance);
+  },
+
+  reconcileBalanceOnce: (dayId: number, actualBalance: number, markerKey: string) => {
+    return reconcileCashBalanceOnce(db, dayId, actualBalance, markerKey);
   },
 
   updateReceipt: (data: CashReceiptUpdateInput) => {

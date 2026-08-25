@@ -1,3 +1,9 @@
+### VR - Hub Management v0.1.83
+
+- La prima pornire după update, exclusiv pe calculatorul Writer, Daily Cash este reconciliat o singură dată la soldul fizic de `£241.74`.
+- Diferența este înregistrată tranzacțional ca ajustare protejată, fără rescrierea sau ștergerea încasărilor și plăților existente.
+- Un marker persistent împiedică repetarea ajustării la repornire; Viewer-ele primesc rezultatul numai prin replica verificată din Google Drive.
+
 ### VR - Hub Management v0.1.82
 
 - Materiile prime rămân gestionate manual în aplicația Windows și primesc denumiri bilingve: engleză sus, română dedesubt, cu suport complet pentru diacritice.
