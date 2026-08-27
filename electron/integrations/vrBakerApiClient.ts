@@ -60,7 +60,11 @@ interface RequestOptions {
   wait?: (milliseconds: number) => Promise<void>;
 }
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// PostgreSQL's uuid type accepts the canonical 8-4-4-4-12 hexadecimal shape
+// without requiring RFC version/variant marker bits. VR Baker contains legacy
+// UUID rows with those otherwise-valid marker nibbles, so validate exactly the
+// database representation instead of rejecting valid database identifiers.
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
 

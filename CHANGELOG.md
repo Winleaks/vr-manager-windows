@@ -1,3 +1,9 @@
+### VR - Hub Management v0.1.84
+
+- Sincronizarea comenzilor acceptă toate identificatoarele UUID canonice stocate valid de PostgreSQL, inclusiv identificatoarele istorice fără marcajele RFC restrictive.
+- Importul săptămânal continuă să respingă identificatori malformați și păstrează filtrarea comenzilor `open` și `locked`, fără acces de scriere în VR Baker Platform.
+- Validatorul Edge Function folosește aceeași regulă ca aplicația Windows, prevenind erori similare la filtrare și paginare.
+
 ### VR - Hub Management v0.1.83
 
 - La prima pornire după update, exclusiv pe calculatorul Writer, Daily Cash este reconciliat o singură dată la soldul fizic de `£241.74`.

@@ -27,12 +27,17 @@ interface RawCredential {
 }
 
 export class ExternalApiRequestError extends Error {
+  public readonly status: number;
+  public readonly code: string;
+
   constructor(
-    public readonly status: number,
-    public readonly code: string,
+    status: number,
+    code: string,
     message: string,
   ) {
     super(message);
+    this.status = status;
+    this.code = code;
     this.name = "ExternalApiRequestError";
   }
 }
@@ -41,7 +46,7 @@ const CREDENTIAL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
 const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function sha256(value: string): Promise<string> {
   const digest = await crypto.subtle.digest(
@@ -326,4 +331,3 @@ export function parseDeliveredItems(value: unknown): DeliveredItemInput[] {
     };
   });
 }
-

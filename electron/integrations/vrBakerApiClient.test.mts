@@ -59,3 +59,42 @@ test('refuses an empty product catalog before local reconciliation', async () =>
   });
   await assert.rejects(() => client.fetchProducts(), /catalogul VR Baker este gol/i);
 });
+
+test('accepts canonical PostgreSQL UUIDs without RFC marker restrictions', async () => {
+  const legacyProductId = '99999999-9999-9999-9999-999999999999';
+  const client = new VrBakerApiClient(TOKEN, {
+    maxAttempts: 1,
+    fetchImpl: (async () => new Response(JSON.stringify({ success: true, data: { orders: [{
+      id: '11111111-1111-4111-8111-111111111111', delivery_date: '2026-08-03', status: 'open',
+      updated_at: '2026-08-03T10:00:00Z',
+      client_store: { id: '22222222-2222-4222-8222-222222222222', name: 'Magazin', client_company: null },
+      order_items: [{
+        id: '33333333-3333-4333-8333-333333333333', quantity: 2, unit_price_snapshot: 1.5,
+        products: { id: legacyProductId, name: 'Bread', name_ro: 'Pâine', available: true },
+      }],
+    }], next_cursor: null } }), { status: 200 })) as typeof fetch,
+  });
+
+  const orders = await client.fetchWeeklyOrders('2026-08-03', '2026-08-09');
+  assert.equal(orders[0]?.items[0]?.productId, legacyProductId);
+});
+
+test('continues to reject malformed product identifiers', async () => {
+  const client = new VrBakerApiClient(TOKEN, {
+    maxAttempts: 1,
+    fetchImpl: (async () => new Response(JSON.stringify({ success: true, data: { orders: [{
+      id: '11111111-1111-4111-8111-111111111111', delivery_date: '2026-08-03', status: 'open',
+      updated_at: '2026-08-03T10:00:00Z',
+      client_store: { id: '22222222-2222-4222-8222-222222222222', name: 'Magazin', client_company: null },
+      order_items: [{
+        id: '33333333-3333-4333-8333-333333333333', quantity: 2, unit_price_snapshot: 1.5,
+        products: { id: 'not-a-uuid', name: 'Bread', name_ro: 'Pâine', available: true },
+      }],
+    }], next_cursor: null } }), { status: 200 })) as typeof fetch,
+  });
+
+  await assert.rejects(
+    () => client.fetchWeeklyOrders('2026-08-03', '2026-08-09'),
+    /ID produs nu este un UUID valid/,
+  );
+});
