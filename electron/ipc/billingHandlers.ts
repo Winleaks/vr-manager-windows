@@ -22,6 +22,7 @@ async function prepareWeeklyPreview(startDate: string, endDate: string) {
   billingRepo.syncEntitiesFromVrBaker(companies, stores);
   return aggregateWeeklyOrders(orders).map((group) => ({
     ...group,
+    ...billingRepo.getIssuerPreviewByStoreExternalId(group.store.id),
     ...billingRepo.getWeeklyImportState(group.store.id, startDate, endDate, group.sourceFingerprint),
   }));
 }
@@ -48,49 +49,26 @@ export function registerBillingHandlers() {
   handleTrustedIpc('billing:getAllCompaniesAndStores', () => billingRepo.getAllCompaniesAndStores());
   handleTrustedIpc('billing:getCompanyProfile', (_, companyId) => billingRepo.getCompanyProfileDetails(companyId));
   handleTrustedIpc('billing:recordCompanyPayment', (_, data) => billingRepo.recordCompanyPayment(data));
-  handleTrustedIpc('billing:getInvoices', (_, startDate, endDate) => billingRepo.getInvoicesByDateRange(startDate, endDate));
-  handleTrustedIpc('billing:updateInvoice', (_, data) => billingRepo.updateInvoiceWithItems(data.id, data.invoiceNumber, data.invoiceDate, data.items || []));
-  handleTrustedIpc('billing:deleteInvoice', (_, invoiceId: number) => billingRepo.deleteInvoice(invoiceId));
-  handleTrustedIpc('billing:getStats', () => billingRepo.getBillingStats());
+  handleTrustedIpc('billing:getInvoices', (_, startDate, endDate, issuerId) => billingRepo.getInvoicesByDateRange(startDate, endDate, issuerId));
+  handleTrustedIpc('billing:updateInvoice', (_, data) => billingRepo.updateInvoiceWithItems(data.id, data.invoiceDate, data.items || []));
+  handleTrustedIpc('billing:cancelInvoice', (_, data) => billingRepo.cancelInvoice(data.invoiceId, data.reason));
+  handleTrustedIpc('billing:reissueCancelledInvoice', (_, invoiceId: number) => billingRepo.reissueCancelledInvoice(invoiceId, new Date().toISOString().slice(0, 10)));
+  handleTrustedIpc('billing:getStats', (_, issuerId?: number) => billingRepo.getBillingStats(issuerId));
   handleTrustedIpc('billing:getProducts', () => billingRepo.getCloudProducts());
+  handleTrustedIpc('billing:getIssuers', () => billingRepo.getBillingIssuers());
+  handleTrustedIpc('billing:updateIssuer', (_, data) => billingRepo.updateBillingIssuer(data));
+  handleTrustedIpc('billing:assignCompanyIssuer', (_, data) => billingRepo.assignCompanyIssuer(data.companyId, data.issuerId));
 
-  handleTrustedIpc('billing:getSettings', () => ({
-    invoiceSeries: billingRepo.getAppSetting('invoice_series') || 'FACT',
-    invoiceStartNumber: billingRepo.getAppSetting('invoice_start_number') || '1',
-    issuerName: billingRepo.getAppSetting('issuer_name') || '',
-    issuerAddress: billingRepo.getAppSetting('issuer_address') || '',
-    issuerCrn: billingRepo.getAppSetting('issuer_crn') || '',
-    issuerVat: billingRepo.getAppSetting('issuer_vat') || '',
-    invoiceBankName1: billingRepo.getAppSetting('invoice_bank_name_1') || billingRepo.getAppSetting('invoice_bank_name') || '',
-    invoiceAccountNumber: billingRepo.getAppSetting('invoice_account_number') || '',
-    invoiceSortCode: billingRepo.getAppSetting('invoice_sort_code') || '',
-    invoiceBankName2: billingRepo.getAppSetting('invoice_bank_name_2') || '',
-    invoiceAccountNumber2: billingRepo.getAppSetting('invoice_account_number_2') || '',
-    invoiceSortCode2: billingRepo.getAppSetting('invoice_sort_code_2') || '',
-    invoiceFooter: billingRepo.getAppSetting('invoice_footer') || '',
-    invoiceColor: billingRepo.getAppSetting('invoice_color') || '#4F46E5',
-    invoiceAlternateRowColor: billingRepo.getAppSetting('invoice_alternate_row_color') || '#4F46E5',
-    invoiceAlternateRowOpacity: Number(billingRepo.getAppSetting('invoice_alternate_row_opacity') || 5),
-    invoiceLogo: billingRepo.getAppSetting('invoice_logo') || '',
-  }));
+  handleTrustedIpc('billing:getSettings', () => {
+    const defaultIssuer = billingRepo.getBillingIssuers().find((issuer) => issuer.is_default === 1);
+    return {
+      ...(defaultIssuer?.settings || {}),
+      invoiceStartNumber: String(defaultIssuer?.next_invoice_number || 1),
+      invoiceLogo: billingRepo.getAppSetting('invoice_logo') || '',
+    };
+  });
 
   handleTrustedIpc('billing:saveSettings', (_, data) => {
-    setting('invoice_series', data.invoiceSeries);
-    setting('invoice_start_number', data.invoiceStartNumber);
-    setting('issuer_name', data.issuerName);
-    setting('issuer_address', data.issuerAddress);
-    setting('issuer_crn', data.issuerCrn);
-    setting('issuer_vat', data.issuerVat);
-    setting('invoice_bank_name_1', data.invoiceBankName1);
-    setting('invoice_account_number', data.invoiceAccountNumber);
-    setting('invoice_sort_code', data.invoiceSortCode);
-    setting('invoice_bank_name_2', data.invoiceBankName2);
-    setting('invoice_account_number_2', data.invoiceAccountNumber2);
-    setting('invoice_sort_code_2', data.invoiceSortCode2);
-    setting('invoice_footer', data.invoiceFooter);
-    setting('invoice_color', data.invoiceColor);
-    setting('invoice_alternate_row_color', data.invoiceAlternateRowColor);
-    setting('invoice_alternate_row_opacity', data.invoiceAlternateRowOpacity);
     setting('invoice_logo', data.invoiceLogo);
     return true;
   });
@@ -158,6 +136,11 @@ export function registerBillingHandlers() {
           assignedInvoiceId: byStore.get(group.store.id)?.invoiceId,
           assignedInvoiceNumber: byStore.get(group.store.id)?.invoiceNumber,
           assignedInvoiceDate: invoiceDate,
+          issuerId: byStore.get(group.store.id)?.issuerId,
+          issuerSettings: byStore.get(group.store.id)?.issuerSettings,
+          issuerName: byStore.get(group.store.id)?.issuerSettings.issuerName,
+          issuerCode: byStore.get(group.store.id)?.issuerSettings.code,
+          issuerColor: byStore.get(group.store.id)?.issuerSettings.invoiceColor,
         })),
       };
     } catch (error) {

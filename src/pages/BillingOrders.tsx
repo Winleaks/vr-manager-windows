@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Calendar, Loader2, FileText, Printer, Building2, Trash2, ShoppingBag, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../shared/api';
 import DatePicker from 'react-datepicker';
@@ -89,7 +89,9 @@ export function BillingOrders() {
         }));
       }
 
-      const settings = await api.billing.getSettings();
+      const sharedSettings = await api.billing.getSettings();
+      const settings = { ...currentOrder.issuerSettings, invoiceLogo: sharedSettings.invoiceLogo };
+      if (!currentOrder.issuerSettings) throw new Error('Snapshotul emitentului facturii lipsește.');
       const pdfData = {
         invoiceNumber: currentOrder.assignedInvoiceNumber,
         invoiceDate: currentOrder.assignedInvoiceDate,
@@ -110,9 +112,9 @@ export function BillingOrders() {
       };
 
       const buffer = generateInvoicePDF(settings, pdfData);
-      const filename = `Factura_${settings.invoiceSeries || 'FACT'}_${currentOrder.assignedInvoiceNumber}.pdf`;
+      const filename = `Factura_${currentOrder.assignedInvoiceNumber}.pdf`;
 
-      await api.system.savePdfAuto({ buffer, filename });
+      await api.system.savePdfAuto({ buffer, filename, issuerCode: settings.code });
       api.system.uploadPdfToCloud(filename, buffer).catch(console.error);
       
       return true;
@@ -146,7 +148,7 @@ export function BillingOrders() {
     
     setIsGeneratingAll(false);
     if (successCount > 0) {
-      alert(`Au fost generate cu succes ${successCount} facturi noi! (Salvate în Documents/Facturi Vatra Romaneasca și pe Google Drive)`);
+      alert(`Au fost generate cu succes ${successCount} facturi noi în registrele emitentelor și în Google Drive.`);
     }
   };
 
@@ -159,14 +161,12 @@ export function BillingOrders() {
   const handleOpenPdf = async (order: any) => {
     setGeneratingOrderId(order.store.id);
     try {
-      const settings = await api.billing.getSettings();
-      const series = settings.invoiceSeries || 'FACT';
-      const filename = `Factura_${series}_${order.assignedInvoiceNumber}.pdf`;
+      const filename = `Factura_${order.assignedInvoiceNumber}.pdf`;
 
-      const res = await api.system.openPdfFile(filename);
+      const res = await api.system.openPdfFile(filename, order.issuerCode || order.issuerSettings?.code);
       if (res.notFound) {
         await generatePdfForOrder(order, true);
-        await api.system.openPdfFile(filename);
+        await api.system.openPdfFile(filename, order.issuerCode || order.issuerSettings?.code);
       }
     } catch (e: any) {
       alert('Eroare la deschiderea PDF: ' + e.message);
@@ -177,31 +177,24 @@ export function BillingOrders() {
 
   const handleDeleteInvoice = async (order: any) => {
     if (!order.assignedInvoiceNumber) return;
-    if (window.confirm(`Ești sigur că dorești să ștergi factura FACT #${order.assignedInvoiceNumber} pentru magazinul ${order.store.name}?`)) {
+    const reason = window.prompt(`Motivul anulării facturii #${order.assignedInvoiceNumber} pentru ${order.store.name}:`);
+    if (reason?.trim()) {
       try {
-        const settings = await api.billing.getSettings();
-        const series = settings.invoiceSeries || 'FACT';
-        const filename = `Factura_${series}_${order.assignedInvoiceNumber}.pdf`;
-
         const allInvoices = await api.billing.getInvoices();
         const inv = allInvoices.find((i: any) => i.invoice_number === order.assignedInvoiceNumber);
-
-        if (inv) {
-          await api.billing.deleteInvoice(inv.id);
-        }
-
-        await api.system.deletePdfAuto(filename);
+        if (!inv) throw new Error('Factura nu a fost găsită.');
+        await api.billing.cancelInvoice(inv.id, reason.trim());
 
         setSyncResult((prev: any) => ({
           ...prev,
           ordersByStore: prev.ordersByStore.map((o: any) => 
-            o.store.id === order.store.id ? { ...o, assignedInvoiceNumber: undefined, assignedInvoiceDate: undefined } : o
+            o.store.id === order.store.id ? { ...o, billingState: 'cancelled' } : o
           )
         }));
 
-        alert(`Factura #${order.assignedInvoiceNumber} a fost ștearsă din sistem, de pe calculator și din Google Drive!`);
+        alert(`Factura #${order.assignedInvoiceNumber} a fost anulată și păstrată în registru. Anularea nu înlocuiește o notă de credit VAT.`);
       } catch (e: any) {
-        alert('Eroare la ștergere: ' + e.message);
+        alert('Eroare la anulare: ' + e.message);
       }
     }
   };
@@ -296,6 +289,14 @@ export function BillingOrders() {
                 <h2 className="text-lg font-bold text-slate-900">
                   Comenzi Găsite ({syncResult.ordersByStore.length} magazine)
                 </h2>
+                <div className="flex flex-wrap gap-2 ml-4">
+                  {Object.values(syncResult.ordersByStore.reduce((groups: any, order: any) => {
+                    const key = order.issuerId || 'unknown';
+                    groups[key] ||= { name: order.issuerName || 'Emitent neconfigurat', color: order.issuerColor || '#64748B', count: 0 };
+                    groups[key].count += 1;
+                    return groups;
+                  }, {})).map((group: any) => <span key={group.name} className="text-xs font-semibold px-2.5 py-1 rounded-full text-white" style={{ backgroundColor: group.color }}>{group.name}: {group.count}</span>)}
+                </div>
 
                 <button
                   onClick={handleGenerateAll}
@@ -319,8 +320,9 @@ export function BillingOrders() {
                         <div>
                           <div className="font-bold text-slate-800 flex items-center gap-2">
                             {data.store.name}
-                            {isGenerated && <span className="bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5 rounded-full font-medium">FACT {data.assignedInvoiceNumber}</span>}
+                            {isGenerated && <span className="bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5 rounded-full font-medium">{data.assignedInvoiceNumber}</span>}
                           </div>
+                          <div className="mb-2"><span className="inline-flex text-xs font-semibold text-white px-2 py-1 rounded-full" style={{ backgroundColor: data.issuerColor || '#64748B' }}>{data.issuerName || 'Emitent neconfigurat'}{data.billingState === 'ready' && data.estimatedInvoiceReference ? ` · ${data.estimatedInvoiceReference}` : ''}</span></div>
                           <div className="text-sm text-slate-600 mb-2 flex items-center gap-1.5 flex-wrap">
                             <Building2 size={14} className="text-indigo-500" />
                             <span className="font-medium text-slate-800">{data.store.company?.name || 'Companie neasociată'}</span>
@@ -335,14 +337,14 @@ export function BillingOrders() {
                           {isGenerated ? (
                             <button
                               onClick={() => handleOpenPdf(data)}
-                              disabled={isDoing || data.billingState !== 'ready'}
+                              disabled={isDoing}
                               className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors bg-slate-100 hover:bg-slate-200 text-slate-700"
                               title="Deschide PDF-ul facturii"
                             >
                               {isDoing ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
                               Deschide PDF
                             </button>
-                          ) : (
+                          ) : data.billingState === 'ready' ? (
                             <button
                               onClick={() => handleGenerateIndividual(data)}
                               disabled={isDoing}
@@ -351,13 +353,15 @@ export function BillingOrders() {
                               {isDoing ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
                               Generează
                             </button>
+                          ) : (
+                            <span className="text-xs font-semibold text-amber-700">{data.billingState === 'cancelled' ? 'Anulată · reemite din Facturi' : 'Necesită verificare'}</span>
                           )}
 
                           {isGenerated && (
                             <button
                               onClick={() => handleDeleteInvoice(data)}
                               className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                              title="Șterge factura din sistem, disk & cloud"
+                              title="Anulează factura și păstrează numărul în registru"
                             >
                               <Trash2 size={16} />
                             </button>

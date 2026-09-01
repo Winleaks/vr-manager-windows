@@ -1,28 +1,34 @@
-import React, { useState, useEffect } from 'react';
-import { FileText, Users, DollarSign, TrendingUp } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { FileText, DollarSign, TrendingUp } from 'lucide-react';
 import { api } from '../shared/api';
 
 export function BillingDashboard() {
   const [stats, setStats] = useState({ totalInvoiced: 0, totalPaid: 0, totalUnpaid: 0 });
+  const [issuers, setIssuers] = useState<any[]>([]);
+  const [issuerFilter, setIssuerFilter] = useState('all');
 
   useEffect(() => {
-    loadStats();
-  }, []);
+    const loadStats = async () => {
+      try {
+        const data = await api.billing.getStats(issuerFilter === 'all' ? undefined : Number(issuerFilter));
+        setStats(data);
+      } catch (error) {
+        console.error(error);
+      }
+    };
+    void loadStats();
+  }, [issuerFilter]);
 
-  const loadStats = async () => {
-    try {
-      const data = await api.billing.getStats();
-      setStats(data);
-    } catch (e) {
-      console.error(e);
-    }
-  };
+  useEffect(() => { api.billing.getIssuers().then(setIssuers).catch(console.error); }, []);
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
-      <div className="mb-8">
+      <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+        <div>
         <h1 className="text-3xl font-bold text-slate-900">Dashboard Facturare</h1>
         <p className="text-slate-500 mt-2">Sumarul financiar și situația restanțierilor.</p>
+        </div>
+        <label className="text-sm font-medium text-slate-600">Societate emitentă<select value={issuerFilter} onChange={(e) => setIssuerFilter(e.target.value)} className="block mt-1 bg-white border border-slate-200 rounded-xl px-4 py-2"><option value="all">Toate societățile</option>{issuers.map((issuer) => <option key={issuer.id} value={issuer.id}>{issuer.legal_name}</option>)}</select></label>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">

@@ -41,6 +41,7 @@ const VIEWER_ALLOWED_CHANNELS = new Set([
   'billing:getInvoices',
   'billing:getStats',
   'billing:getSettings',
+  'billing:getIssuers',
   'billing:getProducts',
   'billing:getVrBakerStatus',
 ]);

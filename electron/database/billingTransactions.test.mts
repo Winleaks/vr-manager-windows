@@ -5,7 +5,6 @@ import { initialSchema } from './schema.ts';
 import {
   createInvoiceBatchTransaction,
   createWeeklyInvoiceBatchTransaction,
-  deleteUnpaidInvoiceTransaction,
   recordCompanyPaymentTransaction,
   updateInvoiceTransaction,
 } from './repositories/billingTransactions.ts';
@@ -172,7 +171,7 @@ test('rejects cross-company payment without changing balances or payment history
   }
 });
 
-test('invoice editing preserves payment state and paid invoices cannot be deleted', () => {
+test('invoice editing preserves payment state', () => {
   const { connection, companyId, storeId } = createBillingFixture();
   try {
     const [invoice] = createInvoiceBatchTransaction(connection, [
@@ -209,13 +208,6 @@ test('invoice editing preserves payment state and paid invoices cannot be delete
       paidAmount: 6,
       status: 'partial',
     });
-    assert.throws(() => deleteUnpaidInvoiceTransaction(connection, invoice.invoiceId), /plăți înregistrate/);
-
-    const [unpaid] = createInvoiceBatchTransaction(connection, [
-      { storeId, items: [{ productName: 'Neachitat', quantity: 1, unitPrice: 2 }] },
-    ], '2026-08-13');
-    assert.equal(deleteUnpaidInvoiceTransaction(connection, unpaid.invoiceId), true);
-    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoices WHERE id = ?').get(unpaid.invoiceId) as any).value, 0);
   } finally {
     connection.close();
   }

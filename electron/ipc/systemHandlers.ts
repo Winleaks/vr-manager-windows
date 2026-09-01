@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { createVerifiedSnapshot, restoreDb, lastBackupTime } from '../database/db';
-import { getCloudStatus, connectGoogleDrive, saveToCloud, restoreFromCloud, disconnectCloud, deletePdfFromCloud, syncViewerFromCloud } from '../database/cloudSync';
+import { getCloudStatus, connectGoogleDrive, saveToCloud, restoreFromCloud, disconnectCloud, syncViewerFromCloud } from '../database/cloudSync';
 import { handleTrustedIpc } from './trustedHandler';
 import { getDeviceRole, getDeviceState, setDeviceRole, type DeviceRole } from '../device/deviceRole';
 import {
@@ -40,15 +40,25 @@ export function registerSystemHandlers() {
     }
   });
 
-  handleTrustedIpc('save-pdf-auto', async (event, options: { buffer: Uint8Array, filename: string }) => {
+  const invoiceDirectory = (issuerCode?: string) => {
+    const code = typeof issuerCode === 'string' && /^[a-z0-9-]{1,40}$/i.test(issuerCode) ? issuerCode.toLowerCase() : 'goodness';
+    return path.join(app.getPath('documents'), 'VR - Hub Management', 'Invoices', code);
+  };
+
+  handleTrustedIpc('save-pdf-auto', async (_event, options: { buffer: Uint8Array, filename: string, issuerCode?: string }) => {
     try {
-      const documentsPath = app.getPath('documents');
-      const facturiDir = path.join(documentsPath, 'Facturi Vatra Romaneasca');
+      const facturiDir = invoiceDirectory(options.issuerCode);
       if (!fs.existsSync(facturiDir)) {
         fs.mkdirSync(facturiDir, { recursive: true });
       }
       const filePath = resolvePdfPath(facturiDir, options.filename);
-      fs.writeFileSync(filePath, toValidatedPdfBuffer(options.buffer));
+      const temporaryPath = path.join(facturiDir, `.invoice-${randomUUID()}.tmp`);
+      try {
+        fs.writeFileSync(temporaryPath, toValidatedPdfBuffer(options.buffer));
+        fs.renameSync(temporaryPath, filePath);
+      } finally {
+        try { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); } catch {}
+      }
       return { success: true, filePath };
     } catch (err: any) {
       console.error('Eroare salvare auto:', err);
@@ -56,41 +66,24 @@ export function registerSystemHandlers() {
     }
   });
 
-  handleTrustedIpc('open-pdf-file', async (_event, filename: string) => {
+  handleTrustedIpc('open-pdf-file', async (_event, filename: string, issuerCode?: string) => {
     try {
       const documentsPath = app.getPath('documents');
-      const facturiDir = path.join(documentsPath, 'Facturi Vatra Romaneasca');
+      const facturiDir = invoiceDirectory(issuerCode);
       const filePath = resolvePdfPath(facturiDir, filename);
 
       if (fs.existsSync(filePath)) {
         await shell.openPath(filePath);
         return { success: true, filePath };
       }
+      const legacyPath = resolvePdfPath(path.join(documentsPath, 'Facturi Vatra Romaneasca'), filename);
+      if (fs.existsSync(legacyPath)) {
+        await shell.openPath(legacyPath);
+        return { success: true, filePath: legacyPath, legacy: true };
+      }
       return { success: false, notFound: true, filePath };
     } catch (err: any) {
       console.error('Eroare la deschiderea PDF-ului:', err);
-      return { success: false, error: err.message };
-    }
-  });
-
-  handleTrustedIpc('delete-pdf-auto', async (_event, filename: string) => {
-    try {
-      const documentsPath = app.getPath('documents');
-      const facturiDir = path.join(documentsPath, 'Facturi Vatra Romaneasca');
-      const safeFilename = validatePdfFilename(filename);
-      const filePath = resolvePdfPath(facturiDir, safeFilename);
-
-      // 1. Ștergere de pe disk local
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-
-      // 2. Ștergere de pe Google Drive
-      await deletePdfFromCloud(safeFilename);
-
-      return { success: true };
-    } catch (err: any) {
-      console.error('Eroare la ștergerea fișierului PDF:', err);
       return { success: false, error: err.message };
     }
   });

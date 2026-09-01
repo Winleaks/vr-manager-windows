@@ -7,6 +7,11 @@ import {
   requirePositiveInteger,
   requireText,
 } from '../businessValidation.ts';
+import {
+  isIssuerReady,
+  issuerSnapshot,
+  type BillingIssuerRow,
+} from '../billingIssuers.ts';
 
 type SqliteDatabase = Database.Database;
 
@@ -35,6 +40,7 @@ export interface WeeklyInvoiceInput extends InvoiceOrderInput {
 
 export interface CompanyPaymentInput {
   companyId: number;
+  issuerId?: number;
   invoiceId?: number;
   amount: number;
   paymentDate: string;
@@ -47,6 +53,94 @@ interface InvoiceRow {
   id: number;
   total_amount: number;
   paid_amount: number;
+}
+
+function recordIssuerPaymentTransaction(connection: SqliteDatabase, data: CompanyPaymentInput) {
+  const companyId = requirePositiveInteger(data.companyId, 'Compania');
+  const invoiceId = data.invoiceId === undefined ? undefined : requirePositiveInteger(data.invoiceId, 'Factura');
+  const amount = requireFinitePositive(data.amount, 'Suma încasată');
+  const paymentDate = requireIsoDate(data.paymentDate, 'Data plății');
+  const method = requireText(data.method, 'Metoda de plată', 100);
+  const bankName = optionalText(data.bankName, 'Numele băncii', 200);
+  const notes = optionalText(data.notes, 'Observațiile plății');
+
+  return connection.transaction(() => {
+    const company = connection.prepare('SELECT client_id, issuer_id FROM companies WHERE id = ? AND is_active = 1').get(companyId) as { client_id: number; issuer_id: number | null } | undefined;
+    if (!company) throw new Error('Compania nu există sau este inactivă.');
+    let issuerId = data.issuerId === undefined ? undefined : requirePositiveInteger(data.issuerId, 'Emitentul');
+    if (invoiceId) {
+      const identity = connection.prepare(`
+        SELECT ii.issuer_id FROM invoice_identities ii
+        JOIN invoices i ON i.id = ii.invoice_id JOIN stores s ON s.id = i.store_id
+        WHERE ii.invoice_id = ? AND s.company_id = ? AND i.status != 'cancelled'
+      `).get(invoiceId, companyId) as { issuer_id: number } | undefined;
+      if (!identity) throw new Error('Factura nu aparține companiei selectate sau este anulată.');
+      if (issuerId && issuerId !== identity.issuer_id) throw new Error('Factura aparține altei societăți emitente.');
+      issuerId = identity.issuer_id;
+    }
+    issuerId ||= company.issuer_id || undefined;
+    if (!issuerId) throw new Error('Selectează societatea emitentă pentru această încasare.');
+    const issuer = connection.prepare('SELECT id FROM billing_issuers WHERE id = ? AND is_active = 1').get(issuerId);
+    if (!issuer) throw new Error('Societatea emitentă nu este activă.');
+
+    connection.prepare('INSERT OR IGNORE INTO company_issuer_credits (company_id, issuer_id, balance) VALUES (?, ?, 0)').run(companyId, issuerId);
+    const creditRow = connection.prepare('SELECT balance FROM company_issuer_credits WHERE company_id = ? AND issuer_id = ?').get(companyId, issuerId) as { balance: number };
+    const currentCredit = requireFiniteNonNegative(creditRow.balance, 'Soldul de credit al companiei');
+    let remaining = amount;
+    const allocations: Array<{ invoiceId: number | null; amount: number }> = [];
+    const insertPayment = connection.prepare(`
+      INSERT INTO payments (client_id, company_id, invoice_id, issuer_id, amount, payment_date, method, bank_name, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const updateInvoice = connection.prepare('UPDATE invoices SET paid_amount = ?, status = ? WHERE id = ?');
+    const allocateToInvoice = (invoice: InvoiceRow, allocationNotes: string | null) => {
+      const total = requireFiniteNonNegative(invoice.total_amount, 'Totalul facturii');
+      const paid = requireFiniteNonNegative(invoice.paid_amount, 'Suma achitată a facturii');
+      if (paid > total + 0.01) throw new Error('Factura are o sumă achitată mai mare decât totalul.');
+      const allocated = Math.min(remaining, Math.max(0, total - paid));
+      if (allocated <= 0) return;
+      const newPaid = paid + allocated;
+      insertPayment.run(company.client_id, companyId, invoice.id, issuerId, allocated, paymentDate, method, bankName, allocationNotes);
+      updateInvoice.run(newPaid, newPaid >= total - 0.01 ? 'paid' : 'partial', invoice.id);
+      allocations.push({ invoiceId: invoice.id, amount: allocated });
+      remaining -= allocated;
+    };
+
+    if (invoiceId) {
+      const selected = connection.prepare(`
+        SELECT i.id, i.total_amount, i.paid_amount FROM invoices i
+        JOIN stores s ON s.id = i.store_id JOIN invoice_identities ii ON ii.invoice_id = i.id
+        WHERE i.id = ? AND s.company_id = ? AND ii.issuer_id = ? AND i.status != 'cancelled'
+      `).get(invoiceId, companyId, issuerId) as InvoiceRow | undefined;
+      if (!selected) throw new Error('Factura nu aparține companiei și emitentului selectat.');
+      allocateToInvoice(selected, notes);
+    }
+    if (remaining > 0.000001) {
+      const unpaid = connection.prepare(`
+        SELECT i.id, i.total_amount, i.paid_amount FROM invoices i
+        JOIN stores s ON s.id = i.store_id JOIN invoice_identities ii ON ii.invoice_id = i.id
+        WHERE s.company_id = ? AND ii.issuer_id = ? AND i.status != 'cancelled'
+          AND (i.total_amount - i.paid_amount) > 0.01 AND (? IS NULL OR i.id != ?)
+        ORDER BY i.invoice_date ASC, i.id ASC
+      `).all(companyId, issuerId, invoiceId || null, invoiceId || null) as InvoiceRow[];
+      for (const invoice of unpaid) {
+        if (remaining <= 0.000001) break;
+        allocateToInvoice(invoice, notes ? `${notes} (Distribuire automată surplus)` : 'Distribuire automată surplus pe factură restantă');
+      }
+    }
+    if (remaining > 0.000001) {
+      const creditNotes = notes ? `${notes} (Avans / Credit companie)` : 'Avans / Credit înregistrat în balanța companiei';
+      insertPayment.run(company.client_id, companyId, null, issuerId, remaining, paymentDate, method, bankName, creditNotes);
+      connection.prepare('UPDATE company_issuer_credits SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE company_id = ? AND issuer_id = ?').run(currentCredit + remaining, companyId, issuerId);
+      allocations.push({ invoiceId: null, amount: remaining });
+      remaining = 0;
+    }
+    const aggregateCredit = (connection.prepare('SELECT COALESCE(SUM(balance), 0) AS value FROM company_issuer_credits WHERE company_id = ?').get(companyId) as { value: number }).value;
+    connection.prepare('UPDATE companies SET credit_balance = ? WHERE id = ?').run(aggregateCredit, companyId);
+    connection.prepare(`INSERT INTO billing_audit_events (event_type, issuer_id, company_id, details) VALUES ('payment_recorded', ?, ?, ?)`)
+      .run(issuerId, companyId, JSON.stringify({ amount, invoiceId: invoiceId || null, allocations: allocations.length }));
+    return { allocations, issuerId };
+  })();
 }
 
 function validateInvoiceItems(itemsInput: InvoiceItemInput[]) {
@@ -80,6 +174,42 @@ export function createInvoiceBatchTransaction(
   }
 
   return connection.transaction(() => {
+    const hasIssuerSchema = Boolean(connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'billing_issuers'").get());
+    if (hasIssuerSchema) {
+      const resolveStore = connection.prepare(`SELECT s.id, c.issuer_id FROM stores s JOIN companies c ON c.id = s.company_id WHERE s.id = ? AND s.is_active = 1 AND c.is_active = 1`);
+      const getIssuer = connection.prepare('SELECT * FROM billing_issuers WHERE id = ?');
+      const prepared = orders.map((order) => {
+        const storeId = requirePositiveInteger(order.storeId, 'Magazinul');
+        const store = resolveStore.get(storeId) as { id: number; issuer_id: number | null } | undefined;
+        if (!store?.issuer_id) throw new Error('Magazinul nu există sau compania sa nu are emitent.');
+        const issuer = getIssuer.get(store.issuer_id) as BillingIssuerRow | undefined;
+        if (!issuer || !isIssuerReady(issuer)) throw new Error('Emitentul companiei nu este activ și configurat complet.');
+        return { storeId, issuer, ...validateInvoiceItems(order.items) };
+      });
+      const nextByIssuer = new Map<number, number>();
+      const insertInvoice = connection.prepare("INSERT INTO invoices (store_id, invoice_number, invoice_date, total_amount, paid_amount, status) VALUES (?, ?, ?, ?, 0, 'unpaid')");
+      const insertIdentity = connection.prepare('INSERT INTO invoice_identities (invoice_id, issuer_id, series, sequence_number, reference, issuer_snapshot_json) VALUES (?, ?, ?, ?, ?, ?)');
+      const insertItem = connection.prepare('INSERT INTO invoice_items (invoice_id, product_name, product_name_ro, variant_label, unit, quantity, unit_price, total_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      const created: Array<{ invoiceId: number; invoiceNumber: string; totalAmount: number; issuerId: number; issuerSettings: ReturnType<typeof issuerSnapshot> }> = [];
+      for (const row of prepared) {
+        const sequence = nextByIssuer.get(row.issuer.id) ?? row.issuer.next_invoice_number;
+        const reference = `${row.issuer.invoice_series}-${sequence}`;
+        const invoiceId = Number(insertInvoice.run(row.storeId, reference, invoiceDate, row.totalAmount).lastInsertRowid);
+        const snapshot = issuerSnapshot(row.issuer);
+        insertIdentity.run(invoiceId, row.issuer.id, row.issuer.invoice_series, sequence, reference, JSON.stringify(snapshot));
+        for (const item of row.items) insertItem.run(invoiceId, item.productName, item.name_ro, item.variant_label, item.unit, item.quantity, item.unitPrice, item.totalPrice);
+        created.push({ invoiceId, invoiceNumber: reference, totalAmount: row.totalAmount, issuerId: row.issuer.id, issuerSettings: snapshot });
+        nextByIssuer.set(row.issuer.id, sequence + 1);
+      }
+      for (const [issuerId, next] of nextByIssuer) {
+        const original = prepared.find((row) => row.issuer.id === issuerId)!.issuer.next_invoice_number;
+        if (connection.prepare('UPDATE billing_issuers SET next_invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND next_invoice_number = ?').run(next, issuerId, original).changes !== 1) throw new Error('Contorul emitentului a fost modificat concurent.');
+        connection.prepare(`INSERT INTO billing_audit_events (event_type, issuer_id, details) VALUES ('invoice_batch_issued', ?, ?)`)
+          .run(issuerId, JSON.stringify({ count: created.filter((invoice) => invoice.issuerId === issuerId).length, firstSequence: original, nextSequence: next }));
+      }
+      return created;
+    }
+
     const setting = connection.prepare(
       "SELECT value FROM app_settings WHERE key = 'invoice_start_number'",
     ).get() as { value: string } | undefined;
@@ -133,6 +263,87 @@ export function createWeeklyInvoiceBatchTransaction(
     throw new Error('Lotul trebuie să conțină între 1 și 500 de facturi.');
   }
   return connection.transaction(() => {
+    const hasIssuerSchema = Boolean(connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'billing_issuers'").get());
+    if (hasIssuerSchema) {
+      const existingWeek = connection.prepare(`SELECT invoice_id FROM invoice_import_batches WHERE source = 'vrbaker' AND store_external_id = ? AND period_start = ? AND period_end = ?`);
+      const existingOrder = connection.prepare('SELECT external_order_id FROM invoice_source_orders WHERE external_order_id = ?');
+      const resolveStore = connection.prepare(`
+        SELECT s.id, c.issuer_id
+        FROM stores s JOIN companies c ON c.id = s.company_id
+        WHERE s.id = ? AND s.is_active = 1 AND c.is_active = 1
+      `);
+      const getIssuer = connection.prepare('SELECT * FROM billing_issuers WHERE id = ?');
+      const insertInvoice = connection.prepare("INSERT INTO invoices (store_id, invoice_number, invoice_date, total_amount, paid_amount, status) VALUES (?, ?, ?, ?, 0, 'unpaid')");
+      const insertIdentity = connection.prepare(`
+        INSERT INTO invoice_identities (invoice_id, issuer_id, series, sequence_number, reference, issuer_snapshot_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      const insertItem = connection.prepare('INSERT INTO invoice_items (invoice_id, product_name, product_name_ro, variant_label, unit, quantity, unit_price, total_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      const insertBatch = connection.prepare("INSERT INTO invoice_import_batches (invoice_id, source, store_external_id, period_start, period_end, source_fingerprint) VALUES (?, 'vrbaker', ?, ?, ?, ?)");
+      const insertSource = connection.prepare('INSERT INTO invoice_source_orders (batch_id, external_order_id, external_updated_at) VALUES (?, ?, ?)');
+      const prepared: Array<{
+        order: WeeklyInvoiceInput;
+        storeId: number;
+        externalId: string;
+        periodStart: string;
+        periodEnd: string;
+        issuer: BillingIssuerRow;
+        items: ReturnType<typeof validateInvoiceItems>['items'];
+        totalAmount: number;
+      }> = [];
+      const nextByIssuer = new Map<number, number>();
+
+      for (const order of orders) {
+        const storeId = requirePositiveInteger(order.storeId, 'Magazinul');
+        const externalId = requireText(order.storeExternalId, 'ID-ul extern al magazinului', 64);
+        const periodStart = requireIsoDate(order.periodStart, 'Începutul săptămânii');
+        const periodEnd = requireIsoDate(order.periodEnd, 'Sfârșitul săptămânii');
+        const store = resolveStore.get(storeId) as { id: number; issuer_id: number | null } | undefined;
+        if (!store) throw new Error('Magazinul facturat nu există sau este inactiv.');
+        if (!store.issuer_id) throw new Error('Compania magazinului nu are un emitent atribuit.');
+        const issuer = getIssuer.get(store.issuer_id) as BillingIssuerRow | undefined;
+        if (!issuer || !isIssuerReady(issuer)) throw new Error('Emitentul companiei nu este activ și configurat complet.');
+        if (existingWeek.get(externalId, periodStart, periodEnd)) throw new Error('Există deja o factură pentru acest magazin și această săptămână.');
+        if (!Array.isArray(order.sourceOrders) || order.sourceOrders.length === 0) throw new Error('Factura nu conține comenzi sursă.');
+        for (const source of order.sourceOrders) if (existingOrder.get(source.id)) throw new Error('Una dintre comenzile selectate a fost deja facturată.');
+        const validated = validateInvoiceItems(order.items);
+        prepared.push({ order, storeId, externalId, periodStart, periodEnd, issuer, ...validated });
+        if (!nextByIssuer.has(issuer.id)) nextByIssuer.set(issuer.id, issuer.next_invoice_number);
+      }
+
+      const created: Array<{
+        invoiceId: number;
+        invoiceNumber: string;
+        invoiceSequence: number;
+        totalAmount: number;
+        storeExternalId: string;
+        issuerId: number;
+        issuerSettings: ReturnType<typeof issuerSnapshot>;
+      }> = [];
+      for (const row of prepared) {
+        const sequence = nextByIssuer.get(row.issuer.id)!;
+        if (!Number.isSafeInteger(sequence) || sequence <= 0) throw new Error('Contorul emitentului nu este valid.');
+        const reference = `${row.issuer.invoice_series}-${sequence}`;
+        const snapshot = issuerSnapshot(row.issuer);
+        const invoice = insertInvoice.run(row.storeId, reference, invoiceDate, row.totalAmount);
+        const invoiceId = Number(invoice.lastInsertRowid);
+        insertIdentity.run(invoiceId, row.issuer.id, row.issuer.invoice_series, sequence, reference, JSON.stringify(snapshot));
+        for (const item of row.items) insertItem.run(invoiceId, item.productName, item.name_ro, item.variant_label, item.unit, item.quantity, item.unitPrice, item.totalPrice);
+        const batchId = Number(insertBatch.run(invoiceId, row.externalId, row.periodStart, row.periodEnd, requireText(row.order.sourceFingerprint, 'Amprenta sursei', 128)).lastInsertRowid);
+        for (const source of row.order.sourceOrders) insertSource.run(batchId, requireText(source.id, 'ID comandă', 64), requireText(source.updatedAt, 'Actualizarea comenzii', 100));
+        created.push({ invoiceId, invoiceNumber: reference, invoiceSequence: sequence, totalAmount: row.totalAmount, storeExternalId: row.externalId, issuerId: row.issuer.id, issuerSettings: snapshot });
+        nextByIssuer.set(row.issuer.id, sequence + 1);
+      }
+      const updateCounter = connection.prepare('UPDATE billing_issuers SET next_invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND next_invoice_number = ?');
+      for (const [issuerId, next] of nextByIssuer) {
+        const original = prepared.find((row) => row.issuer.id === issuerId)!.issuer.next_invoice_number;
+        if (updateCounter.run(next, issuerId, original).changes !== 1) throw new Error('Contorul emitentului a fost modificat concurent. Reîncearcă emiterea.');
+        connection.prepare(`INSERT INTO billing_audit_events (event_type, issuer_id, details) VALUES ('weekly_invoice_batch_issued', ?, ?)`)
+          .run(issuerId, JSON.stringify({ count: created.filter((invoice) => invoice.issuerId === issuerId).length, firstSequence: original, nextSequence: next }));
+      }
+      return created;
+    }
+
     const setting = connection.prepare("SELECT value FROM app_settings WHERE key = 'invoice_start_number'").get() as { value: string } | undefined;
     let currentNumber = Number.parseInt(setting?.value || '1', 10);
     if (!Number.isSafeInteger(currentNumber) || currentNumber <= 0) throw new Error('Contorul de facturi nu este valid.');
@@ -169,6 +380,8 @@ export function createWeeklyInvoiceBatchTransaction(
 }
 
 export function recordCompanyPaymentTransaction(connection: SqliteDatabase, data: CompanyPaymentInput) {
+  const hasIssuerSchema = Boolean(connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'billing_issuers'").get());
+  if (hasIssuerSchema) return recordIssuerPaymentTransaction(connection, data);
   const companyId = requirePositiveInteger(data.companyId, 'Compania');
   const invoiceId = data.invoiceId === undefined
     ? undefined
@@ -289,9 +502,10 @@ export function updateInvoiceTransaction(
       throw new Error('Factura importată din VR Baker nu poate fi modificată automat; diferențele se rezolvă manual.');
     }
     const existing = connection.prepare(
-      'SELECT paid_amount FROM invoices WHERE id = ?',
-    ).get(invoiceId) as { paid_amount: number } | undefined;
+      'SELECT paid_amount, status FROM invoices WHERE id = ?',
+    ).get(invoiceId) as { paid_amount: number; status: string } | undefined;
     if (!existing) throw new Error('Factura nu există.');
+    if (existing.status === 'cancelled') throw new Error('O factură anulată nu poate fi modificată.');
     const paidAmount = requireFiniteNonNegative(existing.paid_amount, 'Suma achitată a facturii');
     if (paidAmount > totalAmount + 0.01) {
       throw new Error('Totalul facturii nu poate fi mai mic decât suma deja achitată.');
@@ -317,23 +531,71 @@ export function updateInvoiceTransaction(
   })();
 }
 
-export function deleteUnpaidInvoiceTransaction(connection: SqliteDatabase, invoiceIdInput: number) {
+export function cancelInvoiceTransaction(connection: SqliteDatabase, invoiceIdInput: number, reasonInput: string) {
   const invoiceId = requirePositiveInteger(invoiceIdInput, 'Factura');
+  const reason = requireText(reasonInput, 'Motivul anulării', 500);
   return connection.transaction(() => {
-    const invoice = connection.prepare(
-      'SELECT paid_amount FROM invoices WHERE id = ?',
-    ).get(invoiceId) as { paid_amount: number } | undefined;
+    const invoice = connection.prepare('SELECT paid_amount, status FROM invoices WHERE id = ?').get(invoiceId) as { paid_amount: number; status: string } | undefined;
     if (!invoice) throw new Error('Factura nu există.');
-    const paidAmount = requireFiniteNonNegative(invoice.paid_amount, 'Suma achitată a facturii');
-    const paymentCount = (connection.prepare(
-      'SELECT COUNT(*) AS count FROM payments WHERE invoice_id = ?',
-    ).get(invoiceId) as { count: number }).count;
-    if (paidAmount > 0.000001 || paymentCount > 0) {
-      throw new Error('O factură cu plăți înregistrate nu poate fi ștearsă.');
+    if (invoice.status === 'cancelled') throw new Error('Factura este deja anulată.');
+    const paymentCount = (connection.prepare('SELECT COUNT(*) AS count FROM payments WHERE invoice_id = ?').get(invoiceId) as { count: number }).count;
+    if (requireFiniteNonNegative(invoice.paid_amount, 'Suma achitată a facturii') > 0.000001 || paymentCount > 0) {
+      throw new Error('O factură cu plăți înregistrate nu poate fi anulată.');
     }
-    connection.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
-    const result = connection.prepare('DELETE FROM invoices WHERE id = ?').run(invoiceId);
-    if (result.changes !== 1) throw new Error('Factura nu a putut fi ștearsă.');
+    const identity = connection.prepare('SELECT issuer_id FROM invoice_identities WHERE invoice_id = ?').get(invoiceId) as { issuer_id: number } | undefined;
+    if (!identity) throw new Error('Identitatea emitentului facturii lipsește.');
+    connection.prepare(`
+      UPDATE invoices SET status = 'cancelled', cancelled_at = CURRENT_TIMESTAMP, cancellation_reason = ? WHERE id = ?
+    `).run(reason, invoiceId);
+    connection.prepare(`INSERT INTO billing_audit_events (event_type, issuer_id, invoice_id, details) VALUES ('invoice_cancelled', ?, ?, ?)`)
+      .run(identity.issuer_id, invoiceId, JSON.stringify({ reason }));
     return true;
+  })();
+}
+
+export function reissueCancelledWeeklyInvoiceTransaction(connection: SqliteDatabase, invoiceIdInput: number, invoiceDateInput: string) {
+  const cancelledInvoiceId = requirePositiveInteger(invoiceIdInput, 'Factura anulată');
+  const invoiceDate = requireIsoDate(invoiceDateInput, 'Data facturii');
+  return connection.transaction(() => {
+    const original = connection.prepare(`
+      SELECT i.*, s.company_id, c.issuer_id
+      FROM invoices i JOIN stores s ON s.id = i.store_id JOIN companies c ON c.id = s.company_id
+      WHERE i.id = ?
+    `).get(cancelledInvoiceId) as { id: number; store_id: number; total_amount: number; status: string; company_id: number; issuer_id: number | null } | undefined;
+    if (!original || original.status !== 'cancelled') throw new Error('Poate fi reemisă numai o factură anulată.');
+    if (connection.prepare('SELECT 1 FROM invoice_replacements WHERE cancelled_invoice_id = ?').get(cancelledInvoiceId)) {
+      throw new Error('Factura anulată are deja o factură înlocuitoare.');
+    }
+    if (!connection.prepare('SELECT 1 FROM invoice_import_batches WHERE invoice_id = ?').get(cancelledInvoiceId)) {
+      throw new Error('Reemiterea automată este disponibilă numai pentru facturile săptămânale VR Baker.');
+    }
+    if (!original.issuer_id) throw new Error('Compania nu are un emitent atribuit.');
+    const issuer = connection.prepare('SELECT * FROM billing_issuers WHERE id = ?').get(original.issuer_id) as BillingIssuerRow | undefined;
+    if (!issuer || !isIssuerReady(issuer)) throw new Error('Emitentul curent al companiei nu este configurat complet.');
+    const sequence = issuer.next_invoice_number;
+    if (!Number.isSafeInteger(sequence) || sequence <= 0) throw new Error('Contorul emitentului nu este valid.');
+    const reference = `${issuer.invoice_series}-${sequence}`;
+    const invoice = connection.prepare(`
+      INSERT INTO invoices (store_id, invoice_number, invoice_date, total_amount, paid_amount, status, notes)
+      VALUES (?, ?, ?, ?, 0, 'unpaid', ?)
+    `).run(original.store_id, reference, invoiceDate, original.total_amount, `Înlocuiește factura anulată #${cancelledInvoiceId}`);
+    const replacementInvoiceId = Number(invoice.lastInsertRowid);
+    const snapshot = issuerSnapshot(issuer);
+    connection.prepare(`
+      INSERT INTO invoice_identities (invoice_id, issuer_id, series, sequence_number, reference, issuer_snapshot_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(replacementInvoiceId, issuer.id, issuer.invoice_series, sequence, reference, JSON.stringify(snapshot));
+    connection.prepare(`
+      INSERT INTO invoice_items (invoice_id, product_name, product_name_ro, variant_label, unit, quantity, unit_price, total_price)
+      SELECT ?, product_name, product_name_ro, variant_label, unit, quantity, unit_price, total_price
+      FROM invoice_items WHERE invoice_id = ? ORDER BY id
+    `).run(replacementInvoiceId, cancelledInvoiceId);
+    connection.prepare('INSERT INTO invoice_replacements (cancelled_invoice_id, replacement_invoice_id) VALUES (?, ?)').run(cancelledInvoiceId, replacementInvoiceId);
+    if (connection.prepare('UPDATE billing_issuers SET next_invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND next_invoice_number = ?').run(sequence + 1, issuer.id, sequence).changes !== 1) {
+      throw new Error('Contorul emitentului a fost modificat concurent.');
+    }
+    connection.prepare(`INSERT INTO billing_audit_events (event_type, issuer_id, company_id, invoice_id, details) VALUES ('invoice_reissued', ?, ?, ?, ?)`)
+      .run(issuer.id, original.company_id, replacementInvoiceId, JSON.stringify({ cancelledInvoiceId }));
+    return { invoiceId: replacementInvoiceId, invoiceNumber: reference, invoiceDate, issuerId: issuer.id, issuerSettings: snapshot };
   })();
 }

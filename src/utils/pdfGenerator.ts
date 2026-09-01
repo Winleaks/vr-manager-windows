@@ -1,6 +1,6 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { registerFonts, fixRomanianDiacritics } from "./fonts/arialFonts";
+import { registerFonts, fixRomanianDiacritics } from "./fonts/arialFonts.ts";
 
 // Helper pentru conversie Hex în RGB
 function hexToRgb(hex: string): [number, number, number] {
@@ -78,7 +78,10 @@ export function generateInvoicePDF(
   doc.setFont("Arial", "normal");
   doc.setTextColor(100, 116, 139); // Slate-500
   const series = settings.invoiceSeries || 'INV';
-  doc.text(`Ref: ${series} - #${invoiceData.invoiceNumber}`, 196, currentY + 8.5, { align: "right" });
+  const invoiceReference = invoiceData.invoiceNumber.startsWith(`${series}-`)
+    ? invoiceData.invoiceNumber
+    : `${series}-${invoiceData.invoiceNumber}`;
+  doc.text(`Ref: #${invoiceReference}`, 196, currentY + 8.5, { align: "right" });
   doc.text(`Date: ${invoiceData.invoiceDate}`, 196, currentY + 12.5, { align: "right" });
 
   currentY += 18;
@@ -131,8 +134,11 @@ export function generateInvoicePDF(
     doc.text(`CRN: ${settings.issuerCrn}`, leftX, issuerY);
     issuerY += 3.6;
   }
-  if (settings.issuerVat) {
+  if (settings.vatRegistered !== false && settings.issuerVat) {
     doc.text(`VAT No: ${settings.issuerVat}`, leftX, issuerY);
+    issuerY += 3.6;
+  } else if (settings.vatRegistered === false) {
+    doc.text('Not VAT registered', leftX, issuerY);
     issuerY += 3.6;
   }
 
@@ -211,7 +217,10 @@ export function generateInvoicePDF(
   currentY = Math.max(issuerY, clientY) + 3;
 
   // --- TABEL PRODUSE COMPACT ---
-  const tableColumn = ["#", "Description", "Unit", "Qty", "Unit Price (£)", "VAT", "Total (£)"];
+  const includesVat = settings.vatRegistered !== false;
+  const tableColumn = includesVat
+    ? ["#", "Description", "Unit", "Qty", "Unit Price (£)", "VAT", "Total (£)"]
+    : ["#", "Description", "Unit", "Qty", "Unit Price (£)", "Total (£)"];
   const tableRows: any[] = [];
 
   invoiceData.items.forEach((item, index) => {
@@ -225,15 +234,16 @@ export function generateInvoicePDF(
       descriptionText += `\n${fixRomanianDiacritics(item.name_ro).toLocaleUpperCase('ro-RO')}`;
     }
 
-    tableRows.push([
+    const row = [
       (index + 1).toString(),
       descriptionText,
       fixRomanianDiacritics(item.unit || "buc"),
       item.quantity.toString(),
       item.unitPrice.toFixed(2),
-      "0%",
-      item.totalPrice.toFixed(2)
-    ]);
+    ];
+    if (includesVat) row.push('0%');
+    row.push(item.totalPrice.toFixed(2));
+    tableRows.push(row);
   });
 
   // Calcul nuanță rânduri alternate bazat pe culoare și opacitate din setări
@@ -275,7 +285,7 @@ export function generateInvoicePDF(
     alternateRowStyles: {
       fillColor: [altR, altG, altB]
     },
-    columnStyles: {
+    columnStyles: includesVat ? {
       0: { halign: 'center', cellWidth: 9 },
       1: { cellWidth: 77 },
       2: { halign: 'center', cellWidth: 14 },
@@ -283,6 +293,13 @@ export function generateInvoicePDF(
       4: { halign: 'right', cellWidth: 22 },
       5: { halign: 'center', cellWidth: 16 },
       6: { halign: 'right', cellWidth: 28 }
+    } : {
+      0: { halign: 'center', cellWidth: 9 },
+      1: { cellWidth: 89 },
+      2: { halign: 'center', cellWidth: 14 },
+      3: { halign: 'right', cellWidth: 18 },
+      4: { halign: 'right', cellWidth: 24 },
+      5: { halign: 'right', cellWidth: 28 }
     },
     margin: { left: 14, right: 14 }
   });
@@ -304,9 +321,9 @@ export function generateInvoicePDF(
   doc.text(`£${invoiceData.totalAmount.toFixed(2)}`, 191, finalTableY + 4.5, { align: "right" });
 
   doc.setTextColor(100, 116, 139);
-  doc.text("VAT (0%):", summaryBoxX + 5, finalTableY + 9);
+  doc.text(includesVat ? "VAT (0%):" : "VAT:", summaryBoxX + 5, finalTableY + 9);
   doc.setTextColor(15, 23, 42);
-  doc.text("£0.00", 191, finalTableY + 9, { align: "right" });
+  doc.text(includesVat ? "£0.00" : "Not charged", 191, finalTableY + 9, { align: "right" });
 
   doc.setFontSize(9);
   doc.setFont("Arial", "bold");

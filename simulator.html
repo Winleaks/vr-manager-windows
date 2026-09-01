@@ -29,6 +29,26 @@
             cash_day_closed: 0,
           },
         ];
+        let billingIssuers = [
+          {
+            id: 1, code: 'goodness', legal_name: 'THE GOODNESS BAKER LTD', address: 'Demo address, London',
+            company_number: '12345678', vat_registered: 1, vat_number: 'GB123456789',
+            bank_name_1: 'Demo Bank', account_number_1: '12345678', sort_code_1: '12-34-56',
+            bank_name_2: '', account_number_2: '', sort_code_2: '', footer: 'Thank you for your business.',
+            invoice_series: 'TGB', next_invoice_number: 101, color: '#4F46E5', alternate_row_color: '#EEF2FF',
+            alternate_row_opacity: 5, is_active: 1, is_default: 1, isReady: true,
+          },
+          {
+            id: 2, code: 'vatra', legal_name: 'VATRA ROMANEASCA LTD', address: '', company_number: '',
+            vat_registered: 0, vat_number: '', bank_name_1: '', account_number_1: '', sort_code_1: '',
+            bank_name_2: '', account_number_2: '', sort_code_2: '', footer: '', invoice_series: 'VR',
+            next_invoice_number: 1, color: '#B45309', alternate_row_color: '#FFF7ED', alternate_row_opacity: 5,
+            is_active: 0, is_default: 0, isReady: false,
+          },
+        ];
+        let billingCompanies = [
+          { id: 1, name: 'Client Demo LTD', issuer_id: 1, stores: [{ id: 1, name: 'Magazin Demo' }] },
+        ];
         const cashSnapshot = () => {
           const totalIn = transactions.filter((item) => item.type === 'IN').reduce((sum, item) => sum + Number(item.amount), 0);
           const totalOut = transactions.filter((item) => item.type === 'OUT').reduce((sum, item) => sum + Number(item.amount), 0);
@@ -50,7 +70,7 @@
         };
         const handlers = {
           'system.getDeviceRole': async () => ({ role: 'writer' }),
-          'system.getAppVersion': async () => '0.1.78',
+          'system.getAppVersion': async () => '0.1.85',
           'system.getLastBackupTime': async () => null,
           'system.getSyncStatus': async () => ({ active: false, lastSync: null, role: 'writer', message: 'Simulator local' }),
           'system.getUpdateState': async () => ({ status: 'idle', updateInfo: null, progress: 0, error: null }),
@@ -106,6 +126,29 @@
           'billing.getInvoices': async () => [],
           'billing.getClients': async () => [],
           'billing.getProducts': async () => [],
+          'billing.getIssuers': async () => billingIssuers.map((issuer) => ({ ...issuer })),
+          'billing.getAllCompaniesAndStores': async () => billingCompanies.map((company) => ({ ...company, stores: company.stores.slice() })),
+          'billing.getSettings': async () => ({ invoiceLogo: '' }),
+          'billing.getVrBakerStatus': async () => ({ endpoint: 'https://demo.supabase.co/functions/v1/external-api', hasToken: true }),
+          'billing.updateIssuer': async (input) => {
+            billingIssuers = billingIssuers.map((issuer) => issuer.id === input.id ? {
+              ...issuer, legal_name: input.legalName, address: input.address, company_number: input.companyNumber,
+              vat_number: input.vatNumber, bank_name_1: input.bankName1, account_number_1: input.accountNumber1,
+              sort_code_1: input.sortCode1, bank_name_2: input.bankName2, account_number_2: input.accountNumber2,
+              sort_code_2: input.sortCode2, footer: input.footer, invoice_series: input.invoiceSeries,
+              next_invoice_number: input.nextInvoiceNumber, color: input.color, alternate_row_color: input.alternateRowColor,
+              alternate_row_opacity: input.alternateRowOpacity, is_active: input.isActive ? 1 : 0,
+              isReady: Boolean(input.legalName && input.address && input.companyNumber && input.invoiceSeries && input.nextInvoiceNumber && input.bankName1 && input.accountNumber1 && input.sortCode1),
+            } : issuer);
+            return { success: true };
+          },
+          'billing.saveSettings': async () => ({ success: true }),
+          'billing.assignCompanyIssuer': async (companyId, issuerId) => {
+            billingCompanies = billingCompanies.map((company) => company.id === companyId ? { ...company, issuer_id: issuerId } : company);
+            return { success: true };
+          },
+          'billing.configureVrBakerToken': async () => ({ success: true, message: 'Token demonstrativ validat.' }),
+          'billing.testVrBakerConnection': async () => ({ success: true, message: 'Conexiune demonstrativă reușită.' }),
         };
         window.desktopApi = new Proxy({}, {
           get(_target, group) {

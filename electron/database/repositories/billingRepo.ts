@@ -1,14 +1,22 @@
 import { db } from '../db';
 import {
   createInvoiceBatchTransaction,
-  deleteUnpaidInvoiceTransaction,
   recordCompanyPaymentTransaction,
   updateInvoiceTransaction,
   createWeeklyInvoiceBatchTransaction,
+  cancelInvoiceTransaction,
+  reissueCancelledWeeklyInvoiceTransaction,
   type WeeklyInvoiceInput,
   type CompanyPaymentInput,
   type InvoiceOrderInput,
 } from './billingTransactions';
+import {
+  assignCompanyIssuer as assignCompanyIssuerTransaction,
+  getBillingIssuers as readBillingIssuers,
+  invoiceSettingsFromIdentity,
+  updateBillingIssuer as updateBillingIssuerTransaction,
+  type UpdateBillingIssuerInput,
+} from '../billingIssuers';
 import type { VrBakerCompany, VrBakerProduct, VrBakerStore } from '../../integrations/vrBakerApiClient';
 
 // Settings
@@ -23,6 +31,18 @@ export function setAppSetting(key: string, value: string) {
 
 export function deleteAppSetting(key: string) {
   db.prepare('DELETE FROM app_settings WHERE key = ?').run(key);
+}
+
+export function getBillingIssuers() {
+  return readBillingIssuers(db);
+}
+
+export function updateBillingIssuer(data: UpdateBillingIssuerInput) {
+  return updateBillingIssuerTransaction(db, data);
+}
+
+export function assignCompanyIssuer(companyId: number, issuerId: number) {
+  return assignCompanyIssuerTransaction(db, companyId, issuerId);
 }
 
 // Clients
@@ -56,8 +76,8 @@ export function createCompany(
   bankName: string | null
 ) {
   const stmt = db.prepare(`
-    INSERT INTO companies (client_id, name, cui, reg_com, address, bank_account, bank_name)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO companies (client_id, name, cui, reg_com, address, bank_account, bank_name, issuer_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT id FROM billing_issuers WHERE is_default = 1))
   `);
   const info = stmt.run(clientId, name, cui, regCom, address, bankAccount, bankName);
   return info.lastInsertRowid;
@@ -155,8 +175,8 @@ export function upsertCompanyFromSupabase(companyData: { id: string, name: strin
     }
     
     const info = db.prepare(`
-      INSERT INTO companies (client_id, name, cui, reg_com, address, supabase_company_id)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO companies (client_id, name, cui, reg_com, address, supabase_company_id, issuer_id)
+      VALUES (?, ?, ?, ?, ?, ?, (SELECT id FROM billing_issuers WHERE is_default = 1))
     `).run(
       client.id,
       companyData.name,
@@ -187,7 +207,7 @@ export function upsertStoreFromSupabase(storeData: { id: string, name: string, a
   if (!companyId) {
     let unassignedComp = db.prepare("SELECT id FROM companies WHERE supabase_company_id = 'unassigned_company'").get() as any;
     if (!unassignedComp) {
-      const info = db.prepare("INSERT INTO companies (client_id, name, supabase_company_id) VALUES (1, 'Magazine Neasociate', 'unassigned_company')").run();
+      const info = db.prepare("INSERT INTO companies (client_id, name, supabase_company_id, issuer_id) VALUES (1, 'Magazine Neasociate', 'unassigned_company', (SELECT id FROM billing_issuers WHERE is_default = 1))").run();
       unassignedComp = { id: info.lastInsertRowid };
     }
     companyId = unassignedComp.id;
@@ -217,12 +237,17 @@ export function cleanupOrphanCompanies() {
         AND (cui IS NULL OR cui = '')
         AND (reg_com IS NULL OR reg_com = '')
     `).run();
-  } catch(e) {}
+  } catch {}
 }
 
 export function getAllCompaniesAndStores() {
   cleanupOrphanCompanies();
-  const companies = db.prepare('SELECT * FROM companies ORDER BY name').all() as any[];
+  const companies = db.prepare(`
+    SELECT c.*, bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color,
+           bi.is_default AS issuer_is_default
+    FROM companies c LEFT JOIN billing_issuers bi ON bi.id = c.issuer_id
+    ORDER BY c.name
+  `).all() as any[];
   const stores = db.prepare('SELECT * FROM stores ORDER BY name').all() as any[];
 
   return companies.map(c => {
@@ -236,7 +261,7 @@ export function getAllCompaniesAndStores() {
       const res = db.prepare(`
         SELECT COUNT(*) as cnt, SUM(total_amount - paid_amount) as unpaid 
         FROM invoices 
-        WHERE store_id IN (${placeholders}) AND status != 'paid' AND (total_amount - paid_amount) > 0
+        WHERE store_id IN (${placeholders}) AND status NOT IN ('paid', 'cancelled') AND (total_amount - paid_amount) > 0
       `).get(...storeIds) as any;
       unpaidInvoicesCount = res?.cnt || 0;
       unpaidTotal = res?.unpaid || 0;
@@ -245,6 +270,11 @@ export function getAllCompaniesAndStores() {
     return {
       ...c,
       credit_balance: c.credit_balance || 0,
+      issuerCredits: db.prepare(`
+        SELECT cic.issuer_id, cic.balance, bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color
+        FROM company_issuer_credits cic JOIN billing_issuers bi ON bi.id = cic.issuer_id
+        WHERE cic.company_id = ? ORDER BY bi.is_default DESC, bi.legal_name
+      `).all(c.id),
       stores: compStores,
       unpaidInvoicesCount,
       unpaidTotal
@@ -253,7 +283,10 @@ export function getAllCompaniesAndStores() {
 }
 
 export function getCompanyProfileDetails(companyId: number) {
-  const company = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId) as any;
+  const company = db.prepare(`
+    SELECT c.*, bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color
+    FROM companies c LEFT JOIN billing_issuers bi ON bi.id = c.issuer_id WHERE c.id = ?
+  `).get(companyId) as any;
   if (!company) return null;
 
   const stores = db.prepare('SELECT * FROM stores WHERE company_id = ? ORDER BY name').all(companyId) as any[];
@@ -263,9 +296,14 @@ export function getCompanyProfileDetails(companyId: number) {
   if (storeIds.length > 0) {
     const placeholders = storeIds.map(() => '?').join(',');
     invoices = db.prepare(`
-      SELECT i.*, s.name as store_name
+      SELECT i.*, s.name as store_name, ii.issuer_id, ii.series AS invoice_series,
+             ii.sequence_number AS invoice_sequence, ii.reference AS invoice_reference,
+             ii.issuer_snapshot_json, bi.legal_name AS issuer_name, bi.code AS issuer_code,
+             bi.color AS issuer_color
       FROM invoices i
       JOIN stores s ON i.store_id = s.id
+      LEFT JOIN invoice_identities ii ON ii.invoice_id = i.id
+      LEFT JOIN billing_issuers bi ON bi.id = ii.issuer_id
       WHERE i.store_id IN (${placeholders})
       ORDER BY i.invoice_date DESC, i.id DESC
     `).all(...storeIds) as any[];
@@ -274,6 +312,7 @@ export function getCompanyProfileDetails(companyId: number) {
       const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id) as any[];
       return {
         ...inv,
+        issuer_settings: invoiceSettingsFromIdentity(inv),
         items: items.map(it => ({
           id: it.id,
           productName: it.product_name,
@@ -289,16 +328,18 @@ export function getCompanyProfileDetails(companyId: number) {
   }
 
   const payments = db.prepare(`
-    SELECT p.*, i.invoice_number 
+    SELECT p.*, i.invoice_number, bi.legal_name AS issuer_name, bi.code AS issuer_code
     FROM payments p
     LEFT JOIN invoices i ON p.invoice_id = i.id
+    LEFT JOIN billing_issuers bi ON bi.id = p.issuer_id
     WHERE p.company_id = ?
     ORDER BY p.payment_date DESC, p.id DESC
   `).all(companyId) as any[];
 
-  const totalInvoiced = invoices.reduce((acc, inv) => acc + (inv.total_amount || 0), 0);
-  const totalPaid = invoices.reduce((acc, inv) => acc + (inv.paid_amount || 0), 0);
-  const unpaidInvoices = invoices.filter(inv => inv.status !== 'paid' && (inv.total_amount - inv.paid_amount) > 0);
+  const activeInvoices = invoices.filter((inv) => inv.status !== 'cancelled');
+  const totalInvoiced = activeInvoices.reduce((acc, inv) => acc + (inv.total_amount || 0), 0);
+  const totalPaid = activeInvoices.reduce((acc, inv) => acc + (inv.paid_amount || 0), 0);
+  const unpaidInvoices = activeInvoices.filter(inv => inv.status !== 'paid' && (inv.total_amount - inv.paid_amount) > 0);
   const totalUnpaid = unpaidInvoices.reduce((acc, inv) => acc + ((inv.total_amount || 0) - (inv.paid_amount || 0)), 0);
 
   return {
@@ -306,6 +347,12 @@ export function getCompanyProfileDetails(companyId: number) {
       ...company,
       credit_balance: company.credit_balance || 0
     },
+    issuerCredits: db.prepare(`
+      SELECT cic.issuer_id, cic.balance, bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color
+      FROM company_issuer_credits cic JOIN billing_issuers bi ON bi.id = cic.issuer_id
+      WHERE cic.company_id = ? ORDER BY bi.is_default DESC, bi.legal_name
+    `).all(companyId),
+    issuers: getBillingIssuers(),
     stores,
     invoices,
     unpaidInvoices,
@@ -333,9 +380,12 @@ export function getStoreBySupabaseId(supabaseStoreId: string) {
 }
 
 // Invoices
-export function getInvoicesByDateRange(startDate?: string, endDate?: string) {
+export function getInvoicesByDateRange(startDate?: string, endDate?: string, issuerId?: number) {
   let query = `
     SELECT i.*, 
+           ii.issuer_id, ii.series AS invoice_series, ii.sequence_number AS invoice_sequence,
+           ii.reference AS invoice_reference, ii.issuer_snapshot_json,
+           bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color,
            s.name as store_name, s.address as store_address, s.phone as store_phone,
            c.name as company_name, c.cui as company_cui, c.reg_com as company_reg_com, c.address as company_address, c.phone as company_phone, c.bank_account as company_bank_account, c.bank_name as company_bank_name,
            cl.name as client_name
@@ -343,13 +393,21 @@ export function getInvoicesByDateRange(startDate?: string, endDate?: string) {
     JOIN stores s ON i.store_id = s.id
     JOIN companies c ON s.company_id = c.id
     JOIN clients cl ON c.client_id = cl.id
+    LEFT JOIN invoice_identities ii ON ii.invoice_id = i.id
+    LEFT JOIN billing_issuers bi ON bi.id = ii.issuer_id
   `;
   const params: any[] = [];
+  const conditions: string[] = [];
   if (startDate && endDate) {
-    query += ` WHERE i.invoice_date >= ? AND i.invoice_date <= ?`;
+    conditions.push('i.invoice_date >= ? AND i.invoice_date <= ?');
     params.push(startDate, endDate);
   }
-  query += ` ORDER BY i.invoice_date DESC, i.invoice_number DESC`;
+  if (issuerId !== undefined) {
+    conditions.push('ii.issuer_id = ?');
+    params.push(issuerId);
+  }
+  if (conditions.length) query += ` WHERE ${conditions.join(' AND ')}`;
+  query += ` ORDER BY i.invoice_date DESC, ii.sequence_number DESC, i.id DESC`;
 
   const invoices = db.prepare(query).all(...params) as any[];
 
@@ -357,6 +415,7 @@ export function getInvoicesByDateRange(startDate?: string, endDate?: string) {
     const items = db.prepare(`SELECT * FROM invoice_items WHERE invoice_id = ?`).all(inv.id) as any[];
     return {
       ...inv,
+      issuer_settings: invoiceSettingsFromIdentity(inv),
       items: items.map(item => ({
         id: item.id,
         productName: item.product_name,
@@ -373,23 +432,25 @@ export function getInvoicesByDateRange(startDate?: string, endDate?: string) {
 
 export function updateInvoiceWithItems(
   id: number,
-  invoiceNumber: string,
   invoiceDate: string,
   items: { productName: string, name_ro?: string, variant_label?: string, unit?: string, quantity: number, unitPrice: number, totalPrice: number }[]
 ) {
-  return updateInvoiceTransaction(db, id, invoiceNumber, invoiceDate, items);
+  const invoice = db.prepare('SELECT invoice_number FROM invoices WHERE id = ?').get(id) as { invoice_number: string } | undefined;
+  if (!invoice) throw new Error('Factura nu există.');
+  return updateInvoiceTransaction(db, id, invoice.invoice_number, invoiceDate, items);
 }
 
 
 // Dashboard calculations
-export function getBillingStats() {
+export function getBillingStats(issuerId?: number) {
   const result = db.prepare(`
     SELECT 
       SUM(total_amount) as total_invoiced,
       SUM(paid_amount) as total_paid,
       SUM(total_amount - paid_amount) as total_unpaid
-    FROM invoices
-  `).get() as any;
+    FROM invoices i LEFT JOIN invoice_identities ii ON ii.invoice_id = i.id
+    WHERE i.status != 'cancelled' AND (? IS NULL OR ii.issuer_id = ?)
+  `).get(issuerId ?? null, issuerId ?? null) as any;
   return {
     totalInvoiced: result?.total_invoiced || 0,
     totalPaid: result?.total_paid || 0,
@@ -397,8 +458,12 @@ export function getBillingStats() {
   };
 }
 
-export function deleteInvoice(invoiceId: number) {
-  return deleteUnpaidInvoiceTransaction(db, invoiceId);
+export function cancelInvoice(invoiceId: number, reason: string) {
+  return cancelInvoiceTransaction(db, invoiceId, reason);
+}
+
+export function reissueCancelledInvoice(invoiceId: number, invoiceDate: string) {
+  return reissueCancelledWeeklyInvoiceTransaction(db, invoiceId, invoiceDate);
 }
 
 export function getCloudProducts() {
@@ -481,16 +546,49 @@ export function syncEntitiesFromVrBaker(companies: VrBakerCompany[], stores: VrB
 
 export function getWeeklyImportState(storeExternalId: string, periodStart: string, periodEnd: string, fingerprint: string) {
   const row = db.prepare(`
-    SELECT b.invoice_id, b.source_fingerprint, i.invoice_number, i.invoice_date
-    FROM invoice_import_batches b JOIN invoices i ON i.id = b.invoice_id
+    SELECT b.invoice_id AS source_invoice_id, b.source_fingerprint,
+           COALESCE(r.replacement_invoice_id, b.invoice_id) AS invoice_id,
+           current.invoice_number, current.invoice_date, current.status,
+           ii.issuer_id, ii.reference AS invoice_reference, ii.issuer_snapshot_json,
+           bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color
+    FROM invoice_import_batches b
+    JOIN invoices original ON original.id = b.invoice_id
+    LEFT JOIN invoice_replacements r ON r.cancelled_invoice_id = original.id
+    JOIN invoices current ON current.id = COALESCE(r.replacement_invoice_id, original.id)
+    LEFT JOIN invoice_identities ii ON ii.invoice_id = current.id
+    LEFT JOIN billing_issuers bi ON bi.id = ii.issuer_id
     WHERE b.source = 'vrbaker' AND b.store_external_id = ? AND b.period_start = ? AND b.period_end = ?
   `).get(storeExternalId, periodStart, periodEnd) as any;
   if (!row) return { billingState: 'ready' as const };
   return {
-    billingState: row.source_fingerprint === fingerprint ? 'invoiced' as const : 'source_changed' as const,
+    billingState: row.status === 'cancelled'
+      ? 'cancelled' as const
+      : row.source_fingerprint === fingerprint ? 'invoiced' as const : 'source_changed' as const,
     assignedInvoiceId: row.invoice_id,
     assignedInvoiceNumber: row.invoice_number,
     assignedInvoiceDate: row.invoice_date,
+    issuerId: row.issuer_id,
+    issuerName: row.issuer_name,
+    issuerCode: row.issuer_code,
+    issuerColor: row.issuer_color,
+    issuerSettings: invoiceSettingsFromIdentity(row),
+  };
+}
+
+export function getIssuerPreviewByStoreExternalId(storeExternalId: string) {
+  const row = db.prepare(`
+    SELECT bi.* FROM stores s JOIN companies c ON c.id = s.company_id
+    JOIN billing_issuers bi ON bi.id = c.issuer_id
+    WHERE s.supabase_store_id = ?
+  `).get(storeExternalId) as any;
+  if (!row) return null;
+  return {
+    issuerId: row.id,
+    issuerName: row.legal_name,
+    issuerCode: row.code,
+    issuerColor: row.color,
+    issuerReady: Boolean(row.is_active && row.address && row.company_number && row.invoice_series && row.bank_name_1 && row.account_number_1 && row.sort_code_1 && (!row.vat_registered || row.vat_number)),
+    estimatedInvoiceReference: row.invoice_series ? `${row.invoice_series}-${row.next_invoice_number}` : null,
   };
 }
 

@@ -10,6 +10,7 @@ test('writer may invoke every registered channel', () => {
 test('viewer can read data and control its local role', () => {
   assert.equal(isChannelAllowedForRole('viewer', 'get-raw-materials'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:getInvoices'), true);
+  assert.equal(isChannelAllowedForRole('viewer', 'billing:getIssuers'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'set-device-role'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'sync-viewer-now'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'get-update-state'), true);
@@ -24,6 +25,10 @@ test('viewer denies business writes, cloud publishing and unknown channels', () 
   assert.equal(isChannelAllowedForRole('viewer', 'billing:testVrBakerConnection'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:previewWeeklyInvoices'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:createWeeklyInvoices'), false);
+  assert.equal(isChannelAllowedForRole('viewer', 'billing:updateIssuer'), false);
+  assert.equal(isChannelAllowedForRole('viewer', 'billing:assignCompanyIssuer'), false);
+  assert.equal(isChannelAllowedForRole('viewer', 'billing:cancelInvoice'), false);
+  assert.equal(isChannelAllowedForRole('viewer', 'billing:reissueCancelledInvoice'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'initialize-cash-balance'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'update-cash-receipt'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'delete-cash-transaction'), false);

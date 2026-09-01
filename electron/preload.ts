@@ -44,10 +44,9 @@ export const desktopApi = {
     getAppVersion: () => ipcRenderer.invoke('system:getAppVersion'),
     saveFile: (options: { buffer: Uint8Array; defaultPath: string; filters: any[] }) =>
       ipcRenderer.invoke('save-file', options),
-    savePdfAuto: (options: { buffer: Uint8Array; filename: string }) =>
+    savePdfAuto: (options: { buffer: Uint8Array; filename: string; issuerCode?: string }) =>
       ipcRenderer.invoke('save-pdf-auto', options),
-    openPdfFile: (filename: string) => ipcRenderer.invoke('open-pdf-file', filename),
-    deletePdfAuto: (filename: string) => ipcRenderer.invoke('delete-pdf-auto', filename),
+    openPdfFile: (filename: string, issuerCode?: string) => ipcRenderer.invoke('open-pdf-file', filename, issuerCode),
     manualBackup: () => ipcRenderer.invoke('manual-backup'),
     restoreBackup: () => ipcRenderer.invoke('restore-backup'),
     getLastBackupTime: () => ipcRenderer.invoke('get-last-backup-time'),
@@ -121,11 +120,15 @@ export const desktopApi = {
     getAllCompaniesAndStores: () => ipcRenderer.invoke('billing:getAllCompaniesAndStores'),
     getCompanyProfile: (companyId: number) => ipcRenderer.invoke('billing:getCompanyProfile', companyId),
     recordCompanyPayment: (data: any) => ipcRenderer.invoke('billing:recordCompanyPayment', data),
-    getInvoices: (startDate?: string, endDate?: string) =>
-      ipcRenderer.invoke('billing:getInvoices', startDate, endDate),
+    getInvoices: (startDate?: string, endDate?: string, issuerId?: number) =>
+      ipcRenderer.invoke('billing:getInvoices', startDate, endDate, issuerId),
     updateInvoice: (data: any) => ipcRenderer.invoke('billing:updateInvoice', data),
-    deleteInvoice: (invoiceId: number) => ipcRenderer.invoke('billing:deleteInvoice', invoiceId),
-    getStats: () => ipcRenderer.invoke('billing:getStats'),
+    cancelInvoice: (invoiceId: number, reason: string) => ipcRenderer.invoke('billing:cancelInvoice', { invoiceId, reason }),
+    reissueCancelledInvoice: (invoiceId: number) => ipcRenderer.invoke('billing:reissueCancelledInvoice', invoiceId),
+    getStats: (issuerId?: number) => ipcRenderer.invoke('billing:getStats', issuerId),
+    getIssuers: () => ipcRenderer.invoke('billing:getIssuers'),
+    updateIssuer: (data: any) => ipcRenderer.invoke('billing:updateIssuer', data),
+    assignCompanyIssuer: (companyId: number, issuerId: number) => ipcRenderer.invoke('billing:assignCompanyIssuer', { companyId, issuerId }),
     getSettings: () => ipcRenderer.invoke('billing:getSettings'),
     saveSettings: (data: any) => ipcRenderer.invoke('billing:saveSettings', data),
     getVrBakerStatus: () => ipcRenderer.invoke('billing:getVrBakerStatus'),

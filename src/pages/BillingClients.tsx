@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { 
   Building2, Store, RefreshCw, AlertCircle, FileText, ArrowLeft, 
-  DollarSign, CheckCircle2, Clock, PlusCircle, CreditCard, Banknote, 
-  ChevronRight, Printer, AlertTriangle, ShieldCheck, Info, Loader2, Search, X
+  DollarSign, CheckCircle2, PlusCircle, CreditCard, Banknote,
+  ChevronRight, Printer, ShieldCheck, Loader2, Search, X
 } from 'lucide-react';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
 import { NumericInput } from '../components/NumericInput';
@@ -31,8 +31,9 @@ export function BillingClients() {
   // Profil companie selectat
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [profileData, setProfileData] = useState<any | null>(null);
-  const [loadingProfile, setLoadingProfile] = useState(false);
+  const [, setLoadingProfile] = useState(false);
   const [activeTab, setActiveTab] = useState<'unpaid' | 'all' | 'payments' | 'stores'>('unpaid');
+  const [profileIssuerFilter, setProfileIssuerFilter] = useState('all');
 
   // Modal Încasare
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -43,12 +44,14 @@ export function BillingClients() {
     bankName: 'Barclays' | 'Virgin';
     paymentDate: string;
     notes: string;
+    issuerId: string;
   }>({
     amount: '',
     method: 'cash',
     bankName: 'Barclays',
     paymentDate: new Date().toISOString().split('T')[0],
     notes: ''
+    ,issuerId: ''
   });
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
   const [generatingPdfId, setGeneratingPdfId] = useState<number | null>(null);
@@ -112,7 +115,8 @@ export function BillingClients() {
       method: 'cash',
       bankName: 'Barclays',
       paymentDate: new Date().toISOString().split('T')[0],
-      notes: invoice ? `Încasare factura FACT #${invoice.invoice_number}` : ''
+      notes: invoice ? `Încasare factura #${invoice.invoice_number}` : ''
+      ,issuerId: String(invoice?.issuer_id || (profileIssuerFilter !== 'all' ? profileIssuerFilter : profileData?.company?.issuer_id) || '')
     });
     setShowPaymentModal(true);
   };
@@ -126,6 +130,10 @@ export function BillingClients() {
       alert('Te rugăm să introduci o sumă validă mai mare decât 0!');
       return;
     }
+    if (!Number.isSafeInteger(Number(paymentForm.issuerId)) || Number(paymentForm.issuerId) <= 0) {
+      alert('Selectează societatea emitentă pentru această încasare.');
+      return;
+    }
 
     if (paymentForm.method === 'transfer' && !paymentForm.bankName) {
       alert('Te rugăm să selectezi banca unde s-a primit transferul bancar (Barclays sau Virgin)!');
@@ -136,6 +144,7 @@ export function BillingClients() {
     try {
       await api.billing.recordCompanyPayment({
         companyId: profileData.company.id,
+        issuerId: Number(paymentForm.issuerId),
         invoiceId: selectedInvoiceForPayment ? selectedInvoiceForPayment.id : undefined,
         amount: numericAmount,
         paymentDate: paymentForm.paymentDate,
@@ -158,7 +167,9 @@ export function BillingClients() {
   const handlePrintPdf = async (inv: any) => {
     setGeneratingPdfId(inv.id);
     try {
-      const settings = await api.billing.getSettings();
+      const sharedSettings = await api.billing.getSettings();
+      const settings = { ...(inv.issuer_settings || {}), invoiceLogo: sharedSettings.invoiceLogo };
+      if (!inv.issuer_settings) throw new Error('Snapshotul emitentului facturii lipsește.');
       const pdfData = {
         invoiceNumber: inv.invoice_number,
         invoiceDate: inv.invoice_date,
@@ -179,9 +190,9 @@ export function BillingClients() {
       };
 
       const buffer = generateInvoicePDF(settings, pdfData);
-      const filename = `Factura_${settings.invoiceSeries || 'FACT'}_${inv.invoice_number}.pdf`;
+      const filename = `Factura_${inv.invoice_number}.pdf`;
 
-      await api.system.savePdfAuto({ buffer, filename });
+      await api.system.savePdfAuto({ buffer, filename, issuerCode: inv.issuer_code || settings.code });
       api.system.uploadPdfToCloud(filename, buffer).catch(console.error);
       alert(`Factura #${inv.invoice_number} a fost salvată pe calculator și în Google Drive!`);
     } catch (e: any) {
@@ -199,7 +210,17 @@ export function BillingClients() {
 
   // --- VIZUALIZARE 1: PROFIL COMPANIE ---
   if (selectedCompanyId && profileData) {
-    const { company, stores, invoices, unpaidInvoices, payments, stats } = profileData;
+    const { company, stores, invoices: allInvoices, payments: allPayments } = profileData;
+    const invoices = profileIssuerFilter === 'all' ? allInvoices : allInvoices.filter((invoice: any) => String(invoice.issuer_id) === profileIssuerFilter);
+    const unpaidInvoices = invoices.filter((invoice: any) => invoice.status !== 'paid' && invoice.status !== 'cancelled' && invoice.total_amount - invoice.paid_amount > 0.01);
+    const payments = profileIssuerFilter === 'all' ? allPayments : allPayments.filter((payment: any) => String(payment.issuer_id) === profileIssuerFilter);
+    const selectedCredit = (profileData.issuerCredits || []).filter((credit: any) => profileIssuerFilter === 'all' || String(credit.issuer_id) === profileIssuerFilter).reduce((sum: number, credit: any) => sum + Number(credit.balance || 0), 0);
+    const stats = {
+      totalInvoiced: invoices.filter((invoice: any) => invoice.status !== 'cancelled').reduce((sum: number, invoice: any) => sum + invoice.total_amount, 0),
+      totalPaid: invoices.filter((invoice: any) => invoice.status !== 'cancelled').reduce((sum: number, invoice: any) => sum + invoice.paid_amount, 0),
+      totalUnpaid: unpaidInvoices.reduce((sum: number, invoice: any) => sum + invoice.total_amount - invoice.paid_amount, 0),
+      creditBalance: selectedCredit,
+    };
 
     return (
       <div className="p-8 max-w-7xl mx-auto space-y-8">
@@ -222,12 +243,14 @@ export function BillingClients() {
                   {company.cui && <span>VAT No: <span className="font-semibold text-slate-800">{company.cui}</span></span>}
                   {company.reg_com && <span>CRN: <span className="font-semibold text-slate-800">{company.reg_com}</span></span>}
                   <span>{stores.length} magazine arondate</span>
+                  <span className="text-white px-2 py-0.5 rounded-full text-xs font-semibold" style={{ backgroundColor: company.issuer_color || '#64748B' }}>{company.issuer_name || 'Emitent implicit'}</span>
                 </div>
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
+            <select value={profileIssuerFilter} onChange={(e) => setProfileIssuerFilter(e.target.value)} className="border border-slate-200 bg-white rounded-xl px-3 py-3 text-sm font-semibold"><option value="all">Toate societățile</option>{(profileData.issuers || []).map((issuer: any) => <option key={issuer.id} value={issuer.id}>{issuer.legal_name}</option>)}</select>
             <button
               onClick={() => handleOpenPaymentModal(null)}
               className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-xl font-bold transition-colors shadow-md shadow-emerald-600/20"
@@ -273,6 +296,7 @@ export function BillingClients() {
             <span className="text-xs text-indigo-600 mt-2 font-medium">
               {stats.creditBalance > 0 ? 'Disponibil pentru facturi viitoare' : 'Niciun avans existent'}
             </span>
+            <div className="mt-2 space-y-1">{(profileData.issuerCredits || []).map((credit: any) => <div key={credit.issuer_id} className="text-[10px] text-slate-500">{credit.issuer_name}: £{Number(credit.balance).toFixed(2)}</div>)}</div>
           </div>
         </div>
 
@@ -356,7 +380,7 @@ export function BillingClients() {
                           const due = inv.total_amount - inv.paid_amount;
                           return (
                             <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
-                              <td className="py-3.5 px-4 font-bold text-slate-900">FACT #{inv.invoice_number}</td>
+                              <td className="py-3.5 px-4 font-bold text-slate-900">#{inv.invoice_number}</td>
                               <td className="py-3.5 px-4 text-slate-600">{inv.invoice_date}</td>
                               <td className="py-3.5 px-4 font-semibold text-slate-800">{inv.store_name}</td>
                               <td className="py-3.5 px-4 font-medium">£{inv.total_amount.toFixed(2)}</td>
@@ -401,7 +425,7 @@ export function BillingClients() {
 
                       return (
                         <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="py-3.5 px-4 font-bold text-slate-900">FACT #{inv.invoice_number}</td>
+                          <td className="py-3.5 px-4 font-bold text-slate-900">#{inv.invoice_number}</td>
                           <td className="py-3.5 px-4 text-slate-600">{inv.invoice_date}</td>
                           <td className="py-3.5 px-4 font-semibold text-slate-800">{inv.store_name}</td>
                           <td className="py-3.5 px-4 font-bold">£{inv.total_amount.toFixed(2)}</td>
@@ -469,7 +493,7 @@ export function BillingClients() {
                               ) : '—'}
                             </td>
                             <td className="py-3.5 px-4 font-medium text-slate-800">
-                              {p.invoice_number ? `FACT #${p.invoice_number}` : <span className="text-indigo-600 font-bold">Avans / Credit Companie</span>}
+                              {p.invoice_number ? `#${p.invoice_number}` : <span className="text-indigo-600 font-bold">Avans / Credit · {p.issuer_name || 'Emitent'}</span>}
                             </td>
                             <td className="py-3.5 px-4 text-xs text-slate-500 italic">{p.notes || '—'}</td>
                           </tr>
@@ -525,6 +549,14 @@ export function BillingClients() {
                 </div>
 
                 <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Societate emitentă</label>
+                  <select value={paymentForm.issuerId} disabled={Boolean(selectedInvoiceForPayment)} onChange={(e) => { setSelectedInvoiceForPayment(null); setPaymentForm((current) => ({ ...current, issuerId: e.target.value })); }} className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800">
+                    {(profileData.issuers || []).filter((issuer: any) => issuer.is_active === 1).map((issuer: any) => <option key={issuer.id} value={issuer.id}>{issuer.legal_name}</option>)}
+                  </select>
+                  <p className="text-xs text-slate-500 mt-1">Plata și creditul se distribuie numai facturilor acestui emitent.</p>
+                </div>
+
+                <div>
                   <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Factură Vizată (Opțional)</label>
                   <select
                     value={selectedInvoiceForPayment ? selectedInvoiceForPayment.id : ''}
@@ -539,9 +571,9 @@ export function BillingClients() {
                     className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800"
                   >
                     <option value="">-- Distribuire automată pe cea mai veche factură neachitată --</option>
-                    {unpaidInvoices.map((inv: any) => (
+                    {unpaidInvoices.filter((inv: any) => String(inv.issuer_id) === paymentForm.issuerId).map((inv: any) => (
                       <option key={inv.id} value={inv.id}>
-                        FACT #{inv.invoice_number} ({inv.store_name}) — Restanță: £{(inv.total_amount - inv.paid_amount).toFixed(2)}
+                        #{inv.invoice_number} ({inv.store_name}) — Restanță: £{(inv.total_amount - inv.paid_amount).toFixed(2)}
                       </option>
                     ))}
                   </select>

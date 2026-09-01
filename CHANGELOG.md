@@ -1,3 +1,13 @@
+### VR - Hub Management v0.1.85
+
+- Facturarea acceptă două societăți emitente: `THE GOODNESS BAKER LTD` ca emitent implicit VAT și `VATRA ROMANEASCA LTD` ca emitent alternativ non-VAT.
+- Fiecare emitent are date juridice și bancare, culoare, serie și contor propriu; atribuirea se face o singură dată la nivelul companiei-client și se aplică automat tuturor magazinelor sale.
+- Generarea individuală și loturile săptămânale mixte rezolvă emitentul exclusiv în backend, păstrează snapshotul juridic pe factură și anulează întregul lot dacă o configurare sau numerotare este invalidă.
+- PDF-urile sunt separate pe emitent, iar facturile Vatra nu afișează și nu colectează VAT. Previzualizarea, lista facturilor, clienții și dashboardul permit filtrarea după emitent.
+- Plățile, avansurile și creditele sunt izolate per companie și emitent, fără mutarea istoricului când atribuirea clientului se schimbă.
+- Ștergerea definitivă a facturilor și PDF-urilor a fost eliminată. Facturile fără plăți pot fi anulate cu motiv și, pentru importurile săptămânale, reemise auditabil cu un număr nou.
+- Migrarea SQLite este atomică și idempotentă: păstrează facturile și creditele existente la Goodness, detectează sigur numerele istorice și nu modifică VR Baker Platform, care rămâne read-only.
+
 ### VR - Hub Management v0.1.84
 
 - Sincronizarea comenzilor acceptă toate identificatoarele UUID canonice stocate valid de PostgreSQL, inclusiv identificatoarele istorice fără marcajele RFC restrictive.

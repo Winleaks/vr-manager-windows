@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
-  Receipt, Search, Calendar, Edit3, Trash2, Printer, X, Plus, Save, 
-  CheckCircle2, Clock, AlertCircle, Building2, Store, FileText, Loader2 
+  Receipt, Search, Edit3, Trash2, Printer, X, Plus, Save,
+  CheckCircle2, Clock, AlertCircle, Building2, Store, FileText, Loader2, RefreshCw
 } from 'lucide-react';
 import { api } from '../shared/api';
 import DatePicker from 'react-datepicker';
@@ -40,6 +40,12 @@ interface Invoice {
   company_bank_name?: string;
   client_name?: string;
   items?: InvoiceItem[];
+  issuer_id?: number;
+  issuer_name?: string;
+  issuer_code?: string;
+  issuer_color?: string;
+  issuer_settings?: any;
+  cancellation_reason?: string;
 }
 
 export function BillingInvoices() {
@@ -47,6 +53,8 @@ export function BillingInvoices() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [issuerFilter, setIssuerFilter] = useState<string>('all');
+  const [issuers, setIssuers] = useState<any[]>([]);
   
   // Date filter (opțional, default toate sau ultimele 30 zile)
   const [useDateFilter, setUseDateFilter] = useState(false);
@@ -72,11 +80,7 @@ export function BillingInvoices() {
   const [isSaving, setIsSaving] = useState(false);
   const [generatingPdfId, setGeneratingPdfId] = useState<number | null>(null);
 
-  useEffect(() => {
-    loadInvoices();
-  }, [useDateFilter, startDate, endDate]);
-
-  const loadInvoices = async () => {
+  const loadInvoices = useCallback(async () => {
     setLoading(true);
     try {
       let startStr: string | undefined = undefined;
@@ -87,34 +91,43 @@ export function BillingInvoices() {
         endStr = format(endDate, 'yyyy-MM-dd');
       }
 
-      const data = await api.billing.getInvoices(startStr, endStr);
+      const data = await api.billing.getInvoices(startStr, endStr, issuerFilter === 'all' ? undefined : Number(issuerFilter));
       setInvoices(data || []);
     } catch (e) {
       console.error('Eroare la încărcarea facturilor:', e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [useDateFilter, startDate, endDate, issuerFilter]);
+
+  useEffect(() => {
+    void loadInvoices();
+  }, [loadInvoices]);
+
+  useEffect(() => { api.billing.getIssuers().then(setIssuers).catch(console.error); }, []);
 
   const handleDeleteInvoice = async (inv: Invoice) => {
-    if (window.confirm(`Ești sigur că dorești să ștergi definitiv factura FACT #${inv.invoice_number} emisiune ${inv.store_name || ''}?`)) {
+    const reason = window.prompt(`Motivul anulării facturii #${inv.invoice_number}:`);
+    if (reason?.trim()) {
       try {
-        const settings = await api.billing.getSettings();
-        const series = settings.invoiceSeries || 'FACT';
-        const filename = `Factura_${series}_${inv.invoice_number}.pdf`;
-
-        // 1. Ștergem din baza de date
-        await api.billing.deleteInvoice(inv.id);
-
-        // 2. Ștergem fișierul PDF de pe calculator și din Google Drive
-        await api.system.deletePdfAuto(filename);
-
-        setInvoices(prev => prev.filter(i => i.id !== inv.id));
-        alert(`Factura #${inv.invoice_number} și fișierul ei PDF au fost șterse din calculator și din Google Drive!`);
+        await api.billing.cancelInvoice(inv.id, reason.trim());
+        await loadInvoices();
+        alert(`Factura #${inv.invoice_number} a fost anulată și păstrată în registru. Anularea nu înlocuiește o notă de credit VAT.`);
       } catch (e: any) {
-        alert('Eroare la ștergerea facturii: ' + e.message);
+        alert('Eroare la anularea facturii: ' + e.message);
       }
     }
+  };
+
+  const handleReissue = async (inv: Invoice) => {
+    if (!window.confirm(`Reemitem factura anulată #${inv.invoice_number} cu emitentul atribuit acum clientului și cu un număr nou?`)) return;
+    try {
+      const result = await api.billing.reissueCancelledInvoice(inv.id);
+      await loadInvoices();
+      const replacement = (await api.billing.getInvoices()).find((item: Invoice) => item.id === result.invoiceId);
+      if (replacement) await handlePrintPdf(replacement, true);
+      alert(`Factura a fost reemisă cu numărul ${result.invoiceNumber}.`);
+    } catch (e: any) { alert('Eroare la reemitere: ' + e.message); }
   };
 
   const handleOpenEdit = (inv: Invoice) => {
@@ -167,16 +180,10 @@ export function BillingInvoices() {
 
   const handleSaveEdit = async () => {
     if (!editingInvoice) return;
-    if (!editForm.invoice_number.trim()) {
-      alert('Te rugăm să introduci numărul facturii!');
-      return;
-    }
-
     setIsSaving(true);
     try {
       const saved = await api.billing.updateInvoice({
         id: editingInvoice.id,
-        invoiceNumber: editForm.invoice_number.trim(),
         invoiceDate: editForm.invoice_date,
         items: editForm.items
       });
@@ -184,7 +191,6 @@ export function BillingInvoices() {
       // Re-generăm și suprascriem PDF-ul cu datele actualizate
       const updatedInv = {
         ...editingInvoice,
-        invoice_number: editForm.invoice_number.trim(),
         invoice_date: editForm.invoice_date,
         total_amount: saved.totalAmount,
         paid_amount: saved.paidAmount,
@@ -206,7 +212,9 @@ export function BillingInvoices() {
   const handlePrintPdf = async (inv: Invoice, isQuiet = false) => {
     setGeneratingPdfId(inv.id);
     try {
-      const settings = await api.billing.getSettings();
+      const sharedSettings = await api.billing.getSettings();
+      const settings = { ...(inv.issuer_settings || {}), invoiceLogo: sharedSettings.invoiceLogo };
+      if (!inv.issuer_settings) throw new Error('Snapshotul emitentului facturii lipsește.');
       const pdfData = {
         invoiceNumber: inv.invoice_number,
         invoiceDate: inv.invoice_date,
@@ -227,9 +235,9 @@ export function BillingInvoices() {
       };
 
       const buffer = generateInvoicePDF(settings, pdfData);
-      const filename = `Factura_${settings.invoiceSeries || 'FACT'}_${inv.invoice_number}.pdf`;
+      const filename = `Factura_${inv.invoice_number}.pdf`;
 
-      await api.system.savePdfAuto({ buffer, filename });
+      await api.system.savePdfAuto({ buffer, filename, issuerCode: inv.issuer_code || settings.code });
       api.system.uploadPdfToCloud(filename, buffer).catch(console.error);
 
       if (!isQuiet) {
@@ -245,17 +253,15 @@ export function BillingInvoices() {
   const handleOpenPdf = async (inv: Invoice) => {
     setGeneratingPdfId(inv.id);
     try {
-      const settings = await api.billing.getSettings();
-      const series = settings.invoiceSeries || 'FACT';
-      const filename = `Factura_${series}_${inv.invoice_number}.pdf`;
+      const filename = `Factura_${inv.invoice_number}.pdf`;
 
       // Încercăm deschiderea directă a fișierului
-      const res = await api.system.openPdfFile(filename);
+      const res = await api.system.openPdfFile(filename, inv.issuer_code || inv.issuer_settings?.code);
 
       // Dacă fișierul nu există local, îl re-creăm și îl deschidem
       if (res.notFound) {
         await handlePrintPdf(inv, true);
-        await api.system.openPdfFile(filename);
+        await api.system.openPdfFile(filename, inv.issuer_code || inv.issuer_settings?.code);
       }
     } catch (e: any) {
       alert('Eroare la deschiderea PDF: ' + e.message);
@@ -288,7 +294,7 @@ export function BillingInvoices() {
             </div>
             <h1 className="text-3xl font-bold text-slate-900">Facturi Emise</h1>
           </div>
-          <p className="text-slate-500 mt-2">Evidența tuturor facturilor generate, posibilitate de modificare, ștergere și retipărire PDF.</p>
+          <p className="text-slate-500 mt-2">Evidența facturilor pe societăți emitente, cu anulare auditabilă și retipărire PDF.</p>
         </div>
       </div>
 
@@ -319,8 +325,10 @@ export function BillingInvoices() {
               <option value="unpaid">Neachitate</option>
               <option value="paid">Achitate integral</option>
               <option value="partial">Achitate parțial</option>
+              <option value="cancelled">Anulate</option>
             </select>
           </div>
+          <div className="flex items-center gap-2"><span className="text-sm font-medium text-slate-500">Emitent:</span><select value={issuerFilter} onChange={(e) => setIssuerFilter(e.target.value)} className="bg-slate-50 border border-slate-200 text-slate-700 font-medium px-4 py-2.5 rounded-xl"><option value="all">Toate societățile</option>{issuers.map((issuer) => <option key={issuer.id} value={issuer.id}>{issuer.legal_name}</option>)}</select></div>
         </div>
 
         {/* Filtrare pe perioadă opțională */}
@@ -343,7 +351,7 @@ export function BillingInvoices() {
                 <span className="text-xs text-slate-500">De la:</span>
                 <DatePicker
                   selected={startDate}
-                  onChange={(d) => d && setStartDate(d)}
+                  onChange={(d: Date | null) => d && setStartDate(d)}
                   dateFormat="dd/MM/yyyy"
                   locale={ro}
                   className="w-32 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700"
@@ -353,7 +361,7 @@ export function BillingInvoices() {
                 <span className="text-xs text-slate-500">Până la:</span>
                 <DatePicker
                   selected={endDate}
-                  onChange={(d) => d && setEndDate(d)}
+                  onChange={(d: Date | null) => d && setEndDate(d)}
                   dateFormat="dd/MM/yyyy"
                   locale={ro}
                   className="w-32 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700"
@@ -394,11 +402,13 @@ export function BillingInvoices() {
                 {filteredInvoices.map((inv) => {
                   const isPaid = inv.status === 'paid';
                   const isPartial = inv.status === 'partial';
+                  const isCancelled = inv.status === 'cancelled';
 
                   return (
                     <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-4 px-6 font-bold text-slate-900">
-                        FACT #{inv.invoice_number}
+                        <div>#{inv.invoice_number}</div>
+                        <span className="inline-flex mt-1 text-[10px] font-semibold text-white px-2 py-0.5 rounded-full" style={{ backgroundColor: inv.issuer_color || '#64748B' }}>{inv.issuer_name || 'Emitent istoric'}</span>
                       </td>
                       <td className="py-4 px-6 text-slate-600">
                         {inv.invoice_date}
@@ -418,20 +428,22 @@ export function BillingInvoices() {
                       </td>
                       <td className="py-4 px-6">
                         <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
-                          isPaid
+                          isCancelled
+                            ? 'bg-slate-200 text-slate-700'
+                            : isPaid
                             ? 'bg-emerald-100 text-emerald-800'
                             : isPartial
                             ? 'bg-amber-100 text-amber-800'
                             : 'bg-rose-100 text-rose-800'
                         }`}>
-                          {isPaid ? <CheckCircle2 size={13} /> : isPartial ? <Clock size={13} /> : <AlertCircle size={13} />}
-                          {isPaid ? 'Achitat' : isPartial ? `Parțial (£${inv.paid_amount.toFixed(2)})` : 'Neachitat'}
+                          {isCancelled ? <AlertCircle size={13} /> : isPaid ? <CheckCircle2 size={13} /> : isPartial ? <Clock size={13} /> : <AlertCircle size={13} />}
+                          {isCancelled ? 'Anulată' : isPaid ? 'Achitat' : isPartial ? `Parțial (£${inv.paid_amount.toFixed(2)})` : 'Neachitat'}
                         </span>
                       </td>
                       <td className="py-4 px-6 text-right">
                         <div className="flex items-center justify-end gap-2">
                           {/* Deschide PDF */}
-                          <button
+                          {!isCancelled && <button
                             onClick={() => handleOpenPdf(inv)}
                             disabled={generatingPdfId === inv.id}
                             className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors flex items-center gap-1.5"
@@ -439,10 +451,10 @@ export function BillingInvoices() {
                           >
                             {generatingPdfId === inv.id ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
                             <span className="text-xs font-semibold">Deschide PDF</span>
-                          </button>
+                          </button>}
 
                           {/* Editează */}
-                          <button
+                          {!isCancelled ? <><button
                             onClick={() => handleOpenEdit(inv)}
                             className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
                             title="Editează detaliile facturii"
@@ -454,10 +466,10 @@ export function BillingInvoices() {
                           <button
                             onClick={() => handleDeleteInvoice(inv)}
                             className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                            title="Șterge factura"
+                            title="Anulează factura și păstrează numărul"
                           >
                             <Trash2 size={16} />
-                          </button>
+                          </button></> : <button onClick={() => handleReissue(inv)} className="p-2 text-amber-700 hover:bg-amber-50 rounded-lg" title="Reemite cu număr nou"><RefreshCw size={16} /></button>}
                         </div>
                       </td>
                     </tr>
@@ -495,8 +507,8 @@ export function BillingInvoices() {
                   <input
                     type="text"
                     value={editForm.invoice_number}
-                    onChange={(e) => setEditForm({ ...editForm, invoice_number: e.target.value })}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    readOnly
+                    className="w-full px-4 py-2.5 bg-slate-100 border border-slate-200 rounded-xl font-bold text-slate-500"
                   />
                 </div>
 

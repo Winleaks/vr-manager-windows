@@ -11,6 +11,7 @@ import { repairInvalidFinishedProductStocks } from './stockDataRepair'
 import { ensureFinishedProductCatalogSchema } from './finishedProductCatalog'
 import { ensureRawMaterialLocalizationSchema } from './rawMaterialLocalization'
 import { ensureInvoiceItemLocalizationSchema } from './invoiceItemLocalization'
+import { ensureBillingIssuerSchema } from './billingIssuers'
 
 export { verifyDatabaseFile } from './databaseValidation'
 
@@ -318,6 +319,13 @@ function runMigrations() {
           ensureFinishedProductCatalogSchema(db);
           ensureInvoiceItemLocalizationSchema(db);
         }
+      },
+      {
+        version: 12,
+        description: "Facturare cu societăți emitente, serii și credite separate",
+        up: () => {
+          ensureBillingIssuerSchema(db);
+        }
       }
     ];
 
@@ -334,6 +342,7 @@ function runMigrations() {
     }
   } catch (e) {
     console.error('[MIGRATION ERROR] Eroare la rularea migrărilor:', e);
+    throw e;
   }
 }
 
