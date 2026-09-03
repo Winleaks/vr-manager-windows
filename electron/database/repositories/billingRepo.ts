@@ -207,7 +207,7 @@ export function upsertCompanyFromSupabase(companyData: { id: string, name: strin
   }
 }
 
-export function upsertStoreFromSupabase(storeData: { id: string, name: string, address?: string, client_company_id: string }, localCompanyId?: number) {
+export function upsertStoreFromSupabase(storeData: { id: string, name: string, address?: string, postcode?: string, client_company_id: string }, localCompanyId?: number) {
   let localStore = db.prepare('SELECT id, company_id FROM stores WHERE supabase_store_id = ?').get(storeData.id) as any;
 
   let companyId = localCompanyId;
@@ -234,15 +234,15 @@ export function upsertStoreFromSupabase(storeData: { id: string, name: string, a
   if (localStore) {
     db.prepare(`
       UPDATE stores 
-      SET name = ?, address = ?, company_id = ?, supabase_store_id = ? 
+      SET name = ?, address = ?, postcode = ?, company_id = ?, supabase_store_id = ?
       WHERE id = ?
-    `).run(storeData.name, storeData.address || null, companyId, storeData.id, localStore.id);
+    `).run(storeData.name, storeData.address || null, storeData.postcode || null, companyId, storeData.id, localStore.id);
     return localStore.id as number;
   } else {
     const info = db.prepare(`
-      INSERT INTO stores (company_id, name, address, supabase_store_id)
-      VALUES (?, ?, ?, ?)
-    `).run(companyId, storeData.name, storeData.address || null, storeData.id);
+      INSERT INTO stores (company_id, name, address, postcode, supabase_store_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(companyId, storeData.name, storeData.address || null, storeData.postcode || null, storeData.id);
     return info.lastInsertRowid as number;
   }
 }
@@ -311,7 +311,8 @@ export function getCompanyProfileDetails(companyId: number) {
   if (storeIds.length > 0) {
     const placeholders = storeIds.map(() => '?').join(',');
     invoices = db.prepare(`
-      SELECT i.*, s.name as store_name, ii.issuer_id, ii.series AS invoice_series,
+      SELECT i.*, s.name as store_name, s.address AS store_address, s.postcode AS store_postcode,
+             ii.issuer_id, ii.series AS invoice_series,
              ii.sequence_number AS invoice_sequence, ii.reference AS invoice_reference,
              ii.issuer_snapshot_json, bi.legal_name AS issuer_name, bi.code AS issuer_code,
              bi.color AS issuer_color
@@ -416,7 +417,7 @@ export function getInvoicesByDateRange(startDate?: string, endDate?: string, iss
            ii.issuer_id, ii.series AS invoice_series, ii.sequence_number AS invoice_sequence,
            ii.reference AS invoice_reference, ii.issuer_snapshot_json,
            bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color,
-           s.name as store_name, s.address as store_address, s.phone as store_phone,
+           s.name as store_name, s.address as store_address, s.postcode as store_postcode, s.phone as store_phone,
            c.name as company_name, c.cui as company_cui, c.reg_com as company_reg_com, c.address as company_address, c.phone as company_phone, c.bank_account as company_bank_account, c.bank_name as company_bank_name,
            cl.name as client_name
     FROM invoices i
@@ -590,7 +591,7 @@ export function syncEntitiesFromVrBaker(companies: VrBakerCompany[], stores: VrB
         unassignedCompanyId ||= upsertCompanyFromSupabase({ id: 'vrbaker-unassigned-company', name: 'Magazine neasociate' }, clientId);
         companyId = unassignedCompanyId;
       }
-      upsertStoreFromSupabase({ id: store.id, name: store.name, address: store.address, client_company_id: store.company?.id || '' }, companyId);
+      upsertStoreFromSupabase({ id: store.id, name: store.name, address: store.address, postcode: store.postcode, client_company_id: store.company?.id || '' }, companyId);
       db.prepare('UPDATE stores SET phone = ? WHERE supabase_store_id = ?').run(store.phone || null, store.id);
     }
     return { companies: companies.length, stores: stores.length };

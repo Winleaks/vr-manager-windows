@@ -296,7 +296,7 @@ const actions: Record<string, ActionDefinition> = {
       let query = supabaseAdmin
         .from("orders")
         .select(
-          "id, delivery_date, status, updated_at, client_store:client_store_id(id, name, address, phone, client_company_id, client_company:client_company_id(id, name, address, vat_number, registration_number)), order_items(id, qty_ordered, qty_delivered, unit_price_snapshot, products:product_id(id, name, name_ro, variant_label, unit, category, price_standard, available))",
+          "id, delivery_date, status, updated_at, client_store:client_store_id(id, name, address, postcode, phone, client_company_id, client_company:client_company_id(id, name, address, vat_number, registration_number)), order_items(id, qty_ordered, qty_delivered, unit_price_snapshot, products:product_id(id, name, name_ro, variant_label, unit, category, price_standard, available))",
         )
         .gte("delivery_date", weekStart)
         .lte("delivery_date", weekEnd)
@@ -732,4 +732,3 @@ Deno.serve(async (req: Request): Promise<Response> => {
     );
   }
 });
-

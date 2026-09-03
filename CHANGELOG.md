@@ -1,3 +1,13 @@
+### VR - Hub Management v0.1.87
+
+- Facturile folosesc coloane compacte și centrate, cu mai mult spațiu pentru denumirile bilingve ale produselor și fără ruperea aceluiași produs între pagini.
+- Data documentelor este afișată `DD-MM-YYYY`, referința facturii este evidențiată cu bold, iar numerotarea paginilor este calculată corect ca `Page X of Y`.
+- Footerul facturilor și Credit Notes include creditul sistemului de facturare și site-ul `www.razvancristofor.ro`; totalurile sunt păstrate împreună cu ultimele poziții.
+- Postcode-ul magazinului este importat read-only din VR Baker Platform, păstrat prin migrarea SQLite v14 și afișat separat de adresa companiei-client, fără dublare.
+- Credit Notes folosesc aceleași reguli de dată, paginare, footer, culori și rânduri indivizibile, fără chenare negre.
+- Modul de testare permite ștergerea definitivă numai a facturilor fără dependențe financiare, iar încasările pot fi corectate auditabil fără a afecta alte societăți emitente.
+- Produsele sincronizate și documentele de facturare afișează numai numele în engleză și română, fără `variant label`.
+
 ### VR - Hub Management v0.1.86
 
 - Writer-ul poate emite Credit Notes integrale sau parțiale pentru una sau mai multe facturi ale aceleiași companii și aceluiași emitent, inclusiv pentru facturi plătite.

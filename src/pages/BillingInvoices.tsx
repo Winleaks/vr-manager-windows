@@ -33,6 +33,7 @@ interface Invoice {
   status: string;
   store_name?: string;
   store_address?: string;
+  store_postcode?: string;
   company_name?: string;
   company_cui?: string;
   company_reg_com?: string;
@@ -258,6 +259,7 @@ export function BillingInvoices() {
         store: {
           name: inv.store_name || '',
           address: inv.store_address || '',
+          postcode: inv.store_postcode || '',
         },
         items: inv.items || [],
         totalAmount: inv.total_amount

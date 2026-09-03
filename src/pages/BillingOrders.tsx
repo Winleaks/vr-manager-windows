@@ -113,6 +113,7 @@ export function BillingOrders() {
         store: {
           name: currentOrder.store.name,
           address: currentOrder.store.address,
+          postcode: currentOrder.store.postcode,
         },
         items: currentOrder.items,
         totalAmount: currentOrder.items.reduce((acc: number, item: any) => acc + item.totalPrice, 0)

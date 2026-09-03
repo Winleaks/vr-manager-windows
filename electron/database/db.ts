@@ -13,6 +13,7 @@ import { ensureRawMaterialLocalizationSchema } from './rawMaterialLocalization'
 import { ensureInvoiceItemLocalizationSchema } from './invoiceItemLocalization'
 import { ensureBillingIssuerSchema } from './billingIssuers'
 import { ensureCreditNoteSchema } from './creditNotes'
+import { ensureBillingPostcodeSchema } from './billingPostcodes'
 
 export { verifyDatabaseFile } from './databaseValidation'
 
@@ -356,6 +357,13 @@ function runMigrations() {
         up: () => {
           ensureBillingIssuerSchema(db);
           ensureCreditNoteSchema(db);
+        }
+      },
+      {
+        version: 14,
+        description: "Păstrare postcode separat pentru magazinele VR Baker",
+        up: () => {
+          ensureBillingPostcodeSchema(db);
         }
       }
     ];

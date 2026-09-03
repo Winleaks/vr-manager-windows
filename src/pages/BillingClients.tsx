@@ -252,7 +252,8 @@ export function BillingClients() {
         },
         store: {
           name: inv.store_name || '',
-          address: '',
+          address: inv.store_address || '',
+          postcode: inv.store_postcode || '',
         },
         items: inv.items || [],
         totalAmount: inv.total_amount

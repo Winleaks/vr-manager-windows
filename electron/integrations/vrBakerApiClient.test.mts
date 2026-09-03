@@ -45,7 +45,7 @@ test('rejects delivered orders until the driver application owns that status', a
     fetchImpl: (async () => new Response(JSON.stringify({ success: true, data: { orders: [{
       id: '11111111-1111-4111-8111-111111111111', delivery_date: '2026-08-03', status: 'delivered',
       updated_at: '2026-08-03T10:00:00Z',
-      client_store: { id: '22222222-2222-4222-8222-222222222222', name: 'Magazin', client_company: null },
+      client_store: { id: '22222222-2222-4222-8222-222222222222', name: 'Magazin', postcode: 'SS14 1EU', client_company: null },
       order_items: [],
     }], next_cursor: null } }), { status: 200 })) as typeof fetch,
   });
@@ -67,7 +67,7 @@ test('accepts canonical PostgreSQL UUIDs without RFC marker restrictions', async
     fetchImpl: (async () => new Response(JSON.stringify({ success: true, data: { orders: [{
       id: '11111111-1111-4111-8111-111111111111', delivery_date: '2026-08-03', status: 'open',
       updated_at: '2026-08-03T10:00:00Z',
-      client_store: { id: '22222222-2222-4222-8222-222222222222', name: 'Magazin', client_company: null },
+      client_store: { id: '22222222-2222-4222-8222-222222222222', name: 'Magazin', postcode: 'SS14 1EU', client_company: null },
       order_items: [{
         id: '33333333-3333-4333-8333-333333333333', quantity: 2, unit_price_snapshot: 1.5,
         products: { id: legacyProductId, name: 'Bread', name_ro: 'Pâine', available: true },
@@ -77,6 +77,7 @@ test('accepts canonical PostgreSQL UUIDs without RFC marker restrictions', async
 
   const orders = await client.fetchWeeklyOrders('2026-08-03', '2026-08-09');
   assert.equal(orders[0]?.items[0]?.productId, legacyProductId);
+  assert.equal(orders[0]?.store.postcode, 'SS14 1EU');
 });
 
 test('continues to reject malformed product identifiers', async () => {

@@ -238,6 +238,7 @@ CREATE TABLE IF NOT EXISTS stores (
   company_id INTEGER NOT NULL,
   name TEXT NOT NULL,
   address TEXT,
+  postcode TEXT,
   phone TEXT,
   supabase_store_id TEXT,
   is_active BOOLEAN DEFAULT 1,

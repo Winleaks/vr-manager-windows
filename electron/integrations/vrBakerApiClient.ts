@@ -14,6 +14,7 @@ export interface VrBakerStore {
   id: string;
   name: string;
   address: string;
+  postcode?: string;
   phone: string;
   company: VrBakerCompany | null;
 }
@@ -132,6 +133,7 @@ function parseStore(value: unknown): VrBakerStore {
     id: requireUuid(store.id, 'ID magazin'),
     name: requireString(store.name, 'Numele magazinului', 300),
     address: optionalString(store.address),
+    postcode: optionalString(store.postcode, 20),
     phone: optionalString(store.phone, 100),
     company: parseCompany(store.client_company),
   };
