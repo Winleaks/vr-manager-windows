@@ -42,6 +42,7 @@ const VIEWER_ALLOWED_CHANNELS = new Set([
   'billing:getStats',
   'billing:getSettings',
   'billing:getIssuers',
+  'billing:getTestMode',
   'billing:getCreditNoteDraft',
   'billing:getCreditNotes',
   'billing:getCreditNote',

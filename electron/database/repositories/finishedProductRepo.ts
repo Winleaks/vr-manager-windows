@@ -4,17 +4,31 @@ import { syncFinishedProductCatalog } from '../finishedProductCatalog';
 
 export const finishedProductRepo = {
   getAll: () => {
-    return db.prepare(`
-      SELECT fp.*, COALESCE(c.name, fp.source_category) as category_name
+    const rows = db.prepare(`
+      SELECT fp.*, COALESCE(c.name, fp.source_category) as category_name,
+             cp.name AS catalog_name, cp.name_ro AS catalog_name_ro
       FROM finished_products fp
       LEFT JOIN categories c ON fp.category_id = c.id
+      LEFT JOIN cloud_products cp ON cp.supabase_product_id = fp.external_product_id
       WHERE fp.is_active = 1
       ORDER BY fp.name ASC
-    `).all();
+    `).all() as any[];
+    return rows.map(({ catalog_name, catalog_name_ro, ...row }) => ({
+      ...row,
+      name: catalog_name || row.name,
+      name_ro: catalog_name_ro || row.name_ro || catalog_name || row.name,
+    }));
   },
   
   getById: (id: number) => {
-    return db.prepare('SELECT * FROM finished_products WHERE id = ?').get(id);
+    const result = db.prepare(`
+      SELECT fp.*, cp.name AS catalog_name, cp.name_ro AS catalog_name_ro
+      FROM finished_products fp LEFT JOIN cloud_products cp ON cp.supabase_product_id = fp.external_product_id
+      WHERE fp.id = ?
+    `).get(id) as any;
+    if (!result) return result;
+    const { catalog_name, catalog_name_ro, ...row } = result;
+    return { ...row, name: catalog_name || row.name, name_ro: catalog_name_ro || row.name_ro || catalog_name || row.name };
   },
   
   create: (data: any) => {

@@ -3,10 +3,11 @@ import { api } from '../shared/api';
 import { 
   Building2, Store, RefreshCw, AlertCircle, FileText, ArrowLeft, 
   DollarSign, CheckCircle2, PlusCircle, CreditCard, Banknote,
-  ChevronRight, Printer, ShieldCheck, Loader2, Search, X, FileMinus2
+  ChevronRight, Printer, ShieldCheck, Loader2, Search, X, FileMinus2, Edit3
 } from 'lucide-react';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
 import { NumericInput } from '../components/NumericInput';
+import { TextConfirmationModal } from '../components/TextConfirmationModal';
 
 interface Company {
   id: number;
@@ -58,9 +59,15 @@ export function BillingClients() {
   const [creditInvoice, setCreditInvoice] = useState<any | null>(null);
   const [creditAmount, setCreditAmount] = useState('');
   const [creditReason, setCreditReason] = useState('');
+  const [isWriter, setIsWriter] = useState(false);
+  const [editingPayment, setEditingPayment] = useState<any | null>(null);
+  const [paymentEditForm, setPaymentEditForm] = useState({ amount: '', method: 'cash' as 'cash' | 'transfer', bankName: 'Barclays' as 'Barclays' | 'Virgin', reason: '' });
+  const [isUpdatingPayment, setIsUpdatingPayment] = useState(false);
+  const [pendingCreditReversal, setPendingCreditReversal] = useState<any | null>(null);
 
   useEffect(() => {
-    fetchCompanies();
+    void fetchCompanies();
+    api.system.getDeviceRole().then((device) => setIsWriter(device.role === 'writer')).catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -133,10 +140,54 @@ export function BillingClients() {
   };
 
   const reverseCredit = async (application: any) => {
-    const reason = window.prompt(`Motivul reversării creditului aplicat facturii #${application.invoice_number}:`);
-    if (!reason?.trim()) return;
-    try { await api.billing.reverseCreditApplication(application.id, reason.trim()); await loadCompanyProfile(profileData.company.id); await fetchCompanies(); }
-    catch (error: any) { alert(error.message || 'Aplicarea creditului nu a putut fi reversată.'); }
+    setPendingCreditReversal(application);
+  };
+
+  const confirmCreditReversal = async (reason: string) => {
+    if (!pendingCreditReversal || !profileData?.company?.id) return;
+    try {
+      await api.billing.reverseCreditApplication(pendingCreditReversal.id, reason);
+      setPendingCreditReversal(null);
+      await Promise.all([loadCompanyProfile(profileData.company.id), fetchCompanies()]);
+    } catch (error: any) {
+      throw new Error(error.message || 'Aplicarea creditului nu a putut fi reversată.');
+    }
+  };
+
+  const openPaymentEdit = (payment: any) => {
+    setEditingPayment(payment);
+    setPaymentEditForm({
+      amount: Number(payment.amount).toFixed(2),
+      method: payment.method === 'transfer' ? 'transfer' : 'cash',
+      bankName: payment.bank_name === 'Virgin' ? 'Virgin' : 'Barclays',
+      reason: '',
+    });
+  };
+
+  const submitPaymentEdit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingPayment || !profileData?.company?.id) return;
+    const amount = Number(paymentEditForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0 || !paymentEditForm.reason.trim()) {
+      alert('Introdu o sumă validă și motivul modificării.');
+      return;
+    }
+    setIsUpdatingPayment(true);
+    try {
+      await api.billing.updatePayment({
+        id: editingPayment.id,
+        amount,
+        method: paymentEditForm.method,
+        bankName: paymentEditForm.method === 'transfer' ? paymentEditForm.bankName : undefined,
+        reason: paymentEditForm.reason.trim(),
+      });
+      setEditingPayment(null);
+      await Promise.all([loadCompanyProfile(profileData.company.id), fetchCompanies()]);
+    } catch (error: any) {
+      alert('Încasarea nu a putut fi modificată: ' + (error.message || error));
+    } finally {
+      setIsUpdatingPayment(false);
+    }
   };
 
   const handleSubmitPayment = async (e: React.FormEvent) => {
@@ -498,6 +549,7 @@ export function BillingClients() {
                           <th className="py-3 px-4">Bancă</th>
                           <th className="py-3 px-4">Factură Aferentă</th>
                           <th className="py-3 px-4">Note / Detalii</th>
+                          <th className="py-3 px-4 text-right">Acțiuni</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
@@ -524,6 +576,7 @@ export function BillingClients() {
                               {p.invoice_number ? `#${p.invoice_number}` : <span className="text-indigo-600 font-bold">Avans / Credit · {p.issuer_name || 'Emitent'}</span>}
                             </td>
                             <td className="py-3.5 px-4 text-xs text-slate-500 italic">{p.notes || '—'}</td>
+                            <td className="py-3.5 px-4 text-right">{isWriter && <button type="button" onClick={() => openPaymentEdit(p)} className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-700" title="Modifică suma sau metoda de plată"><Edit3 size={16} /></button>}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -726,6 +779,21 @@ export function BillingClients() {
             </div>
           </div>
         )}
+        {editingPayment && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 p-5"><div><h3 className="text-lg font-bold text-slate-900">Modifică încasarea</h3><p className="text-xs text-slate-500">{editingPayment.invoice_number ? `Factura #${editingPayment.invoice_number}` : `Avans / credit · ${editingPayment.issuer_name || 'Emitent'}`}</p></div><button type="button" onClick={() => setEditingPayment(null)} className="p-1 text-slate-400 hover:text-slate-700"><X size={20} /></button></div>
+              <form onSubmit={submitPaymentEdit} className="space-y-4 p-6">
+                <label className="block text-xs font-semibold uppercase text-slate-600">Suma încasată (£)<NumericInput decimalScale={2} required value={paymentEditForm.amount} onValueChange={(amount) => setPaymentEditForm((current) => ({ ...current, amount }))} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 font-mono text-lg font-bold" /></label>
+                <div><div className="mb-1.5 text-xs font-semibold uppercase text-slate-600">Metodă plată</div><div className="grid grid-cols-2 gap-3"><button type="button" onClick={() => setPaymentEditForm((current) => ({ ...current, method: 'cash' }))} className={`rounded-xl border p-3 text-sm font-bold ${paymentEditForm.method === 'cash' ? 'border-amber-500 bg-amber-500 text-white' : 'border-slate-200 bg-slate-50 text-slate-700'}`}><Banknote size={17} className="mr-2 inline" />Cash</button><button type="button" onClick={() => setPaymentEditForm((current) => ({ ...current, method: 'transfer' }))} className={`rounded-xl border p-3 text-sm font-bold ${paymentEditForm.method === 'transfer' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-slate-50 text-slate-700'}`}><CreditCard size={17} className="mr-2 inline" />Transfer</button></div></div>
+                {paymentEditForm.method === 'transfer' && <label className="block text-xs font-semibold uppercase text-slate-600">Banca<select value={paymentEditForm.bankName} onChange={(event) => setPaymentEditForm((current) => ({ ...current, bankName: event.target.value as 'Barclays' | 'Virgin' }))} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><option value="Barclays">Barclays</option><option value="Virgin">Virgin</option></select></label>}
+                <label className="block text-xs font-semibold uppercase text-slate-600">Motivul modificării<input required maxLength={500} value={paymentEditForm.reason} onChange={(event) => setPaymentEditForm((current) => ({ ...current, reason: event.target.value }))} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm" placeholder="Ex.: sumă introdusă greșit" /></label>
+                <p className="text-xs text-slate-500">Modificarea recalculează factura sau creditul companiei și este păstrată în jurnalul de audit.</p>
+                <div className="flex justify-end gap-3 border-t border-slate-100 pt-4"><button type="button" onClick={() => setEditingPayment(null)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold">Renunță</button><button type="submit" disabled={isUpdatingPayment} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50">{isUpdatingPayment ? 'Se salvează...' : 'Salvează modificarea'}</button></div>
+              </form>
+            </div>
+          </div>
+        )}
         {creditInvoice && (
           <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
@@ -737,6 +805,15 @@ export function BillingClients() {
             </div>
           </div>
         )}
+        {pendingCreditReversal && <TextConfirmationModal
+          title={`Reversează creditul aplicat facturii #${pendingCreditReversal.invoice_number}`}
+          description="Creditul va redeveni disponibil pentru aceeași companie și același emitent, iar restul facturii va fi recalculat."
+          fieldLabel="Motivul reversării"
+          confirmLabel="Reversează creditul"
+          dangerous
+          onCancel={() => setPendingCreditReversal(null)}
+          onConfirm={confirmCreditReversal}
+        />}
       </div>
     );
   }

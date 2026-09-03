@@ -3,7 +3,7 @@ import test from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { generateCreditNotePdf } from '../reports/creditNotePdf.ts';
+import { creditNoteProductDescription, generateCreditNotePdf } from '../reports/creditNotePdf.ts';
 import { creditNoteFilename, saveCreditNotePdf } from '../reports/creditNoteDelivery.ts';
 
 function note(vatRegistered: boolean) {
@@ -23,6 +23,11 @@ test('generates paginated VAT and non-VAT Credit Note PDFs from immutable snapsh
     assert.equal(Buffer.from(pdf).subarray(0, 4).toString(), '%PDF');
     assert.ok(pdf.byteLength > 10_000);
   }
+});
+
+test('Credit Note product description excludes the variant label', () => {
+  const item = { product_name: 'Cheese Pie', product_name_ro: 'Plăcintă cu brânză', variant_label: 'Large' };
+  assert.equal(creditNoteProductDescription(item), 'Cheese Pie\nPlăcintă cu brânză');
 });
 
 test('saves Credit Note PDF to a constrained issuer directory and overwrites atomically', () => {

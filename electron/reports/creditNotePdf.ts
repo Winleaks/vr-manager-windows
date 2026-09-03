@@ -6,6 +6,10 @@ function money(value: number) { return `£${Number(value).toFixed(2)}`; }
 function text(value: unknown) { return fixRomanianDiacritics(String(value || '-')); }
 function displayDate(value: string) { const [year, month, day] = value.split('-'); return `${day}.${month}.${year}`; }
 
+export function creditNoteProductDescription(item: { product_name?: string; product_name_ro?: string }) {
+  return text([item.product_name, item.product_name_ro].filter(Boolean).join('\n'));
+}
+
 export function generateCreditNotePdf(note: any): Uint8Array {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   registerFonts(doc);
@@ -39,7 +43,7 @@ export function generateCreditNotePdf(note: any): Uint8Array {
     body: note.items.map((item: any) => [
       note.invoices.find((invoice: any) => invoice.id === item.source_invoice_id)?.invoice_number || '-',
       text(item.store_name),
-      text([item.product_name, item.product_name_ro, item.variant_label].filter(Boolean).join(' / ')),
+      creditNoteProductDescription(item),
       `${Number(item.quantity).toFixed(2)} ${item.unit || ''}`,
       money(item.unit_amount),
       issuer.vatRegistered ? `${Number(item.vat_rate).toFixed(0)}% / ${money(item.vat_amount)}` : 'N/A',

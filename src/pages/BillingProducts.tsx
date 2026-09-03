@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '../shared/api';
-import { Package, RefreshCw, CheckCircle, XCircle, Tag } from 'lucide-react';
+import { Package, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
 import { BilingualProductName } from '../components/BilingualProductName';
 
 export function BillingProducts() {
@@ -88,7 +88,6 @@ export function BillingProducts() {
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-6 py-4 font-medium">Denumire produs</th>
-                  <th className="px-6 py-4 font-medium">Variant Label</th>
                   <th className="px-6 py-4 font-medium">Unitate (Unit)</th>
                   <th className="px-6 py-4 font-medium text-right">Standard Price</th>
                   <th className="px-6 py-4 font-medium text-center">Available</th>
@@ -99,16 +98,6 @@ export function BillingProducts() {
                   <tr key={p.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-6 py-4">
                       <BilingualProductName name={p.name} nameRo={p.name_ro} />
-                    </td>
-                    <td className="px-6 py-4">
-                      {p.variant_label ? (
-                        <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md text-xs font-semibold">
-                          <Tag size={12} />
-                          {p.variant_label}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400">—</span>
-                      )}
                     </td>
                     <td className="px-6 py-4 text-slate-600 font-mono">
                       {p.unit || 'buc'}

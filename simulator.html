@@ -52,6 +52,7 @@
           { id: 1, name: 'Client Demo LTD', issuer_id: 1, stores: [{ id: 1, name: 'Magazin Demo' }] },
         ];
         let creditNotes = [];
+        let billingTestMode = false;
         const creditDraft = [{ id: 1, invoice_number: 'TGB-100', invoice_date: today, store_name: 'Magazin Demo', company_id: 1, company_name: 'Client Demo LTD', issuer_id: 1, issuer_name: 'THE GOODNESS BAKER LTD', grossAmount: 50, creditedAmount: 0, netAmount: 50, cashPaid: 0, appliedCredit: 0, outstanding: 50, items: [{ id: 1, productName: 'WHITE BREAD', nameRo: 'PÂINE ALBĂ', unit: 'buc', remainingQuantity: 10, remainingValue: 50, unitPrice: 5, canReturnToStock: true }] }];
         const cashSnapshot = () => {
           const totalIn = transactions.filter((item) => item.type === 'IN').reduce((sum, item) => sum + Number(item.amount), 0);
@@ -141,6 +142,10 @@
           'billing.getClients': async () => [],
           'billing.getProducts': async () => [],
           'billing.getIssuers': async () => billingIssuers.map((issuer) => ({ ...issuer })),
+          'billing.getTestMode': async () => ({ enabled: billingTestMode }),
+          'billing.setTestMode': async (enabled) => { billingTestMode = enabled === true; return { enabled: billingTestMode }; },
+          'billing.deleteTestInvoice': async (_invoiceId, confirmation) => ({ reference: String(confirmation || '').replace(/^STERGE\s+/i, ''), counterRewound: true }),
+          'billing.updatePayment': async (input) => ({ id: input.id, amount: input.amount, method: input.method, bankName: input.bankName || null }),
           'billing.getAllCompaniesAndStores': async () => billingCompanies.map((company) => ({ ...company, stores: company.stores.slice() })),
           'billing.getSettings': async () => ({ invoiceLogo: '' }),
           'billing.getVrBakerStatus': async () => ({ endpoint: 'https://demo.supabase.co/functions/v1/external-api', hasToken: true }),

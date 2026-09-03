@@ -4,6 +4,7 @@ import {
   requireFiniteNonNegative,
   requireFinitePositive,
   requireIsoDate,
+  requireMoneyPositive,
   requirePositiveInteger,
   requireText,
 } from '../businessValidation.ts';
@@ -15,6 +16,7 @@ import {
 import {
   addPaymentCreditEntry,
   getInvoiceFinancials,
+  syncCompanyCreditBalance,
   syncInvoiceFinancialStatus,
 } from '../creditNotes.ts';
 
@@ -60,6 +62,14 @@ export interface CompanyPaymentInput {
   method: string;
   bankName?: string;
   notes?: string;
+}
+
+export interface UpdatePaymentInput {
+  id: number;
+  amount: number;
+  method: 'cash' | 'transfer';
+  bankName?: string;
+  reason: string;
 }
 
 interface InvoiceRow {
@@ -587,6 +597,139 @@ export function cancelInvoiceTransaction(connection: SqliteDatabase, invoiceIdIn
     connection.prepare(`INSERT INTO billing_audit_events (event_type, issuer_id, invoice_id, details) VALUES ('invoice_cancelled', ?, ?, ?)`)
       .run(identity.issuer_id, invoiceId, JSON.stringify({ reason }));
     return true;
+  })();
+}
+
+export function getBillingTestMode(connection: SqliteDatabase) {
+  const row = connection.prepare("SELECT value FROM app_settings WHERE key = 'billing_test_mode'").get() as { value: string } | undefined;
+  return row?.value === '1';
+}
+
+export function setBillingTestModeTransaction(connection: SqliteDatabase, enabledInput: boolean, confirmationInput: string) {
+  const enabled = enabledInput === true;
+  const expected = enabled ? 'MOD TEST' : 'INCEP LIVE';
+  const confirmation = requireText(confirmationInput, 'Confirmarea modului de facturare', 50).toLocaleUpperCase('ro-RO');
+  if (confirmation !== expected) throw new Error(`Pentru confirmare scrie exact: ${expected}`);
+  return connection.transaction(() => {
+    connection.prepare(`
+      INSERT INTO app_settings (key, value) VALUES ('billing_test_mode', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(enabled ? '1' : '0');
+    connection.prepare("INSERT INTO billing_audit_events (event_type, details) VALUES ('billing_test_mode_changed', ?)")
+      .run(JSON.stringify({ enabled }));
+    return { enabled };
+  })();
+}
+
+export function deleteInvoiceForTestingTransaction(connection: SqliteDatabase, invoiceIdInput: number, confirmationInput: string) {
+  const invoiceId = requirePositiveInteger(invoiceIdInput, 'Factura');
+  if (!getBillingTestMode(connection)) throw new Error('Ștergerea definitivă este disponibilă numai când Modul test facturare este activ.');
+
+  return connection.transaction(() => {
+    const invoice = connection.prepare(`
+      SELECT i.id, i.invoice_number, i.paid_amount, i.pdf_path, s.company_id,
+             ii.issuer_id, ii.series, ii.sequence_number, ii.reference
+      FROM invoices i
+      JOIN stores s ON s.id = i.store_id
+      JOIN invoice_identities ii ON ii.invoice_id = i.id
+      WHERE i.id = ?
+    `).get(invoiceId) as {
+      id: number; invoice_number: string; paid_amount: number; pdf_path: string | null; company_id: number;
+      issuer_id: number; series: string; sequence_number: number | null; reference: string;
+    } | undefined;
+    if (!invoice) throw new Error('Factura nu există sau nu are identitate de emitent.');
+    const expected = `STERGE ${invoice.reference}`.toLocaleUpperCase('ro-RO');
+    const confirmation = requireText(confirmationInput, 'Confirmarea ștergerii', 150).toLocaleUpperCase('ro-RO');
+    if (confirmation !== expected) throw new Error(`Pentru confirmare scrie exact: STERGE ${invoice.reference}`);
+
+    const payments = Number((connection.prepare('SELECT COUNT(*) AS value FROM payments WHERE invoice_id = ?').get(invoiceId) as { value: number }).value);
+    const creditNotes = Number((connection.prepare(`
+      SELECT COUNT(*) AS value FROM credit_note_invoice_links link
+      JOIN credit_notes cn ON cn.id = link.credit_note_id
+      WHERE link.invoice_id = ?
+    `).get(invoiceId) as { value: number }).value);
+    const creditApplications = Number((connection.prepare('SELECT COUNT(*) AS value FROM invoice_credit_applications WHERE invoice_id = ?').get(invoiceId) as { value: number }).value);
+    const replacements = Number((connection.prepare('SELECT COUNT(*) AS value FROM invoice_replacements WHERE cancelled_invoice_id = ? OR replacement_invoice_id = ?').get(invoiceId, invoiceId) as { value: number }).value);
+    if (payments || creditNotes || creditApplications || replacements || Number(invoice.paid_amount) > EPSILON) {
+      throw new Error('Factura are plăți, Credit Notes, credit aplicat sau legături de reemitere. Pentru ștergerea întregului scenariu de test restaurează copia de siguranță inițială.');
+    }
+
+    const laterIdentity = invoice.sequence_number === null ? true : Boolean(connection.prepare(`
+      SELECT 1 FROM invoice_identities
+      WHERE issuer_id = ? AND series = ? AND sequence_number > ? LIMIT 1
+    `).get(invoice.issuer_id, invoice.series, invoice.sequence_number));
+    const issuer = connection.prepare('SELECT next_invoice_number FROM billing_issuers WHERE id = ?').get(invoice.issuer_id) as { next_invoice_number: number } | undefined;
+    const canRewind = invoice.sequence_number !== null && !laterIdentity && issuer?.next_invoice_number === invoice.sequence_number + 1;
+
+    connection.prepare('UPDATE billing_audit_events SET invoice_id = NULL WHERE invoice_id = ?').run(invoiceId);
+    connection.prepare('DELETE FROM invoice_import_batches WHERE invoice_id = ?').run(invoiceId);
+    connection.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
+    connection.prepare('DELETE FROM invoice_identities WHERE invoice_id = ?').run(invoiceId);
+    if (connection.prepare('DELETE FROM invoices WHERE id = ?').run(invoiceId).changes !== 1) throw new Error('Factura de test nu a putut fi ștearsă.');
+    if (canRewind) {
+      connection.prepare('UPDATE billing_issuers SET next_invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND next_invoice_number = ?')
+        .run(invoice.sequence_number, invoice.issuer_id, issuer!.next_invoice_number);
+    }
+    connection.prepare("INSERT INTO billing_audit_events (event_type, issuer_id, company_id, details) VALUES ('test_invoice_deleted', ?, ?, ?)")
+      .run(invoice.issuer_id, invoice.company_id, JSON.stringify({ reference: invoice.reference, testMode: true, counterRewound: canRewind, pdfPath: invoice.pdf_path }));
+    return { reference: invoice.reference, counterRewound: canRewind, pdfPath: invoice.pdf_path };
+  })();
+}
+
+export function updatePaymentTransaction(connection: SqliteDatabase, input: UpdatePaymentInput) {
+  const paymentId = requirePositiveInteger(input.id, 'Încasarea');
+  const amount = requireMoneyPositive(input.amount, 'Suma încasată');
+  const method = requireText(input.method, 'Metoda de plată', 20);
+  if (method !== 'cash' && method !== 'transfer') throw new Error('Metoda de plată trebuie să fie cash sau transfer bancar.');
+  const bankName = method === 'transfer' ? requireText(input.bankName, 'Banca', 100) : null;
+  if (bankName && bankName !== 'Barclays' && bankName !== 'Virgin') throw new Error('Banca trebuie să fie Barclays sau Virgin.');
+  const reason = requireText(input.reason, 'Motivul modificării', 500);
+
+  return connection.transaction(() => {
+    const payment = connection.prepare(`
+      SELECT id, company_id, invoice_id, issuer_id, amount, method, bank_name
+      FROM payments WHERE id = ?
+    `).get(paymentId) as {
+      id: number; company_id: number | null; invoice_id: number | null; issuer_id: number | null;
+      amount: number; method: string; bank_name: string | null;
+    } | undefined;
+    if (!payment || !payment.company_id || !payment.issuer_id) throw new Error('Încasarea nu există sau nu are companie și emitent asociate.');
+
+    if (payment.invoice_id) {
+      const hasCreditNote = connection.prepare(`
+        SELECT 1 FROM credit_note_invoice_links link JOIN credit_notes cn ON cn.id = link.credit_note_id
+        WHERE link.invoice_id = ? AND cn.status = 'issued' LIMIT 1
+      `).get(payment.invoice_id);
+      const hasAppliedCredit = connection.prepare('SELECT 1 FROM invoice_credit_applications WHERE invoice_id = ? AND reversed_at IS NULL LIMIT 1').get(payment.invoice_id);
+      if (hasCreditNote || hasAppliedCredit) throw new Error('Încasarea unei facturi cu Credit Note sau credit aplicat nu poate fi modificată direct.');
+      const otherPayments = Number((connection.prepare('SELECT COALESCE(SUM(amount), 0) AS value FROM payments WHERE invoice_id = ? AND id != ?').get(payment.invoice_id, paymentId) as { value: number }).value);
+      const financials = getInvoiceFinancials(connection, payment.invoice_id);
+      if (otherPayments + amount > financials.netAmount + EPSILON) throw new Error('Suma totală încasată nu poate depăși valoarea netă a facturii.');
+      connection.prepare('UPDATE payments SET amount = ?, method = ?, bank_name = ? WHERE id = ?').run(amount, method, bankName, paymentId);
+      connection.prepare('UPDATE invoices SET paid_amount = ? WHERE id = ?').run(otherPayments + amount, payment.invoice_id);
+      syncInvoiceFinancialStatus(connection, payment.invoice_id);
+    } else {
+      const entry = connection.prepare(`
+        SELECT id, original_amount, available_amount, status FROM company_credit_entries
+        WHERE source_type = 'payment_overpayment' AND source_id = ?
+      `).get(paymentId) as { id: number; original_amount: number; available_amount: number; status: string } | undefined;
+      if (!entry || entry.status !== 'active') throw new Error('Creditul asociat acestei încasări nu poate fi recalculat în siguranță.');
+      const consumed = Math.max(0, Number(entry.original_amount) - Number(entry.available_amount));
+      if (amount < consumed - EPSILON) throw new Error(`Suma nu poate fi mai mică de £${consumed.toFixed(2)}, deoarece această parte a creditului a fost deja folosită.`);
+      connection.prepare('UPDATE payments SET amount = ?, method = ?, bank_name = ? WHERE id = ?').run(amount, method, bankName, paymentId);
+      connection.prepare('UPDATE company_credit_entries SET original_amount = ?, available_amount = ? WHERE id = ?')
+        .run(amount, Math.max(0, amount - consumed), entry.id);
+      syncCompanyCreditBalance(connection, payment.company_id, payment.issuer_id);
+    }
+
+    connection.prepare(`INSERT INTO billing_audit_events (event_type, issuer_id, company_id, invoice_id, details) VALUES ('payment_updated', ?, ?, ?, ?)`)
+      .run(payment.issuer_id, payment.company_id, payment.invoice_id, JSON.stringify({
+        paymentId,
+        reason,
+        before: { amount: payment.amount, method: payment.method, bankName: payment.bank_name },
+        after: { amount, method, bankName },
+      }));
+    return { id: paymentId, amount, method, bankName };
   })();
 }
 

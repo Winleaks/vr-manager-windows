@@ -10,6 +10,7 @@ import { format } from 'date-fns';
 import { ro } from 'date-fns/locale';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
 import { NumericInput } from '../components/NumericInput';
+import { TextConfirmationModal } from '../components/TextConfirmationModal';
 
 interface InvoiceItem {
   id?: number;
@@ -61,6 +62,9 @@ export function BillingInvoices() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [issuerFilter, setIssuerFilter] = useState<string>('all');
   const [issuers, setIssuers] = useState<any[]>([]);
+  const [testMode, setTestMode] = useState(false);
+  const [isWriter, setIsWriter] = useState(false);
+  const [pendingInvoiceAction, setPendingInvoiceAction] = useState<Invoice | null>(null);
   
   // Date filter (opțional, default toate sau ultimele 30 zile)
   const [useDateFilter, setUseDateFilter] = useState(false);
@@ -110,18 +114,37 @@ export function BillingInvoices() {
     void loadInvoices();
   }, [loadInvoices]);
 
-  useEffect(() => { api.billing.getIssuers().then(setIssuers).catch(console.error); }, []);
+  useEffect(() => {
+    Promise.all([api.billing.getIssuers(), api.billing.getTestMode(), api.system.getDeviceRole()])
+      .then(([nextIssuers, mode, device]) => { setIssuers(nextIssuers); setTestMode(mode.enabled === true); setIsWriter(device.role === 'writer'); })
+      .catch(console.error);
+  }, []);
 
   const handleDeleteInvoice = async (inv: Invoice) => {
-    const reason = window.prompt(`Motivul anulării facturii #${inv.invoice_number}:`);
-    if (reason?.trim()) {
+    setPendingInvoiceAction(inv);
+  };
+
+  const confirmInvoiceAction = async (value: string) => {
+    const inv = pendingInvoiceAction;
+    if (!inv) return;
+    if (testMode) {
       try {
-        await api.billing.cancelInvoice(inv.id, reason.trim());
+        const result = await api.billing.deleteTestInvoice(inv.id, value);
         await loadInvoices();
-        alert(`Factura #${inv.invoice_number} a fost anulată și păstrată în registru. Anularea nu înlocuiește o notă de credit VAT.`);
+        setPendingInvoiceAction(null);
+        alert(`Factura de test #${result.reference} a fost ștearsă definitiv.${result.counterRewound ? ' Contorul emitentului a fost readus la numărul liber.' : ' Contorul nu a fost modificat.'}`);
       } catch (e: any) {
-        alert('Eroare la anularea facturii: ' + e.message);
+        throw new Error('Eroare la ștergerea facturii de test: ' + e.message);
       }
+      return;
+    }
+    try {
+      await api.billing.cancelInvoice(inv.id, value);
+      await loadInvoices();
+      setPendingInvoiceAction(null);
+      alert(`Factura #${inv.invoice_number} a fost anulată și păstrată în registru. Anularea nu înlocuiește o notă de credit VAT.`);
+    } catch (e: any) {
+      throw new Error('Eroare la anularea facturii: ' + e.message);
     }
   };
 
@@ -303,6 +326,7 @@ export function BillingInvoices() {
           <p className="text-slate-500 mt-2">Evidența facturilor pe societăți emitente, cu anulare auditabilă și retipărire PDF.</p>
         </div>
       </div>
+      {testMode && <div role="status" className="mb-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">Mod test activ: butonul coș șterge definitiv doar facturile fără plăți, Credit Notes, credit aplicat sau reemitere.</div>}
 
       {/* Controale de căutare & filtrare */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm mb-8 space-y-4">
@@ -464,22 +488,25 @@ export function BillingInvoices() {
                           {!isCancelled && Number(inv.creditedAmount || 0) < inv.total_amount - 0.005 && <button onClick={() => { window.location.hash = `/facturare/credit-notes?invoice=${inv.id}`; }} className="p-2 text-amber-700 hover:bg-amber-50 rounded-lg" title="Creează Credit Note"><FileMinus2 size={16} /></button>}
 
                           {/* Editează */}
-                          {!isCancelled && Number(inv.creditedAmount || 0) <= 0.005 && Number(inv.appliedCredit || 0) <= 0.005 ? <><button
+                          {!isCancelled && Number(inv.creditedAmount || 0) <= 0.005 && Number(inv.appliedCredit || 0) <= 0.005 && <button
                             onClick={() => handleOpenEdit(inv)}
+                            disabled={!isWriter}
                             className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
                             title="Editează detaliile facturii"
                           >
                             <Edit3 size={16} />
-                          </button>
+                          </button>}
 
-                          {/* Șterge */}
-                          <button
+                          {/* În modul live anulează; în modul test șterge definitiv */}
+                          {!isCancelled && <button
+                            disabled={!isWriter}
                             onClick={() => handleDeleteInvoice(inv)}
-                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                            title="Anulează factura și păstrează numărul"
+                            className={`p-2 rounded-lg transition-colors disabled:opacity-40 ${testMode ? 'text-rose-700 bg-rose-50 hover:bg-rose-100' : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'}`}
+                            title={testMode ? 'Șterge definitiv factura de test' : 'Anulează factura și păstrează numărul'}
                           >
                             <Trash2 size={16} />
-                          </button></> : isCancelled ? <button onClick={() => handleReissue(inv)} className="p-2 text-amber-700 hover:bg-amber-50 rounded-lg" title="Reemite cu număr nou"><RefreshCw size={16} /></button> : null}
+                          </button>}
+                          {isCancelled && <button disabled={!isWriter} onClick={() => handleReissue(inv)} className="p-2 text-amber-700 hover:bg-amber-50 rounded-lg disabled:opacity-40" title="Reemite cu număr nou"><RefreshCw size={16} /></button>}
                         </div>
                       </td>
                     </tr>
@@ -641,6 +668,16 @@ export function BillingInvoices() {
           </div>
         </div>
       )}
+      {pendingInvoiceAction && <TextConfirmationModal
+        title={testMode ? `Șterge definitiv factura #${pendingInvoiceAction.invoice_number}` : `Anulează factura #${pendingInvoiceAction.invoice_number}`}
+        description={testMode ? 'Ștergerea este permisă numai pentru o factură de test fără dependențe financiare și poate fi recuperată doar din backup.' : 'Factura și numărul rămân în registru. Facturile cu plăți sau Credit Notes nu pot fi anulate direct.'}
+        fieldLabel={testMode ? 'Confirmare' : 'Motivul anulării'}
+        confirmLabel={testMode ? 'Șterge definitiv' : 'Anulează factura'}
+        expectedText={testMode ? `STERGE ${pendingInvoiceAction.invoice_number}` : undefined}
+        dangerous
+        onCancel={() => setPendingInvoiceAction(null)}
+        onConfirm={confirmInvoiceAction}
+      />}
     </div>
   );
 }

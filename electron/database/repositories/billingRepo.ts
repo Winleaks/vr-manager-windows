@@ -5,10 +5,15 @@ import {
   updateInvoiceTransaction,
   createWeeklyInvoiceBatchTransaction,
   cancelInvoiceTransaction,
+  deleteInvoiceForTestingTransaction,
+  getBillingTestMode as readBillingTestMode,
   reissueCancelledWeeklyInvoiceTransaction,
+  setBillingTestModeTransaction,
+  updatePaymentTransaction,
   type WeeklyInvoiceInput,
   type CompanyPaymentInput,
   type InvoiceOrderInput,
+  type UpdatePaymentInput,
 } from './billingTransactions';
 import {
   assignCompanyIssuer as assignCompanyIssuerTransaction,
@@ -391,6 +396,10 @@ export function recordCompanyPayment(data: CompanyPaymentInput) {
   return recordCompanyPaymentTransaction(db, data);
 }
 
+export function updatePayment(data: UpdatePaymentInput) {
+  return updatePaymentTransaction(db, data);
+}
+
 export function createInvoiceBatchFromSync(orders: InvoiceOrderInput[], invoiceDate: string) {
   return createInvoiceBatchTransaction(db, orders, invoiceDate);
 }
@@ -492,6 +501,18 @@ export function setCreditNotePdfState(id: number, pdfPath: string | null, pdfSta
 
 export function cancelInvoice(invoiceId: number, reason: string) {
   return cancelInvoiceTransaction(db, invoiceId, reason);
+}
+
+export function getBillingTestMode() {
+  return { enabled: readBillingTestMode(db) };
+}
+
+export function setBillingTestMode(enabled: boolean, confirmation: string) {
+  return setBillingTestModeTransaction(db, enabled, confirmation);
+}
+
+export function deleteInvoiceForTesting(invoiceId: number, confirmation: string) {
+  return deleteInvoiceForTestingTransaction(db, invoiceId, confirmation);
 }
 
 export function reissueCancelledInvoice(invoiceId: number, invoiceDate: string) {

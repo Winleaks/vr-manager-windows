@@ -54,9 +54,13 @@ export function registerBillingHandlers() {
   handleTrustedIpc('billing:getAllCompaniesAndStores', () => billingRepo.getAllCompaniesAndStores());
   handleTrustedIpc('billing:getCompanyProfile', (_, companyId) => billingRepo.getCompanyProfileDetails(companyId));
   handleTrustedIpc('billing:recordCompanyPayment', (_, data) => billingRepo.recordCompanyPayment(data));
+  handleTrustedIpc('billing:updatePayment', (_, data) => billingRepo.updatePayment(data));
   handleTrustedIpc('billing:getInvoices', (_, startDate, endDate, issuerId) => billingRepo.getInvoicesByDateRange(startDate, endDate, issuerId));
   handleTrustedIpc('billing:updateInvoice', (_, data) => billingRepo.updateInvoiceWithItems(data.id, data.invoiceDate, data.items || []));
   handleTrustedIpc('billing:cancelInvoice', (_, data) => billingRepo.cancelInvoice(data.invoiceId, data.reason));
+  handleTrustedIpc('billing:getTestMode', () => billingRepo.getBillingTestMode());
+  handleTrustedIpc('billing:setTestMode', (_, data) => billingRepo.setBillingTestMode(data.enabled, data.confirmation));
+  handleTrustedIpc('billing:deleteTestInvoice', (_, data) => billingRepo.deleteInvoiceForTesting(data.invoiceId, data.confirmation));
   handleTrustedIpc('billing:reissueCancelledInvoice', (_, invoiceId: number) => billingRepo.reissueCancelledInvoice(invoiceId, new Date().toISOString().slice(0, 10)));
   handleTrustedIpc('billing:getStats', (_, issuerId?: number) => billingRepo.getBillingStats(issuerId));
   handleTrustedIpc('billing:getProducts', () => billingRepo.getCloudProducts());

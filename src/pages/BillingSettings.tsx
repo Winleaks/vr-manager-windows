@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Building2, Check, Database, FileImage, Loader2, Save, Search, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Building2, Check, Database, FileImage, Loader2, Save, Search, ShieldCheck } from 'lucide-react';
 import { api } from '../shared/api';
 import { NumericInput } from '../components/NumericInput';
+import { TextConfirmationModal } from '../components/TextConfirmationModal';
 
 type Issuer = any;
 
@@ -41,13 +42,15 @@ export function BillingSettings() {
   const [vrBakerToken, setVrBakerToken] = useState('');
   const [connectionMessage, setConnectionMessage] = useState('');
   const [isWriter, setIsWriter] = useState(false);
+  const [testMode, setTestMode] = useState(false);
+  const [pendingTestMode, setPendingTestMode] = useState<boolean | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = async (preferredIssuerId?: number) => {
-    const [nextIssuers, nextCompanies, settings, status, device] = await Promise.all([
-      api.billing.getIssuers(), api.billing.getAllCompaniesAndStores(), api.billing.getSettings(), api.billing.getVrBakerStatus(), api.system.getDeviceRole(),
+    const [nextIssuers, nextCompanies, settings, status, device, testModeState] = await Promise.all([
+      api.billing.getIssuers(), api.billing.getAllCompaniesAndStores(), api.billing.getSettings(), api.billing.getVrBakerStatus(), api.system.getDeviceRole(), api.billing.getTestMode(),
     ]);
-    setIssuers(nextIssuers || []); setCompanies(nextCompanies || []); setInvoiceLogo(settings.invoiceLogo || ''); setVrBaker(status); setIsWriter(device.role === 'writer');
+    setIssuers(nextIssuers || []); setCompanies(nextCompanies || []); setInvoiceLogo(settings.invoiceLogo || ''); setVrBaker(status); setIsWriter(device.role === 'writer'); setTestMode(testModeState.enabled === true);
     const issuer = nextIssuers.find((item: Issuer) => item.id === preferredIssuerId) || nextIssuers.find((item: Issuer) => item.is_default === 1) || nextIssuers[0];
     if (issuer) { setSelectedIssuerId(issuer.id); setIssuerForm(toForm(issuer)); }
   };
@@ -83,6 +86,23 @@ export function BillingSettings() {
     catch (cause: any) { setError(cause.message || 'Emitentul nu a putut fi atribuit.'); }
   };
 
+  const changeTestMode = async () => {
+    const enabling = !testMode;
+    setPendingTestMode(enabling);
+  };
+
+  const confirmTestMode = async (confirmation: string) => {
+    if (pendingTestMode === null) return;
+    setError('');
+    try {
+      const result = await api.billing.setTestMode(pendingTestMode, confirmation);
+      setTestMode(result.enabled === true);
+      setPendingTestMode(null);
+    } catch (cause: any) {
+      throw new Error(cause.message || 'Modul de facturare nu a putut fi schimbat.');
+    }
+  };
+
   if (!issuerForm) return <div className="p-12 flex items-center gap-3 text-slate-500"><Loader2 className="animate-spin" /> Se încarcă setările...</div>;
   const fieldClass = 'w-full mt-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-500 text-sm';
 
@@ -95,6 +115,13 @@ export function BillingSettings() {
     </div>
     {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800">{error}</div>}
     {!isWriter && <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">Mod consultare: setările și atribuirile pot fi schimbate numai pe calculatorul Writer.</div>}
+
+    <section className={`rounded-2xl border p-5 shadow-sm ${testMode ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-white'}`}>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-start gap-3"><AlertTriangle className={testMode ? 'text-amber-600' : 'text-slate-400'} /><div><h2 className="font-bold text-slate-900">Mod test facturare</h2><p className="mt-1 max-w-3xl text-sm text-slate-600">{testMode ? 'ACTIV — facturile simple de test pot fi șterse definitiv din pagina Facturi Emise. Facturile cu plăți, Credit Notes sau reemiteri se curăță prin restaurarea copiei inițiale.' : 'INACTIV — comportament live: numerele emise se păstrează, iar facturile pot fi doar anulate.'}</p></div></div>
+        <button type="button" disabled={!isWriter} onClick={changeTestMode} className={`rounded-xl px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50 ${testMode ? 'bg-slate-700 hover:bg-slate-800' : 'bg-amber-600 hover:bg-amber-700'}`}>{testMode ? 'Începe operarea live' : 'Activează modul test'}</button>
+      </div>
+    </section>
 
     <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
       <div className="p-5 border-b border-slate-200 flex flex-wrap gap-3">{issuers.map((issuer) => <button key={issuer.id} onClick={() => { setSelectedIssuerId(issuer.id); setIssuerForm(toForm(issuer)); setError(''); }} className={`px-4 py-3 rounded-xl border text-left ${selectedIssuerId === issuer.id ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 bg-white'}`}>
@@ -134,5 +161,15 @@ export function BillingSettings() {
     </section>
 
     <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm"><fieldset disabled={!isWriter}><div className="flex items-center gap-3 mb-5"><Database className="text-slate-600" /><div><h2 className="text-lg font-bold">Conexiune VR Baker Platform</h2><p className="text-sm text-slate-500">API read-only pentru comenzi, companii, magazine și produse.</p></div></div><div className="grid grid-cols-1 md:grid-cols-2 gap-4"><input readOnly value={vrBaker.endpoint} className="bg-slate-100 border rounded-xl px-4 py-2.5 text-xs" /><input type="password" value={vrBakerToken} onChange={(e) => setVrBakerToken(e.target.value)} placeholder={vrBaker.hasToken ? 'Token salvat — introdu unul nou pentru rotație' : 'Introdu tokenul dedicat'} className="border rounded-xl px-4 py-2.5" /><div className="md:col-span-2 flex flex-wrap gap-3 items-center"><button disabled={!vrBakerToken} onClick={async () => { const result = await api.billing.configureVrBakerToken(vrBakerToken); setConnectionMessage(result.message); if (result.success) { setVrBakerToken(''); setVrBaker(await api.billing.getVrBakerStatus()); } }} className="bg-indigo-600 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-sm font-semibold">Verifică și salvează tokenul</button><button disabled={!vrBaker.hasToken} onClick={async () => setConnectionMessage((await api.billing.testVrBakerConnection()).message)} className="bg-slate-100 disabled:opacity-50 px-4 py-2 rounded-xl text-sm font-semibold">Testează conexiunea</button><span className={vrBaker.hasToken ? 'text-emerald-700 text-sm font-medium' : 'text-amber-700 text-sm font-medium'}>{vrBaker.hasToken ? 'Token configurat' : 'Token neconfigurat'}</span></div>{connectionMessage && <p className="md:col-span-2 text-sm text-slate-600">{connectionMessage}</p>}</div></fieldset></section>
+    {pendingTestMode !== null && <TextConfirmationModal
+      title={pendingTestMode ? 'Activează Modul test facturare' : 'Începe operarea live'}
+      description={pendingTestMode ? 'Facturile simple de test vor putea fi șterse definitiv. Păstrează copia de siguranță inițială pentru scenariile cu plăți și Credit Notes.' : 'După dezactivare, facturile emise vor putea fi doar anulate și numerele lor vor rămâne în registru.'}
+      fieldLabel="Confirmare"
+      confirmLabel={pendingTestMode ? 'Activează modul test' : 'Începe live'}
+      expectedText={pendingTestMode ? 'MOD TEST' : 'INCEP LIVE'}
+      dangerous={pendingTestMode}
+      onCancel={() => setPendingTestMode(null)}
+      onConfirm={confirmTestMode}
+    />}
   </div>;
 }

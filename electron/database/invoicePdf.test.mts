@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { generateInvoicePDF } from '../../src/utils/pdfGenerator.ts';
+import { generateInvoicePDF, invoiceProductDescription } from '../../src/utils/pdfGenerator.ts';
 
 const invoice = {
   invoiceNumber: 'SERIE-1', invoiceDate: '2026-09-01',
@@ -22,4 +22,9 @@ test('generates valid VAT and non-VAT invoice PDFs from issuer snapshots', () =>
   assert.ok(vat.byteLength > 10_000);
   assert.ok(nonVat.byteLength > 10_000);
   assert.notDeepEqual(vat, nonVat);
+});
+
+test('invoice product description contains only English and Romanian names', () => {
+  const item = { productName: 'Cheese Pie', name_ro: 'Plăcintă cu brânză', variant_label: 'Large' };
+  assert.equal(invoiceProductDescription(item), 'CHEESE PIE\nPLĂCINTĂ CU BRÂNZĂ');
 });

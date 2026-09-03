@@ -10,6 +10,13 @@ function hexToRgb(hex: string): [number, number, number] {
     : [79, 70, 229]; // Indigo-600 implicit
 }
 
+export function invoiceProductDescription(item: { productName?: string; name_ro?: string }) {
+  const english = fixRomanianDiacritics(item.productName || 'Product').toLocaleUpperCase('en-GB');
+  return item.name_ro
+    ? `${english}\n${fixRomanianDiacritics(item.name_ro).toLocaleUpperCase('ro-RO')}`
+    : english;
+}
+
 export function generateInvoicePDF(
   settings: any,
   invoiceData: {
@@ -224,15 +231,7 @@ export function generateInvoicePDF(
   const tableRows: any[] = [];
 
   invoiceData.items.forEach((item, index) => {
-    let mainTitle = fixRomanianDiacritics(item.productName || 'Product').toLocaleUpperCase('en-GB');
-    if (item.variant_label) {
-      mainTitle += ` [${fixRomanianDiacritics(item.variant_label).toLocaleUpperCase('en-GB')}]`;
-    }
-    
-    let descriptionText = mainTitle;
-    if (item.name_ro) {
-      descriptionText += `\n${fixRomanianDiacritics(item.name_ro).toLocaleUpperCase('ro-RO')}`;
-    }
+    const descriptionText = invoiceProductDescription(item);
 
     const row = [
       (index + 1).toString(),

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Calendar, Loader2, FileText, Printer, Building2, Trash2, ShoppingBag, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../shared/api';
 import DatePicker from 'react-datepicker';
@@ -6,6 +6,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import { format, startOfWeek, endOfWeek } from 'date-fns';
 import { ro } from 'date-fns/locale';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
+import { TextConfirmationModal } from '../components/TextConfirmationModal';
 
 export function BillingOrders() {
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -13,6 +14,12 @@ export function BillingOrders() {
   const [isGeneratingAll, setIsGeneratingAll] = useState(false);
   const [generatingOrderId, setGeneratingOrderId] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<any>(null);
+  const [testMode, setTestMode] = useState(false);
+  const [pendingOrderAction, setPendingOrderAction] = useState<any | null>(null);
+
+  useEffect(() => {
+    api.billing.getTestMode().then((mode) => setTestMode(mode.enabled === true)).catch(console.error);
+  }, []);
 
   const weekStart = startOfWeek(selectedDate, { weekStartsOn: 1 });
   const weekEnd = endOfWeek(selectedDate, { weekStartsOn: 1 });
@@ -177,25 +184,46 @@ export function BillingOrders() {
 
   const handleDeleteInvoice = async (order: any) => {
     if (!order.assignedInvoiceNumber) return;
-    const reason = window.prompt(`Motivul anulării facturii #${order.assignedInvoiceNumber} pentru ${order.store.name}:`);
-    if (reason?.trim()) {
+    setPendingOrderAction(order);
+  };
+
+  const confirmOrderInvoiceAction = async (value: string) => {
+    const order = pendingOrderAction;
+    if (!order?.assignedInvoiceNumber) return;
+    if (testMode) {
       try {
         const allInvoices = await api.billing.getInvoices();
-        const inv = allInvoices.find((i: any) => i.invoice_number === order.assignedInvoiceNumber);
+        const inv = allInvoices.find((item: any) => item.invoice_number === order.assignedInvoiceNumber);
         if (!inv) throw new Error('Factura nu a fost găsită.');
-        await api.billing.cancelInvoice(inv.id, reason.trim());
-
-        setSyncResult((prev: any) => ({
-          ...prev,
-          ordersByStore: prev.ordersByStore.map((o: any) => 
-            o.store.id === order.store.id ? { ...o, billingState: 'cancelled' } : o
-          )
+        await api.billing.deleteTestInvoice(inv.id, value);
+        setSyncResult((previous: any) => ({
+          ...previous,
+          ordersByStore: previous.ordersByStore.map((item: any) => item.store.id === order.store.id
+            ? { ...item, billingState: 'ready', assignedInvoiceId: null, assignedInvoiceNumber: null, assignedInvoiceDate: null }
+            : item),
         }));
-
-        alert(`Factura #${order.assignedInvoiceNumber} a fost anulată și păstrată în registru. Anularea nu înlocuiește o notă de credit VAT.`);
-      } catch (e: any) {
-        alert('Eroare la anulare: ' + e.message);
+        setPendingOrderAction(null);
+        alert(`Factura de test #${order.assignedInvoiceNumber} a fost ștearsă definitiv.`);
+      } catch (error: any) {
+        throw new Error('Eroare la ștergerea facturii de test: ' + error.message);
       }
+      return;
+    }
+    try {
+      const allInvoices = await api.billing.getInvoices();
+      const inv = allInvoices.find((item: any) => item.invoice_number === order.assignedInvoiceNumber);
+      if (!inv) throw new Error('Factura nu a fost găsită.');
+      await api.billing.cancelInvoice(inv.id, value);
+
+      setSyncResult((previous: any) => ({
+        ...previous,
+        ordersByStore: previous.ordersByStore.map((item: any) => item.store.id === order.store.id ? { ...item, billingState: 'cancelled' } : item),
+      }));
+
+      setPendingOrderAction(null);
+      alert(`Factura #${order.assignedInvoiceNumber} a fost anulată și păstrată în registru. Anularea nu înlocuiește o notă de credit VAT.`);
+    } catch (error: any) {
+      throw new Error('Eroare la anulare: ' + error.message);
     }
   };
 
@@ -360,8 +388,8 @@ export function BillingOrders() {
                           {isGenerated && (
                             <button
                               onClick={() => handleDeleteInvoice(data)}
-                              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                              title="Anulează factura și păstrează numărul în registru"
+                              className={`p-2 rounded-lg transition-colors ${testMode ? 'bg-rose-50 text-rose-700 hover:bg-rose-100' : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'}`}
+                              title={testMode ? 'Șterge definitiv factura de test' : 'Anulează factura și păstrează numărul în registru'}
                             >
                               <Trash2 size={16} />
                             </button>
@@ -376,6 +404,16 @@ export function BillingOrders() {
           )}
         </div>
       )}
+      {pendingOrderAction && <TextConfirmationModal
+        title={testMode ? `Șterge definitiv factura #${pendingOrderAction.assignedInvoiceNumber}` : `Anulează factura #${pendingOrderAction.assignedInvoiceNumber}`}
+        description={testMode ? 'Factura simplă de test va fi eliminată definitiv din SQLite.' : `Factura pentru ${pendingOrderAction.store.name} rămâne în registru cu status anulat.`}
+        fieldLabel={testMode ? 'Confirmare' : 'Motivul anulării'}
+        confirmLabel={testMode ? 'Șterge definitiv' : 'Anulează factura'}
+        expectedText={testMode ? `STERGE ${pendingOrderAction.assignedInvoiceNumber}` : undefined}
+        dangerous
+        onCancel={() => setPendingOrderAction(null)}
+        onConfirm={confirmOrderInvoiceAction}
+      />}
     </div>
   );
 }
