@@ -12,6 +12,7 @@ import { ensureFinishedProductCatalogSchema } from './finishedProductCatalog'
 import { ensureRawMaterialLocalizationSchema } from './rawMaterialLocalization'
 import { ensureInvoiceItemLocalizationSchema } from './invoiceItemLocalization'
 import { ensureBillingIssuerSchema } from './billingIssuers'
+import { ensureCreditNoteSchema } from './creditNotes'
 
 export { verifyDatabaseFile } from './databaseValidation'
 
@@ -42,6 +43,7 @@ if (!fs.existsSync(dbFolder)) {
 }
 
 export const dbPath = path.join(dbFolder, 'bazadedate.db')
+let databaseExistedAtStartup = fs.existsSync(dbPath)
 
 export function evaluateDb(filePath: string) {
   try {
@@ -136,6 +138,7 @@ if (!fs.existsSync(dbPath)) {
     }
   }
 }
+databaseExistedAtStartup = fs.existsSync(dbPath)
 
 function openDatabase() {
   const connection = new Database(dbPath, { verbose: isDev ? console.log : undefined })
@@ -156,6 +159,10 @@ export let lastVerifiedBackupTime: string | null = null;
 export function initDb() {
   // 1. Execuția schemei și a indecșilor B-Tree
   db.exec(initialSchema)
+
+  // Credit Notes changes the authoritative financial balance. Keep a verified,
+  // pre-migration copy so the Writer can be recovered without touching Drive.
+  createPreMigrationSnapshotIfNeeded(13)
   
   // 2. Rularea migrărilor de schemă
   runMigrations()
@@ -170,6 +177,22 @@ export function initDb() {
   if (count.count === 0) {
     db.exec(seedData)
   }
+}
+
+function createPreMigrationSnapshotIfNeeded(targetVersion: number) {
+  if (!databaseExistedAtStartup) return
+  const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get()
+  const version = table
+    ? Number((db.prepare('SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations').get() as { version: number }).version)
+    : 0
+  if (version >= targetVersion) return
+  const backupDir = path.join(dbFolder, 'backups')
+  fs.mkdirSync(backupDir, { recursive: true })
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const snapshotPath = path.join(backupDir, `pre-migration-v${targetVersion}-${stamp}.db`)
+  db.prepare('VACUUM INTO ?').run(snapshotPath)
+  verifyDatabaseFile(snapshotPath)
+  console.log(`[MIGRATION] Snapshot verificat creat înainte de v${targetVersion}: ${snapshotPath}`)
 }
 
 function runMigrations() {
@@ -325,6 +348,14 @@ function runMigrations() {
         description: "Facturare cu societăți emitente, serii și credite separate",
         up: () => {
           ensureBillingIssuerSchema(db);
+        }
+      },
+      {
+        version: 13,
+        description: "Credit Notes, registru de credit și legături sigure cu stocul",
+        up: () => {
+          ensureBillingIssuerSchema(db);
+          ensureCreditNoteSchema(db);
         }
       }
     ];

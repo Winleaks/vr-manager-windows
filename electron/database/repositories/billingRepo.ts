@@ -18,6 +18,19 @@ import {
   type UpdateBillingIssuerInput,
 } from '../billingIssuers';
 import type { VrBakerCompany, VrBakerProduct, VrBakerStore } from '../../integrations/vrBakerApiClient';
+import {
+  applyCompanyCreditTransaction,
+  cancelCreditNoteTransaction,
+  createCreditNoteTransaction,
+  getCompanyCreditLedger,
+  getCreditNote,
+  getCreditNoteDraft,
+  getCreditNotes,
+  getInvoiceFinancials,
+  reverseCreditApplicationTransaction,
+  type ApplyCompanyCreditInput,
+  type CreateCreditNoteInput,
+} from '../creditNotes';
 
 // Settings
 export function getAppSetting(key: string): string | null {
@@ -258,13 +271,10 @@ export function getAllCompaniesAndStores() {
 
     if (storeIds.length > 0) {
       const placeholders = storeIds.map(() => '?').join(',');
-      const res = db.prepare(`
-        SELECT COUNT(*) as cnt, SUM(total_amount - paid_amount) as unpaid 
-        FROM invoices 
-        WHERE store_id IN (${placeholders}) AND status NOT IN ('paid', 'cancelled') AND (total_amount - paid_amount) > 0
-      `).get(...storeIds) as any;
-      unpaidInvoicesCount = res?.cnt || 0;
-      unpaidTotal = res?.unpaid || 0;
+      const invoiceIds = db.prepare(`SELECT id FROM invoices WHERE store_id IN (${placeholders}) AND status != 'cancelled'`).all(...storeIds) as Array<{ id: number }>;
+      const balances = invoiceIds.map((row) => getInvoiceFinancials(db, row.id)).filter((row) => row.outstanding > 0.005);
+      unpaidInvoicesCount = balances.length;
+      unpaidTotal = balances.reduce((sum, row) => sum + row.outstanding, 0);
     }
 
     return {
@@ -310,8 +320,10 @@ export function getCompanyProfileDetails(companyId: number) {
 
     invoices = invoices.map(inv => {
       const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id) as any[];
+      const financials = getInvoiceFinancials(db, inv.id);
       return {
         ...inv,
+        ...financials,
         issuer_settings: invoiceSettingsFromIdentity(inv),
         items: items.map(it => ({
           id: it.id,
@@ -321,7 +333,9 @@ export function getCompanyProfileDetails(companyId: number) {
           unit: it.unit,
           quantity: it.quantity,
           unitPrice: it.unit_price,
-          totalPrice: it.total_price
+          totalPrice: it.total_price,
+          externalProductId: it.external_product_id,
+          finishedProductId: it.finished_product_id,
         }))
       };
     });
@@ -337,10 +351,13 @@ export function getCompanyProfileDetails(companyId: number) {
   `).all(companyId) as any[];
 
   const activeInvoices = invoices.filter((inv) => inv.status !== 'cancelled');
-  const totalInvoiced = activeInvoices.reduce((acc, inv) => acc + (inv.total_amount || 0), 0);
-  const totalPaid = activeInvoices.reduce((acc, inv) => acc + (inv.paid_amount || 0), 0);
-  const unpaidInvoices = activeInvoices.filter(inv => inv.status !== 'paid' && (inv.total_amount - inv.paid_amount) > 0);
-  const totalUnpaid = unpaidInvoices.reduce((acc, inv) => acc + ((inv.total_amount || 0) - (inv.paid_amount || 0)), 0);
+  const totalInvoiced = activeInvoices.reduce((acc, inv) => acc + (inv.grossAmount || 0), 0);
+  const totalCredited = activeInvoices.reduce((acc, inv) => acc + (inv.creditedAmount || 0), 0);
+  const totalNet = activeInvoices.reduce((acc, inv) => acc + (inv.netAmount || 0), 0);
+  const totalPaid = activeInvoices.reduce((acc, inv) => acc + (inv.cashPaid || 0), 0);
+  const totalCreditApplied = activeInvoices.reduce((acc, inv) => acc + (inv.appliedCredit || 0), 0);
+  const unpaidInvoices = activeInvoices.filter(inv => inv.outstanding > 0.005);
+  const totalUnpaid = unpaidInvoices.reduce((acc, inv) => acc + (inv.outstanding || 0), 0);
 
   return {
     company: {
@@ -357,9 +374,13 @@ export function getCompanyProfileDetails(companyId: number) {
     invoices,
     unpaidInvoices,
     payments,
+    creditLedger: getCompanyCreditLedger(db, companyId),
     stats: {
       totalInvoiced,
+      totalCredited,
+      totalNet,
       totalPaid,
+      totalCreditApplied,
       totalUnpaid,
       creditBalance: company.credit_balance || 0
     }
@@ -415,6 +436,7 @@ export function getInvoicesByDateRange(startDate?: string, endDate?: string, iss
     const items = db.prepare(`SELECT * FROM invoice_items WHERE invoice_id = ?`).all(inv.id) as any[];
     return {
       ...inv,
+      ...getInvoiceFinancials(db, inv.id),
       issuer_settings: invoiceSettingsFromIdentity(inv),
       items: items.map(item => ({
         id: item.id,
@@ -424,7 +446,9 @@ export function getInvoicesByDateRange(startDate?: string, endDate?: string, iss
         unit: item.unit,
         quantity: item.quantity,
         unitPrice: item.unit_price,
-        totalPrice: item.total_price
+        totalPrice: item.total_price,
+        externalProductId: item.external_product_id,
+        finishedProductId: item.finished_product_id,
       }))
     };
   });
@@ -443,19 +467,27 @@ export function updateInvoiceWithItems(
 
 // Dashboard calculations
 export function getBillingStats(issuerId?: number) {
-  const result = db.prepare(`
-    SELECT 
-      SUM(total_amount) as total_invoiced,
-      SUM(paid_amount) as total_paid,
-      SUM(total_amount - paid_amount) as total_unpaid
-    FROM invoices i LEFT JOIN invoice_identities ii ON ii.invoice_id = i.id
-    WHERE i.status != 'cancelled' AND (? IS NULL OR ii.issuer_id = ?)
-  `).get(issuerId ?? null, issuerId ?? null) as any;
+  const invoiceIds = db.prepare(`SELECT i.id FROM invoices i LEFT JOIN invoice_identities ii ON ii.invoice_id = i.id WHERE i.status != 'cancelled' AND (? IS NULL OR ii.issuer_id = ?)`).all(issuerId ?? null, issuerId ?? null) as Array<{ id: number }>;
+  const rows = invoiceIds.map((row) => getInvoiceFinancials(db, row.id));
   return {
-    totalInvoiced: result?.total_invoiced || 0,
-    totalPaid: result?.total_paid || 0,
-    totalUnpaid: result?.total_unpaid || 0
+    totalInvoiced: rows.reduce((sum, row) => sum + row.grossAmount, 0),
+    totalCredited: rows.reduce((sum, row) => sum + row.creditedAmount, 0),
+    totalNet: rows.reduce((sum, row) => sum + row.netAmount, 0),
+    totalPaid: rows.reduce((sum, row) => sum + row.cashPaid, 0),
+    totalCreditApplied: rows.reduce((sum, row) => sum + row.appliedCredit, 0),
+    totalUnpaid: rows.reduce((sum, row) => sum + row.outstanding, 0),
   };
+}
+
+export function readCreditNoteDraft(invoiceIds?: number[]) { return getCreditNoteDraft(db, invoiceIds); }
+export function issueCreditNote(data: CreateCreditNoteInput) { return createCreditNoteTransaction(db, data); }
+export function listCreditNotes(filters?: any) { return getCreditNotes(db, filters); }
+export function readCreditNote(id: number) { return getCreditNote(db, id); }
+export function cancelCreditNote(id: number, reason: string, acknowledgeAccountingRisk: boolean) { return cancelCreditNoteTransaction(db, id, reason, acknowledgeAccountingRisk); }
+export function applyCompanyCredit(data: ApplyCompanyCreditInput) { return applyCompanyCreditTransaction(db, data); }
+export function reverseCreditApplication(id: number, reason: string) { return reverseCreditApplicationTransaction(db, id, reason); }
+export function setCreditNotePdfState(id: number, pdfPath: string | null, pdfStatus: 'pending' | 'ready' | 'error', cloudStatus?: 'pending' | 'ready' | 'error') {
+  db.prepare(`UPDATE credit_notes SET pdf_path = ?, pdf_status = ?, cloud_status = COALESCE(?, cloud_status) WHERE id = ?`).run(pdfPath, pdfStatus, cloudStatus || null, id);
 }
 
 export function cancelInvoice(invoiceId: number, reason: string) {

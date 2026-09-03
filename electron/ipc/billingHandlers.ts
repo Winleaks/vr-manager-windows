@@ -4,6 +4,11 @@ import { aggregateWeeklyOrders } from '../integrations/weeklyInvoiceImport';
 import { createVrBakerClient, syncVrBakerCatalog, syncVrBakerEntities } from '../integrations/vrBakerIntegration';
 import { hasVrBakerApiToken, removeLegacySupabaseCredential, setVrBakerApiToken } from '../integrations/vrBakerCredentials';
 import { validateWeeklyPeriod, VR_BAKER_API_ENDPOINT } from '../integrations/vrBakerApiClient';
+import { app, shell } from 'electron';
+import fs from 'node:fs';
+import { generateCreditNotePdf } from '../reports/creditNotePdf';
+import { creditNoteFilename, saveCreditNotePdf } from '../reports/creditNoteDelivery';
+import { downloadCreditNotePdfFromCloud, uploadCreditNotePdfToCloud } from '../database/cloudSync';
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : 'Operațiunea a eșuat.';
@@ -58,6 +63,38 @@ export function registerBillingHandlers() {
   handleTrustedIpc('billing:getIssuers', () => billingRepo.getBillingIssuers());
   handleTrustedIpc('billing:updateIssuer', (_, data) => billingRepo.updateBillingIssuer(data));
   handleTrustedIpc('billing:assignCompanyIssuer', (_, data) => billingRepo.assignCompanyIssuer(data.companyId, data.issuerId));
+  handleTrustedIpc('billing:getCreditNoteDraft', (_, invoiceIds?: number[]) => billingRepo.readCreditNoteDraft(invoiceIds));
+  handleTrustedIpc('billing:createCreditNote', (_, data) => billingRepo.issueCreditNote(data));
+  handleTrustedIpc('billing:getCreditNotes', (_, filters?: any) => billingRepo.listCreditNotes(filters));
+  handleTrustedIpc('billing:getCreditNote', (_, id: number) => billingRepo.readCreditNote(id));
+  handleTrustedIpc('billing:cancelCreditNote', (_, data) => billingRepo.cancelCreditNote(data.id, data.reason, data.acknowledgeAccountingRisk));
+  handleTrustedIpc('billing:applyCompanyCredit', (_, data) => billingRepo.applyCompanyCredit(data));
+  handleTrustedIpc('billing:reverseCreditApplication', (_, data) => billingRepo.reverseCreditApplication(data.id, data.reason));
+  handleTrustedIpc('billing:prepareCreditNotePdf', async (_, id: number) => {
+    const note = billingRepo.readCreditNote(id);
+    try {
+      const pdf = generateCreditNotePdf(note);
+      const saved = saveCreditNotePdf(app.getPath('documents'), note.issuer_code, note.reference, pdf);
+      billingRepo.setCreditNotePdfState(id, saved.filePath, 'ready', 'pending');
+      const cloud = await uploadCreditNotePdfToCloud(saved.filename, note.issuer_code, pdf);
+      billingRepo.setCreditNotePdfState(id, saved.filePath, 'ready', cloud.success ? 'ready' : 'error');
+      return { success: true, ...saved, cloud };
+    } catch (error) {
+      billingRepo.setCreditNotePdfState(id, null, 'error', 'error');
+      return { success: false, message: message(error) };
+    }
+  });
+  handleTrustedIpc('billing:openCreditNotePdf', async (_, id: number) => {
+    const note = billingRepo.readCreditNote(id);
+    let filePath = note.pdf_path && fs.existsSync(note.pdf_path) ? note.pdf_path : null;
+    if (!filePath) {
+      const cloud = await downloadCreditNotePdfFromCloud(creditNoteFilename(note.reference), note.issuer_code);
+      if (cloud.success && cloud.buffer) filePath = saveCreditNotePdf(app.getPath('documents'), note.issuer_code, note.reference, cloud.buffer).filePath;
+      else return { success: false, notFound: true, message: cloud.error };
+    }
+    const error = await shell.openPath(filePath);
+    return error ? { success: false, message: error } : { success: true, filePath };
+  });
 
   handleTrustedIpc('billing:getSettings', () => {
     const defaultIssuer = billingRepo.getBillingIssuers().find((issuer) => issuer.is_default === 1);

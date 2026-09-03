@@ -1,12 +1,13 @@
 import React from 'react';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, FileText, Settings, ArrowLeft, Users, Receipt, Package, ShoppingBag } from 'lucide-react';
+import { LayoutDashboard, FileText, Settings, ArrowLeft, Users, Receipt, Package, ShoppingBag, FileMinus2 } from 'lucide-react';
 import { BillingDashboard } from './BillingDashboard';
 import { BillingClients } from './BillingClients';
 import { BillingInvoices } from './BillingInvoices';
 import { BillingOrders } from './BillingOrders';
 import { BillingSettings } from './BillingSettings';
 import { BillingProducts } from './BillingProducts';
+import { BillingCreditNotes } from './BillingCreditNotes';
 
 function Sidebar() {
   const location = useLocation();
@@ -37,6 +38,7 @@ function Sidebar() {
           <Receipt size={20} />
           Facturi
         </Link>
+        <Link to="/facturare/credit-notes" className={`flex items-center gap-3 p-3 rounded-lg font-medium transition-colors ${isActive('/facturare/credit-notes') ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}><FileMinus2 size={20} />Credit Notes</Link>
         <Link to="/facturare/clienti" className={`flex items-center gap-3 p-3 rounded-lg font-medium transition-colors ${isActive('/facturare/clienti') ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
           <Users size={20} />
           Clienți & Entități
@@ -63,6 +65,7 @@ export function BillingLayout() {
           <Route path="/dashboard" element={<BillingDashboard />} />
           <Route path="/comenzi" element={<BillingOrders />} />
           <Route path="/facturi" element={<BillingInvoices />} />
+          <Route path="/credit-notes" element={<BillingCreditNotes />} />
           <Route path="/clienti" element={<BillingClients />} />
           <Route path="/produse" element={<BillingProducts />} />
           <Route path="/setari" element={<BillingSettings />} />

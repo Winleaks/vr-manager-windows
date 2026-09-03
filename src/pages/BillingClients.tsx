@@ -3,7 +3,7 @@ import { api } from '../shared/api';
 import { 
   Building2, Store, RefreshCw, AlertCircle, FileText, ArrowLeft, 
   DollarSign, CheckCircle2, PlusCircle, CreditCard, Banknote,
-  ChevronRight, Printer, ShieldCheck, Loader2, Search, X
+  ChevronRight, Printer, ShieldCheck, Loader2, Search, X, FileMinus2
 } from 'lucide-react';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
 import { NumericInput } from '../components/NumericInput';
@@ -32,7 +32,7 @@ export function BillingClients() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [profileData, setProfileData] = useState<any | null>(null);
   const [, setLoadingProfile] = useState(false);
-  const [activeTab, setActiveTab] = useState<'unpaid' | 'all' | 'payments' | 'stores'>('unpaid');
+  const [activeTab, setActiveTab] = useState<'unpaid' | 'all' | 'payments' | 'credits' | 'stores'>('unpaid');
   const [profileIssuerFilter, setProfileIssuerFilter] = useState('all');
 
   // Modal Încasare
@@ -55,6 +55,9 @@ export function BillingClients() {
   });
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
   const [generatingPdfId, setGeneratingPdfId] = useState<number | null>(null);
+  const [creditInvoice, setCreditInvoice] = useState<any | null>(null);
+  const [creditAmount, setCreditAmount] = useState('');
+  const [creditReason, setCreditReason] = useState('');
 
   useEffect(() => {
     fetchCompanies();
@@ -109,7 +112,7 @@ export function BillingClients() {
 
   const handleOpenPaymentModal = (invoice: any = null) => {
     setSelectedInvoiceForPayment(invoice);
-    const initialAmount = invoice ? (invoice.total_amount - invoice.paid_amount).toFixed(2) : '';
+    const initialAmount = invoice ? Number(invoice.outstanding ?? (invoice.total_amount - invoice.paid_amount)).toFixed(2) : '';
     setPaymentForm({
       amount: initialAmount,
       method: 'cash',
@@ -119,6 +122,21 @@ export function BillingClients() {
       ,issuerId: String(invoice?.issuer_id || (profileIssuerFilter !== 'all' ? profileIssuerFilter : profileData?.company?.issuer_id) || '')
     });
     setShowPaymentModal(true);
+  };
+
+  const applyCredit = async () => {
+    if (!creditInvoice || !profileData?.company) return;
+    try {
+      await api.billing.applyCompanyCredit({ companyId: profileData.company.id, issuerId: creditInvoice.issuer_id, invoiceId: creditInvoice.id, amount: Number(creditAmount), reason: creditReason });
+      setCreditInvoice(null); setCreditAmount(''); setCreditReason(''); await loadCompanyProfile(profileData.company.id); await fetchCompanies();
+    } catch (error: any) { alert(error.message || 'Creditul nu a putut fi aplicat.'); }
+  };
+
+  const reverseCredit = async (application: any) => {
+    const reason = window.prompt(`Motivul reversării creditului aplicat facturii #${application.invoice_number}:`);
+    if (!reason?.trim()) return;
+    try { await api.billing.reverseCreditApplication(application.id, reason.trim()); await loadCompanyProfile(profileData.company.id); await fetchCompanies(); }
+    catch (error: any) { alert(error.message || 'Aplicarea creditului nu a putut fi reversată.'); }
   };
 
   const handleSubmitPayment = async (e: React.FormEvent) => {
@@ -212,13 +230,16 @@ export function BillingClients() {
   if (selectedCompanyId && profileData) {
     const { company, stores, invoices: allInvoices, payments: allPayments } = profileData;
     const invoices = profileIssuerFilter === 'all' ? allInvoices : allInvoices.filter((invoice: any) => String(invoice.issuer_id) === profileIssuerFilter);
-    const unpaidInvoices = invoices.filter((invoice: any) => invoice.status !== 'paid' && invoice.status !== 'cancelled' && invoice.total_amount - invoice.paid_amount > 0.01);
+    const unpaidInvoices = invoices.filter((invoice: any) => invoice.status !== 'cancelled' && Number(invoice.outstanding || 0) > 0.005);
     const payments = profileIssuerFilter === 'all' ? allPayments : allPayments.filter((payment: any) => String(payment.issuer_id) === profileIssuerFilter);
     const selectedCredit = (profileData.issuerCredits || []).filter((credit: any) => profileIssuerFilter === 'all' || String(credit.issuer_id) === profileIssuerFilter).reduce((sum: number, credit: any) => sum + Number(credit.balance || 0), 0);
     const stats = {
-      totalInvoiced: invoices.filter((invoice: any) => invoice.status !== 'cancelled').reduce((sum: number, invoice: any) => sum + invoice.total_amount, 0),
-      totalPaid: invoices.filter((invoice: any) => invoice.status !== 'cancelled').reduce((sum: number, invoice: any) => sum + invoice.paid_amount, 0),
-      totalUnpaid: unpaidInvoices.reduce((sum: number, invoice: any) => sum + invoice.total_amount - invoice.paid_amount, 0),
+      totalInvoiced: invoices.filter((invoice: any) => invoice.status !== 'cancelled').reduce((sum: number, invoice: any) => sum + Number(invoice.grossAmount || 0), 0),
+      totalCredited: invoices.filter((invoice: any) => invoice.status !== 'cancelled').reduce((sum: number, invoice: any) => sum + Number(invoice.creditedAmount || 0), 0),
+      totalNet: invoices.filter((invoice: any) => invoice.status !== 'cancelled').reduce((sum: number, invoice: any) => sum + Number(invoice.netAmount || 0), 0),
+      totalPaid: invoices.filter((invoice: any) => invoice.status !== 'cancelled').reduce((sum: number, invoice: any) => sum + Number(invoice.cashPaid || 0), 0),
+      totalCreditApplied: invoices.filter((invoice: any) => invoice.status !== 'cancelled').reduce((sum: number, invoice: any) => sum + Number(invoice.appliedCredit || 0), 0),
+      totalUnpaid: unpaidInvoices.reduce((sum: number, invoice: any) => sum + Number(invoice.outstanding || 0), 0),
       creditBalance: selectedCredit,
     };
 
@@ -262,17 +283,19 @@ export function BillingClients() {
         </div>
 
         {/* Carduri Sumar Financiar Companie */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Facturat</span>
             <div className="text-2xl font-bold text-slate-900 mt-2">£{stats.totalInvoiced.toFixed(2)}</div>
             <span className="text-xs text-slate-400 mt-2">{invoices.length} facturi emise</span>
           </div>
 
+          <div className="bg-white p-6 rounded-2xl border border-amber-200 shadow-sm"><span className="text-xs font-semibold text-slate-500 uppercase">Total Creditat</span><div className="text-2xl font-bold text-amber-700 mt-2">£{stats.totalCredited.toFixed(2)}</div><div className="text-xs text-slate-400 mt-2">Net facturat £{stats.totalNet.toFixed(2)}</div></div>
+
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Încasat</span>
             <div className="text-2xl font-bold text-emerald-600 mt-2">£{stats.totalPaid.toFixed(2)}</div>
-            <span className="text-xs text-slate-400 mt-2">{payments.length} plăti înregistrate</span>
+            <span className="text-xs text-slate-400 mt-2">Credit aplicat £{stats.totalCreditApplied.toFixed(2)}</span>
           </div>
 
           <div className={`p-6 rounded-2xl border shadow-sm flex flex-col justify-between ${
@@ -350,6 +373,7 @@ export function BillingClients() {
               <Store size={18} />
               Magazine Arondate ({stores.length})
             </button>
+            <button onClick={() => setActiveTab('credits')} className={`py-4 font-semibold text-sm border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'credits' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}><ShieldCheck size={18} />Registru Credit</button>
           </div>
 
           <div className="p-6">
@@ -377,14 +401,15 @@ export function BillingClients() {
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
                         {unpaidInvoices.map((inv: any) => {
-                          const due = inv.total_amount - inv.paid_amount;
+                          const due = Number(inv.outstanding || 0);
+                          const issuerCredit = Number((profileData.issuerCredits || []).find((credit: any) => credit.issuer_id === inv.issuer_id)?.balance || 0);
                           return (
                             <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
                               <td className="py-3.5 px-4 font-bold text-slate-900">#{inv.invoice_number}</td>
                               <td className="py-3.5 px-4 text-slate-600">{inv.invoice_date}</td>
                               <td className="py-3.5 px-4 font-semibold text-slate-800">{inv.store_name}</td>
-                              <td className="py-3.5 px-4 font-medium">£{inv.total_amount.toFixed(2)}</td>
-                              <td className="py-3.5 px-4 text-emerald-600 font-semibold">£{inv.paid_amount.toFixed(2)}</td>
+                              <td className="py-3.5 px-4 font-medium">£{Number(inv.netAmount ?? inv.total_amount).toFixed(2)}</td>
+                              <td className="py-3.5 px-4 text-emerald-600 font-semibold">£{Number(inv.cashPaid || 0).toFixed(2)} + £{Number(inv.appliedCredit || 0).toFixed(2)} credit</td>
                               <td className="py-3.5 px-4 font-bold text-rose-600">£{due.toFixed(2)}</td>
                               <td className="py-3.5 px-4 text-right">
                                 <button
@@ -393,6 +418,8 @@ export function BillingClients() {
                                 >
                                   Încasează această factură
                                 </button>
+                                {issuerCredit > 0.005 && <button onClick={() => { setCreditInvoice(inv); setCreditAmount(Math.min(issuerCredit, due).toFixed(2)); setCreditReason('Aplicare manuală credit client'); }} className="ml-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3.5 py-1.5 rounded-lg font-semibold text-xs">Aplică credit</button>}
+                                <button onClick={() => { window.location.hash = `/facturare/credit-notes?invoice=${inv.id}`; }} className="ml-2 bg-amber-50 hover:bg-amber-100 text-amber-800 px-3.5 py-1.5 rounded-lg font-semibold text-xs">Credit Note</button>
                               </td>
                             </tr>
                           );
@@ -415,12 +442,12 @@ export function BillingClients() {
                       <th className="py-3 px-4">Magazin</th>
                       <th className="py-3 px-4">Valoare Totală</th>
                       <th className="py-3 px-4">Status Plată</th>
-                      <th className="py-3 px-4 text-right">PDF</th>
+                      <th className="py-3 px-4 text-right">Acțiuni</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
                     {invoices.map((inv: any) => {
-                      const isPaid = inv.status === 'paid';
+                      const isPaid = inv.status === 'paid' || inv.status === 'credited';
                       const isPartial = inv.status === 'partial';
 
                       return (
@@ -428,15 +455,16 @@ export function BillingClients() {
                           <td className="py-3.5 px-4 font-bold text-slate-900">#{inv.invoice_number}</td>
                           <td className="py-3.5 px-4 text-slate-600">{inv.invoice_date}</td>
                           <td className="py-3.5 px-4 font-semibold text-slate-800">{inv.store_name}</td>
-                          <td className="py-3.5 px-4 font-bold">£{inv.total_amount.toFixed(2)}</td>
+                          <td className="py-3.5 px-4 font-bold">£{Number(inv.netAmount ?? inv.total_amount).toFixed(2)}{Number(inv.creditedAmount || 0) > 0 && <div className="text-[10px] font-normal text-amber-700">creditat £{Number(inv.creditedAmount).toFixed(2)}</div>}</td>
                           <td className="py-3.5 px-4">
                             <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${
                               isPaid ? 'bg-emerald-100 text-emerald-800' : isPartial ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
                             }`}>
-                              {isPaid ? 'Achitat' : isPartial ? `Parțial (£${inv.paid_amount.toFixed(2)})` : 'Neachitat'}
+                              {inv.status === 'credited' ? 'Creditată integral' : isPaid ? 'Achitat' : isPartial ? `Parțial (£${Number(inv.cashPaid || inv.paid_amount || 0).toFixed(2)})` : 'Neachitat'}
                             </span>
                           </td>
                           <td className="py-3.5 px-4 text-right">
+                            {inv.status !== 'cancelled' && inv.status !== 'credited' && <button onClick={() => { window.location.hash = `/facturare/credit-notes?invoice=${inv.id}`; }} className="p-1.5 text-amber-700 hover:bg-amber-50 rounded transition-colors" title="Creează Credit Note"><FileMinus2 size={16} /></button>}
                             <button
                               onClick={() => handlePrintPdf(inv)}
                               disabled={generatingPdfId === inv.id}
@@ -505,6 +533,8 @@ export function BillingClients() {
               </div>
             )}
 
+            {activeTab === 'credits' && <div className="space-y-6"><div><h3 className="font-bold text-slate-900 mb-3">Surse de credit</h3><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="text-left p-3">Sursă</th><th className="text-left p-3">Emitent</th><th className="text-right p-3">Inițial</th><th className="text-right p-3">Disponibil</th><th className="text-left p-3">Status</th></tr></thead><tbody className="divide-y">{(profileData.creditLedger?.entries || []).filter((entry: any) => profileIssuerFilter === 'all' || String(entry.issuer_id) === profileIssuerFilter).map((entry: any) => <tr key={entry.id}><td className="p-3">{entry.source_type === 'credit_note' ? 'Credit Note' : entry.source_type === 'payment_overpayment' ? 'Supraîncasare' : 'Sold istoric'}</td><td className="p-3">{entry.issuer_name}</td><td className="p-3 text-right">£{Number(entry.original_amount).toFixed(2)}</td><td className="p-3 text-right font-bold">£{Number(entry.available_amount).toFixed(2)}</td><td className="p-3">{entry.status === 'active' ? 'Activ' : 'Reversat'}</td></tr>)}</tbody></table></div></div><div><h3 className="font-bold text-slate-900 mb-3">Aplicări pe facturi</h3><div className="divide-y border rounded-xl">{(profileData.creditLedger?.applications || []).filter((application: any) => profileIssuerFilter === 'all' || String(application.issuer_id) === profileIssuerFilter).map((application: any) => <div key={application.id} className="p-3 flex justify-between items-center"><div><strong>#{application.invoice_number}</strong> · £{Number(application.amount).toFixed(2)}<div className="text-xs text-slate-500">{application.reason}</div></div>{application.reversed_at ? <span className="text-xs text-slate-500">Reversat</span> : <button onClick={() => reverseCredit(application)} className="text-xs font-semibold text-rose-700">Reversează</button>}</div>)}</div></div></div>}
+
             {/* TAB 4: MAGAZINE ARONDATE */}
             {activeTab === 'stores' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -565,7 +595,7 @@ export function BillingClients() {
                       const inv = unpaidInvoices.find((i: any) => i.id === id) || null;
                       setSelectedInvoiceForPayment(inv);
                       if (inv) {
-                        setPaymentForm(prev => ({ ...prev, amount: (inv.total_amount - inv.paid_amount).toFixed(2) }));
+                        setPaymentForm(prev => ({ ...prev, amount: Number(inv.outstanding || 0).toFixed(2) }));
                       }
                     }}
                     className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800"
@@ -573,7 +603,7 @@ export function BillingClients() {
                     <option value="">-- Distribuire automată pe cea mai veche factură neachitată --</option>
                     {unpaidInvoices.filter((inv: any) => String(inv.issuer_id) === paymentForm.issuerId).map((inv: any) => (
                       <option key={inv.id} value={inv.id}>
-                        #{inv.invoice_number} ({inv.store_name}) — Restanță: £{(inv.total_amount - inv.paid_amount).toFixed(2)}
+                        #{inv.invoice_number} ({inv.store_name}) — Restanță: £{Number(inv.outstanding || 0).toFixed(2)}
                       </option>
                     ))}
                   </select>
@@ -693,6 +723,17 @@ export function BillingClients() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+        {creditInvoice && (
+          <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+              <div className="flex justify-between gap-3"><div><h3 className="text-lg font-bold">Aplică credit pe factura #{creditInvoice.invoice_number}</h3><p className="text-sm text-slate-500">Numai pentru {creditInvoice.issuer_name}.</p></div><button onClick={() => setCreditInvoice(null)}><X /></button></div>
+              <label className="block text-sm font-semibold">Sumă (£)<NumericInput decimalScale={2} value={creditAmount} onValueChange={setCreditAmount} className="block w-full mt-1 border rounded-xl px-3 py-2.5" /></label>
+              <label className="block text-sm font-semibold">Motiv<input value={creditReason} onChange={(e) => setCreditReason(e.target.value)} className="block w-full mt-1 border rounded-xl px-3 py-2.5" /></label>
+              <div className="text-xs text-slate-500">Rest factură: £{Number(creditInvoice.outstanding || 0).toFixed(2)}. Creditul disponibil este verificat în backend și consumat FIFO.</div>
+              <div className="flex justify-end gap-3"><button onClick={() => setCreditInvoice(null)} className="px-4 py-2 border rounded-xl">Renunță</button><button onClick={applyCredit} disabled={!creditReason.trim() || Number(creditAmount) <= 0} className="px-4 py-2 bg-indigo-600 disabled:opacity-50 text-white rounded-xl font-bold">Aplică credit</button></div>
             </div>
           </div>
         )}

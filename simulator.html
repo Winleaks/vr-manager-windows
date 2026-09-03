@@ -36,6 +36,7 @@
             bank_name_1: 'Demo Bank', account_number_1: '12345678', sort_code_1: '12-34-56',
             bank_name_2: '', account_number_2: '', sort_code_2: '', footer: 'Thank you for your business.',
             invoice_series: 'TGB', next_invoice_number: 101, color: '#4F46E5', alternate_row_color: '#EEF2FF',
+            credit_note_series: 'CN-TGB', next_credit_note_number: 1, credit_note_sequence_confirmed: 1,
             alternate_row_opacity: 5, is_active: 1, is_default: 1, isReady: true,
           },
           {
@@ -43,12 +44,15 @@
             vat_registered: 0, vat_number: '', bank_name_1: '', account_number_1: '', sort_code_1: '',
             bank_name_2: '', account_number_2: '', sort_code_2: '', footer: '', invoice_series: 'VR',
             next_invoice_number: 1, color: '#B45309', alternate_row_color: '#FFF7ED', alternate_row_opacity: 5,
+            credit_note_series: 'CN-VATRA', next_credit_note_number: 1, credit_note_sequence_confirmed: 0,
             is_active: 0, is_default: 0, isReady: false,
           },
         ];
         let billingCompanies = [
           { id: 1, name: 'Client Demo LTD', issuer_id: 1, stores: [{ id: 1, name: 'Magazin Demo' }] },
         ];
+        let creditNotes = [];
+        const creditDraft = [{ id: 1, invoice_number: 'TGB-100', invoice_date: today, store_name: 'Magazin Demo', company_id: 1, company_name: 'Client Demo LTD', issuer_id: 1, issuer_name: 'THE GOODNESS BAKER LTD', grossAmount: 50, creditedAmount: 0, netAmount: 50, cashPaid: 0, appliedCredit: 0, outstanding: 50, items: [{ id: 1, productName: 'WHITE BREAD', nameRo: 'PÂINE ALBĂ', unit: 'buc', remainingQuantity: 10, remainingValue: 50, unitPrice: 5, canReturnToStock: true }] }];
         const cashSnapshot = () => {
           const totalIn = transactions.filter((item) => item.type === 'IN').reduce((sum, item) => sum + Number(item.amount), 0);
           const totalOut = transactions.filter((item) => item.type === 'OUT').reduce((sum, item) => sum + Number(item.amount), 0);
@@ -124,6 +128,16 @@
           'stockMovements.getAll': async () => [],
           'billing.getStats': async () => ({}),
           'billing.getInvoices': async () => [],
+          'billing.getCreditNotes': async () => creditNotes.slice(),
+          'billing.getCreditNoteDraft': async () => creditDraft,
+          'billing.createCreditNote': async (input) => {
+            const total = input.items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unitAmount), 0);
+            const created = { id: creditNotes.length + 1, reference: `CN-TGB-${creditNotes.length + 1}`, issue_date: input.issueDate, company_name: 'Client Demo LTD', issuer_id: 1, issuer_name: 'THE GOODNESS BAKER LTD', issuer_code: 'goodness', issuer_color: '#4F46E5', invoice_references: 'TGB-100', total_amount: total, status: 'issued' };
+            creditNotes.unshift(created); return { creditNoteId: created.id, reference: created.reference, totalAmount: total };
+          },
+          'billing.prepareCreditNotePdf': async () => ({ success: true, filePath: 'C:\\Demo\\Credit_Note.pdf', cloud: { success: true } }),
+          'billing.openCreditNotePdf': async () => ({ success: true }),
+          'billing.cancelCreditNote': async (id) => { creditNotes = creditNotes.map((note) => note.id === id ? { ...note, status: 'cancelled' } : note); return true; },
           'billing.getClients': async () => [],
           'billing.getProducts': async () => [],
           'billing.getIssuers': async () => billingIssuers.map((issuer) => ({ ...issuer })),
@@ -137,6 +151,8 @@
               sort_code_1: input.sortCode1, bank_name_2: input.bankName2, account_number_2: input.accountNumber2,
               sort_code_2: input.sortCode2, footer: input.footer, invoice_series: input.invoiceSeries,
               next_invoice_number: input.nextInvoiceNumber, color: input.color, alternate_row_color: input.alternateRowColor,
+              credit_note_series: input.creditNoteSeries, next_credit_note_number: input.nextCreditNoteNumber,
+              credit_note_sequence_confirmed: input.confirmCreditNoteSequence ? 1 : 0,
               alternate_row_opacity: input.alternateRowOpacity, is_active: input.isActive ? 1 : 0,
               isReady: Boolean(input.legalName && input.address && input.companyNumber && input.invoiceSeries && input.nextInvoiceNumber && input.bankName1 && input.accountNumber1 && input.sortCode1),
             } : issuer);

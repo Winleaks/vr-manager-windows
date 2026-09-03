@@ -24,6 +24,9 @@ export interface BillingIssuerRow {
   footer: string | null;
   invoice_series: string | null;
   next_invoice_number: number;
+  credit_note_series?: string | null;
+  next_credit_note_number?: number;
+  credit_note_sequence_confirmed?: number;
   color: string;
   alternate_row_color: string;
   alternate_row_opacity: number;
@@ -75,6 +78,10 @@ export interface UpdateBillingIssuerInput {
   alternateRowOpacity?: number;
   isActive: boolean;
   counterChangeReason?: string;
+  creditNoteSeries?: string;
+  nextCreditNoteNumber?: number;
+  confirmCreditNoteSequence?: boolean;
+  creditNoteCounterChangeReason?: string;
 }
 
 function columnExists(connection: SqliteDatabase, table: string, column: string) {
@@ -240,6 +247,10 @@ export function ensureBillingIssuerSchema(connection: SqliteDatabase) {
   if (!columnExists(connection, 'payments', 'issuer_id')) connection.exec('ALTER TABLE payments ADD COLUMN issuer_id INTEGER;');
   if (!columnExists(connection, 'invoices', 'cancelled_at')) connection.exec('ALTER TABLE invoices ADD COLUMN cancelled_at DATETIME;');
   if (!columnExists(connection, 'invoices', 'cancellation_reason')) connection.exec('ALTER TABLE invoices ADD COLUMN cancellation_reason TEXT;');
+  // Kept additive here as well so isolated billing operations remain safe while
+  // databases move from issuer migration v12 to Credit Notes migration v13.
+  if (!columnExists(connection, 'invoice_items', 'external_product_id')) connection.exec('ALTER TABLE invoice_items ADD COLUMN external_product_id TEXT;');
+  if (!columnExists(connection, 'invoice_items', 'finished_product_id')) connection.exec('ALTER TABLE invoice_items ADD COLUMN finished_product_id INTEGER;');
 
   const existingGoodness = connection.prepare("SELECT id FROM billing_issuers WHERE code = 'goodness'").get() as { id: number } | undefined;
   if (!existingGoodness) {
@@ -394,6 +405,29 @@ export function updateBillingIssuer(connection: SqliteDatabase, input: UpdateBil
       optionalText(input.footer, 'Footerul facturii', 2000),
       series, nextNumber, color, alternate, opacity, input.isActive ? 1 : 0, issuerId,
     );
+    if (columnExists(connection, 'billing_issuers', 'credit_note_series')) {
+      const currentSeries = existing.credit_note_series || (existing.code === 'goodness' ? 'CN-TGB' : existing.code === 'vatra' ? 'CN-VATRA' : `CN-${existing.code.toUpperCase()}`);
+      const creditNoteSeries = normalizeInvoiceSeries(input.creditNoteSeries?.trim() || currentSeries);
+      const nextCreditNoteNumber = requirePositiveInteger(input.nextCreditNoteNumber ?? existing.next_credit_note_number ?? 1, 'Următorul număr Credit Note');
+      const issuedCreditNotes = connection.prepare('SELECT COUNT(*) AS count, MAX(sequence_number) AS maximum FROM credit_notes WHERE issuer_id = ?').get(issuerId) as { count: number; maximum: number | null };
+      const minimumCreditNoteNumber = (issuedCreditNotes.maximum || 0) + 1;
+      if (nextCreditNoteNumber < minimumCreditNoteNumber) throw new Error(`Următorul număr Credit Note nu poate fi mai mic decât ${minimumCreditNoteNumber}.`);
+      if (issuedCreditNotes.count > 0 && creditNoteSeries !== existing.credit_note_series) throw new Error('Seria Credit Note nu mai poate fi schimbată după prima emitere.');
+      if (issuedCreditNotes.count > 0 && nextCreditNoteNumber > (existing.next_credit_note_number || 1)) {
+        requireText(input.creditNoteCounterChangeReason, 'Motivul modificării contorului Credit Note', 500);
+      }
+      const confirmed = input.confirmCreditNoteSequence === undefined
+        ? (existing.credit_note_sequence_confirmed || 0)
+        : input.confirmCreditNoteSequence ? 1 : 0;
+      connection.prepare(`
+        UPDATE billing_issuers SET credit_note_series = ?, next_credit_note_number = ?,
+          credit_note_sequence_confirmed = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).run(creditNoteSeries, nextCreditNoteNumber, confirmed, issuerId);
+      if (creditNoteSeries !== existing.credit_note_series || nextCreditNoteNumber !== existing.next_credit_note_number || confirmed !== existing.credit_note_sequence_confirmed) {
+        connection.prepare(`INSERT INTO billing_audit_events (event_type, issuer_id, details) VALUES ('credit_note_numbering_updated', ?, ?)`)
+          .run(issuerId, JSON.stringify({ series: creditNoteSeries, nextNumber: nextCreditNoteNumber, confirmed: Boolean(confirmed), reason: input.creditNoteCounterChangeReason?.trim() || null }));
+      }
+    }
     connection.prepare(`
       INSERT INTO billing_audit_events (event_type, issuer_id, details) VALUES ('issuer_updated', ?, ?)
     `).run(issuerId, JSON.stringify({ counterChanged: nextNumber !== existing.next_invoice_number, reason: input.counterChangeReason?.trim() || null }));

@@ -42,6 +42,10 @@ const VIEWER_ALLOWED_CHANNELS = new Set([
   'billing:getStats',
   'billing:getSettings',
   'billing:getIssuers',
+  'billing:getCreditNoteDraft',
+  'billing:getCreditNotes',
+  'billing:getCreditNote',
+  'billing:openCreditNotePdf',
   'billing:getProducts',
   'billing:getVrBakerStatus',
 ]);

@@ -4,6 +4,7 @@ import type { VrBakerOrder, VrBakerStore } from './vrBakerApiClient';
 export interface WeeklyInvoiceGroup {
   store: VrBakerStore;
   items: Array<{
+    externalProductId: string;
     productName: string;
     name_ro: string;
     variant_label: string;
@@ -35,6 +36,7 @@ export function aggregateWeeklyOrders(orders: VrBakerOrder[]): WeeklyInvoiceGrou
         existing.totalPrice = existing.quantity * existing.unitPrice;
       } else {
         group.items.set(key, {
+          externalProductId: item.productId,
           productName: item.productName,
           name_ro: item.nameRo,
           variant_label: item.variantLabel,

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { 
   Receipt, Search, Edit3, Trash2, Printer, X, Plus, Save,
-  CheckCircle2, Clock, AlertCircle, Building2, Store, FileText, Loader2, RefreshCw
+  CheckCircle2, Clock, AlertCircle, Building2, Store, FileText, Loader2, RefreshCw, FileMinus2
 } from 'lucide-react';
 import { api } from '../shared/api';
 import DatePicker from 'react-datepicker';
@@ -46,6 +46,12 @@ interface Invoice {
   issuer_color?: string;
   issuer_settings?: any;
   cancellation_reason?: string;
+  grossAmount?: number;
+  creditedAmount?: number;
+  netAmount?: number;
+  cashPaid?: number;
+  appliedCredit?: number;
+  outstanding?: number;
 }
 
 export function BillingInvoices() {
@@ -325,6 +331,7 @@ export function BillingInvoices() {
               <option value="unpaid">Neachitate</option>
               <option value="paid">Achitate integral</option>
               <option value="partial">Achitate parțial</option>
+              <option value="credited">Creditate integral</option>
               <option value="cancelled">Anulate</option>
             </select>
           </div>
@@ -403,6 +410,7 @@ export function BillingInvoices() {
                   const isPaid = inv.status === 'paid';
                   const isPartial = inv.status === 'partial';
                   const isCancelled = inv.status === 'cancelled';
+                  const isCredited = inv.status === 'credited';
 
                   return (
                     <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
@@ -424,20 +432,21 @@ export function BillingInvoices() {
                         </div>
                       </td>
                       <td className="py-4 px-6 font-bold text-slate-900">
-                        £{inv.total_amount.toFixed(2)}
+                        <div>£{Number(inv.netAmount ?? inv.total_amount).toFixed(2)}</div>
+                        {Number(inv.creditedAmount || 0) > 0 && <div className="text-xs font-normal text-amber-700">Brut £{inv.total_amount.toFixed(2)} · creditat £{Number(inv.creditedAmount).toFixed(2)}</div>}
                       </td>
                       <td className="py-4 px-6">
                         <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
                           isCancelled
                             ? 'bg-slate-200 text-slate-700'
-                            : isPaid
+                            : isPaid || isCredited
                             ? 'bg-emerald-100 text-emerald-800'
                             : isPartial
                             ? 'bg-amber-100 text-amber-800'
                             : 'bg-rose-100 text-rose-800'
                         }`}>
-                          {isCancelled ? <AlertCircle size={13} /> : isPaid ? <CheckCircle2 size={13} /> : isPartial ? <Clock size={13} /> : <AlertCircle size={13} />}
-                          {isCancelled ? 'Anulată' : isPaid ? 'Achitat' : isPartial ? `Parțial (£${inv.paid_amount.toFixed(2)})` : 'Neachitat'}
+                          {isCancelled ? <AlertCircle size={13} /> : isPaid || isCredited ? <CheckCircle2 size={13} /> : isPartial ? <Clock size={13} /> : <AlertCircle size={13} />}
+                          {isCancelled ? 'Anulată' : isCredited ? 'Creditată integral' : isPaid ? 'Achitat' : isPartial ? `Parțial · rest £${Number(inv.outstanding ?? 0).toFixed(2)}` : 'Neachitat'}
                         </span>
                       </td>
                       <td className="py-4 px-6 text-right">
@@ -452,9 +461,10 @@ export function BillingInvoices() {
                             {generatingPdfId === inv.id ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
                             <span className="text-xs font-semibold">Deschide PDF</span>
                           </button>}
+                          {!isCancelled && Number(inv.creditedAmount || 0) < inv.total_amount - 0.005 && <button onClick={() => { window.location.hash = `/facturare/credit-notes?invoice=${inv.id}`; }} className="p-2 text-amber-700 hover:bg-amber-50 rounded-lg" title="Creează Credit Note"><FileMinus2 size={16} /></button>}
 
                           {/* Editează */}
-                          {!isCancelled ? <><button
+                          {!isCancelled && Number(inv.creditedAmount || 0) <= 0.005 && Number(inv.appliedCredit || 0) <= 0.005 ? <><button
                             onClick={() => handleOpenEdit(inv)}
                             className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
                             title="Editează detaliile facturii"
@@ -469,7 +479,7 @@ export function BillingInvoices() {
                             title="Anulează factura și păstrează numărul"
                           >
                             <Trash2 size={16} />
-                          </button></> : <button onClick={() => handleReissue(inv)} className="p-2 text-amber-700 hover:bg-amber-50 rounded-lg" title="Reemite cu număr nou"><RefreshCw size={16} /></button>}
+                          </button></> : isCancelled ? <button onClick={() => handleReissue(inv)} className="p-2 text-amber-700 hover:bg-amber-50 rounded-lg" title="Reemite cu număr nou"><RefreshCw size={16} /></button> : null}
                         </div>
                       </td>
                     </tr>

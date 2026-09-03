@@ -34,6 +34,7 @@ test('weekly invoice items keep English and Romanian names without changing the 
 
   const [group] = aggregateWeeklyOrders([order]);
   assert.deepEqual(group.items, [{
+    externalProductId: '44444444-4444-4444-8444-444444444444',
     productName: 'Cheese Pie',
     name_ro: 'Plăcintă cu brânză',
     variant_label: 'Large',

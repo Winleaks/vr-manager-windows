@@ -596,6 +596,66 @@ export async function uploadPdfToCloud(filename: string, buffer: Uint8Array): Pr
   }
 }
 
+export async function uploadCreditNotePdfToCloud(filename: string, issuerCode: string, buffer: Uint8Array): Promise<{ success: boolean; error?: string }> {
+  if (getDeviceRole() !== 'writer') return { success: false, error: 'Calculatorul Viewer nu poate publica documente.' };
+  if (!loadTokens()) return { success: false, error: 'Nu ești conectat la Google Drive.' };
+  if (!/^Credit_Note_[A-Z0-9-]{1,60}\.pdf$/i.test(filename) || !/^[a-z0-9-]{1,40}$/i.test(issuerCode)) {
+    return { success: false, error: 'Numele documentului Credit Note nu este valid.' };
+  }
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    const { rootFolderId } = await getDriveStructure(drive);
+    const creditNotesFolderId = await getOrCreateFolder(drive, 'Credit Notes', rootFolderId);
+    const issuerFolderId = await getOrCreateFolder(drive, issuerCode.toLowerCase(), creditNotesFolderId);
+    const escapedFilename = filename.replace(/'/g, "\\'");
+    const search = await drive.files.list({ q: `name='${escapedFilename}' and '${issuerFolderId}' in parents and trashed=false`, fields: 'files(id)' });
+    const makeStream = () => {
+      const { Readable } = require('stream');
+      const stream = new Readable(); stream.push(buffer); stream.push(null); return stream;
+    };
+    const existing = search.data.files?.[0];
+    if (existing?.id) await drive.files.update({ fileId: existing.id, media: { mimeType: 'application/pdf', body: makeStream() } });
+    else await drive.files.create({ requestBody: { name: filename, parents: [issuerFolderId] }, media: { mimeType: 'application/pdf', body: makeStream() }, fields: 'id' });
+    return { success: true };
+  } catch (error: any) {
+    console.error('Credit Note PDF upload error:', error);
+    return { success: false, error: error?.message || 'Încărcarea Credit Note-ului a eșuat.' };
+  }
+}
+
+export async function downloadCreditNotePdfFromCloud(filename: string, issuerCode: string): Promise<{ success: boolean; buffer?: Uint8Array; error?: string }> {
+  if (!loadTokens()) return { success: false, error: 'Google Drive nu este conectat pe acest calculator.' };
+  if (!/^Credit_Note_[A-Z0-9-]{1,60}\.pdf$/i.test(filename) || !/^[a-z0-9-]{1,40}$/i.test(issuerCode)) return { success: false, error: 'Identitatea documentului Credit Note nu este validă.' };
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    const findFolder = async (name: string, parentId?: string) => {
+      const escapedName = name.replace(/'/g, "\\'");
+      const parent = parentId ? ` and '${parentId}' in parents` : '';
+      const result = await drive.files.list({ q: `name='${escapedName}' and mimeType='application/vnd.google-apps.folder' and trashed=false${parent}`, fields: 'files(id)', pageSize: 2 });
+      return result.data.files?.[0]?.id || null;
+    };
+    const rootFolderId = await findFolder('VR - Hub Management');
+    const creditNotesFolderId = rootFolderId ? await findFolder('Credit Notes', rootFolderId) : null;
+    const issuerFolderId = creditNotesFolderId ? await findFolder(issuerCode.toLowerCase(), creditNotesFolderId) : null;
+    if (!issuerFolderId) return { success: false, error: 'Folderul Credit Notes al emitentului nu a fost găsit în Google Drive.' };
+    const escapedFilename = filename.replace(/'/g, "\\'");
+    const search = await drive.files.list({
+      q: `name='${escapedFilename}' and mimeType='application/pdf' and '${issuerFolderId}' in parents and trashed=false`,
+      fields: 'files(id,size,modifiedTime)',
+      orderBy: 'modifiedTime desc',
+      pageSize: 2,
+    });
+    const file = search.data.files?.[0];
+    if (!file?.id) return { success: false, error: 'PDF-ul Credit Note nu a fost găsit în Google Drive.' };
+    if (Number(file.size || 0) > 15 * 1024 * 1024) return { success: false, error: 'PDF-ul din Google Drive depășește limita permisă.' };
+    const response = await drive.files.get({ fileId: file.id, alt: 'media' }, { responseType: 'arraybuffer' });
+    return { success: true, buffer: new Uint8Array(response.data as ArrayBuffer) };
+  } catch (error: any) {
+    console.error('Credit Note PDF download error:', error);
+    return { success: false, error: error?.message || 'Descărcarea Credit Note-ului a eșuat.' };
+  }
+}
+
 export async function deletePdfFromCloud(filename: string): Promise<{ success: boolean; error?: string }> {
   if (getDeviceRole() !== 'writer') {
     return { success: false, error: 'Calculatorul Viewer nu poate șterge documente.' };

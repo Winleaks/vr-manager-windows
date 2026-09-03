@@ -20,6 +20,10 @@ function toForm(issuer: Issuer) {
     alternateRowColor: issuer.alternate_row_color || issuer.color || '#4F46E5',
     alternateRowOpacity: Number(issuer.alternate_row_opacity ?? 5), isActive: issuer.is_active === 1,
     counterChangeReason: '',
+    creditNoteSeries: issuer.credit_note_series || (issuer.code === 'goodness' ? 'CN-TGB' : 'CN-VATRA'),
+    nextCreditNoteNumber: String(issuer.next_credit_note_number || 1),
+    confirmCreditNoteSequence: issuer.credit_note_sequence_confirmed === 1,
+    creditNoteCounterChangeReason: '',
   };
 }
 
@@ -60,7 +64,7 @@ export function BillingSettings() {
     if (!issuerForm) return;
     setIsSaving(true); setError('');
     try {
-      await api.billing.updateIssuer({ ...issuerForm, nextInvoiceNumber: Number(issuerForm.nextInvoiceNumber) });
+      await api.billing.updateIssuer({ ...issuerForm, nextInvoiceNumber: Number(issuerForm.nextInvoiceNumber), nextCreditNoteNumber: Number(issuerForm.nextCreditNoteNumber) });
       await api.billing.saveSettings({ invoiceLogo });
       await load(issuerForm.id); setSaved(true); setTimeout(() => setSaved(false), 2500);
     } catch (cause: any) { setError(cause.message || 'Setările nu au putut fi salvate.'); }
@@ -111,6 +115,7 @@ export function BillingSettings() {
           <h2 className="text-lg font-bold">Serie și design PDF</h2>
           <div className="grid grid-cols-2 gap-3"><label className="block text-sm font-medium">Serie<input className={`${fieldClass} uppercase font-bold`} value={issuerForm.invoiceSeries} onChange={(e) => updateField('invoiceSeries', e.target.value.toUpperCase())} /></label><label className="block text-sm font-medium">Următorul număr<NumericInput integer className={`${fieldClass} font-mono`} value={issuerForm.nextInvoiceNumber} onValueChange={(value) => updateField('nextInvoiceNumber', value)} /></label></div>
           {selectedIssuer && Number(issuerForm.nextInvoiceNumber) > Number(selectedIssuer.next_invoice_number) && <label className="block text-sm font-medium">Motivul creșterii contorului<input className={fieldClass} value={issuerForm.counterChangeReason} onChange={(e) => updateField('counterChangeReason', e.target.value)} placeholder="Explică numerele omise" /></label>}
+          <div className="mt-5 pt-5 border-t border-slate-200 space-y-3"><div><h3 className="font-bold text-slate-900">Numerotare Credit Notes</h3><p className="text-xs text-slate-500 mt-1">Serie independentă, fără resetare anuală. Emiterea este blocată până la confirmare.</p></div><div className="grid grid-cols-2 gap-3"><label className="block text-sm font-medium">Serie Credit Note<input className={`${fieldClass} uppercase font-bold`} value={issuerForm.creditNoteSeries} onChange={(e) => updateField('creditNoteSeries', e.target.value.toUpperCase())} /></label><label className="block text-sm font-medium">Următorul număr<NumericInput integer className={`${fieldClass} font-mono`} value={issuerForm.nextCreditNoteNumber} onValueChange={(value) => updateField('nextCreditNoteNumber', value)} /></label></div>{selectedIssuer && Number(issuerForm.nextCreditNoteNumber) > Number(selectedIssuer.next_credit_note_number || 1) && <label className="block text-sm font-medium">Motivul saltului de numere<input className={fieldClass} value={issuerForm.creditNoteCounterChangeReason} onChange={(e) => updateField('creditNoteCounterChangeReason', e.target.value)} placeholder="Explică numerele omise" /></label>}<label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"><input className="mt-0.5" type="checkbox" checked={issuerForm.confirmCreditNoteSequence} onChange={(e) => updateField('confirmCreditNoteSequence', e.target.checked)} /><span><strong>Confirm seria și următorul număr liber.</strong><br /><span className="text-amber-800">După prima emitere seria nu mai poate fi schimbată.</span></span></label></div>
           <div className="grid grid-cols-2 gap-3"><label className="block text-sm font-medium">Culoare accent<input type="color" className="block mt-2 w-16 h-11" value={issuerForm.color} onChange={(e) => updateField('color', e.target.value)} /></label><label className="block text-sm font-medium">Culoare rânduri<input type="color" className="block mt-2 w-16 h-11" value={issuerForm.alternateRowColor} onChange={(e) => updateField('alternateRowColor', e.target.value)} /></label></div>
           <label className="block text-sm font-medium">Footer<textarea rows={4} className={fieldClass} value={issuerForm.footer} onChange={(e) => updateField('footer', e.target.value)} /></label>
           <label className="flex items-center gap-3 rounded-xl border border-slate-200 p-4 font-semibold"><input type="checkbox" checked={issuerForm.isActive} disabled={Boolean(selectedIssuer?.is_default)} onChange={(e) => updateField('isActive', e.target.checked)} />Activ pentru facturare {selectedIssuer?.is_default ? '(emitent implicit)' : ''}</label>
