@@ -1,3 +1,14 @@
+### VR - Hub Management v0.1.86
+
+- Writer-ul poate emite Credit Notes integrale sau parțiale pentru una sau mai multe facturi ale aceleiași companii și aceluiași emitent, inclusiv pentru facturi plătite.
+- `THE GOODNESS BAKER LTD` și `VATRA ROMANEASCA LTD` au serii și contoare Credit Note independente, confirmate explicit înaintea primei emiteri și protejate împotriva reducerii sau reutilizării numerelor.
+- Soldurile facturilor separă valoarea brută, suma creditată, valoarea netă, numerarul încasat, creditul aplicat și restul real; surplusurile devin credit disponibil izolat per companie și emitent.
+- Creditul poate fi aplicat manual în ordine FIFO și reversat auditabil numai în cadrul aceluiași client și emitent.
+- Returul în stoc este opțional și permis numai pentru produse mapate neechivoc; anularea internă inversează aplicările și mișcările de stoc fără a șterge documentul sau numărul.
+- PDF-urile Credit Note folosesc snapshoturile juridice persistate, afișează tratamentul VAT corect pentru fiecare emitent și sunt salvate local și în Google Drive.
+- Viewer-ele pot consulta documentele replicate, dar nu pot emite, anula, aplica credit sau modifica numerotarea.
+- Migrarea SQLite v13 este atomică, idempotentă și creează un snapshot local verificat înainte de modificarea soldurilor financiare.
+
 ### VR - Hub Management v0.1.85
 
 - Facturarea acceptă două societăți emitente: `THE GOODNESS BAKER LTD` ca emitent implicit VAT și `VATRA ROMANEASCA LTD` ca emitent alternativ non-VAT.
