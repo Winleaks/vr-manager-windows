@@ -1,5 +1,8 @@
 ### În lucru
 
+- Pornirea Writer-ului nu mai afișează eroarea de reconciliere Daily Cash atunci când reconcilierea unică a fost deja aplicată sau ziua curentă a fost închisă manual.
+- Verificarea markerului de reconciliere are loc înaintea citirii zilei și a backupului, evitând operații inutile la fiecare repornire sau actualizare.
+
 ### VR - Hub Management v0.1.88
 
 - Ordinea produselor din `Product Order` (`display_order`) este sincronizată read-only din VR Baker Platform și folosită consecvent în cataloagele Hub Manager, selectoarele operaționale, vânzarea directă, facturi și Credit Notes.

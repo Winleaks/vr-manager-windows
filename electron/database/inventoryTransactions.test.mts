@@ -8,6 +8,7 @@ import {
   closeCashDayTransaction,
   createProductionTransaction,
   deleteCashTransaction,
+  hasCashBalanceReconciliation,
   initializeCashBalanceOnce,
   reconcileCashBalanceOnce,
   reopenCashDayTransaction,
@@ -277,7 +278,9 @@ test('Writer reconciliation reaches £241.74 once without rewriting cash history
     `).run(dayId);
 
     const marker = 'daily_cash_reconciliation_v0_1_83_241_74';
+    assert.equal(hasCashBalanceReconciliation(connection, marker), false);
     const first = reconcileCashBalanceOnce(connection, dayId, 241.74, marker);
+    assert.equal(hasCashBalanceReconciliation(connection, marker), true);
     assert.deepEqual(first, {
       applied: true,
       adjustmentId: first.adjustmentId,

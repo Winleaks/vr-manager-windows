@@ -47,6 +47,16 @@ export interface CashReceiptUpdateInput {
 
 const CASH_BALANCE_INITIALIZED_KEY = 'daily_cash_balance_initialized_v1';
 
+export function hasCashBalanceReconciliation(
+  connection: SqliteDatabase,
+  markerKeyInput: string,
+) {
+  const markerKey = requireText(markerKeyInput, 'Identificatorul reconcilierii', 100);
+  return Boolean(connection.prepare(
+    'SELECT 1 FROM app_settings WHERE key = ?',
+  ).get(markerKey));
+}
+
 export function reconcileCashBalanceOnce(
   connection: SqliteDatabase,
   dayIdInput: number,

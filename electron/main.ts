@@ -18,6 +18,7 @@ import { containsLegacyApplicationProcess } from './migration/legacyProcessPolic
 import { checkForUpdates, initializeUpdater } from './updater/updateCoordinator'
 import { cashRepo } from './database/repositories/cashRepo'
 import { millisecondsUntilNextLocalMidnight } from './database/cashDayRollover'
+import { runStartupCashReconciliation } from './startupCashReconciliation'
 
 const DIST_PATH = path.join(__dirname, '../dist')
 process.env.DIST = DIST_PATH
@@ -133,17 +134,16 @@ app.whenReady().then(async () => {
   initDb()
   if (getDeviceRole() === 'writer') {
     try {
-      const preReconciliationBackup = await backupDb()
-      if (!preReconciliationBackup.success) {
-        throw new Error('Backupul de siguranță nu a putut fi creat; soldul nu a fost modificat.')
-      }
-      const activeDay = cashRepo.getActiveDay(true)
-      if (!activeDay) throw new Error('Nu există o zi de casă deschisă.')
-      const reconciliation = cashRepo.reconcileBalanceOnce(
-        activeDay.id,
-        CASH_RECONCILIATION_TARGET,
-        CASH_RECONCILIATION_MARKER,
-      )
+      const reconciliation = await runStartupCashReconciliation({
+        markerKey: CASH_RECONCILIATION_MARKER,
+        targetBalance: CASH_RECONCILIATION_TARGET,
+        hasBalanceReconciliation: (markerKey) => cashRepo.hasBalanceReconciliation(markerKey),
+        getActiveDay: () => cashRepo.getActiveDay(true),
+        backupDatabase: () => backupDb(),
+        reconcileBalanceOnce: (dayId, targetBalance, markerKey) => (
+          cashRepo.reconcileBalanceOnce(dayId, targetBalance, markerKey)
+        ),
+      })
       if (reconciliation.applied) {
         console.log('[DAILY CASH] Soldul Writer a fost reconciliat o singură dată la £241.74.')
       }
