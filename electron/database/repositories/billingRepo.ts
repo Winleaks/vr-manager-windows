@@ -1,6 +1,7 @@
 import { db } from '../db';
 import {
   createInvoiceBatchTransaction,
+  createManualInvoiceTransaction,
   recordCompanyPaymentTransaction,
   updateInvoiceTransaction,
   createWeeklyInvoiceBatchTransaction,
@@ -13,6 +14,7 @@ import {
   type WeeklyInvoiceInput,
   type CompanyPaymentInput,
   type InvoiceOrderInput,
+  type ManualInvoiceInput,
   type UpdatePaymentInput,
 } from './billingTransactions';
 import {
@@ -36,6 +38,7 @@ import {
   type ApplyCompanyCreditInput,
   type CreateCreditNoteInput,
 } from '../creditNotes';
+import { requirePositiveInteger } from '../businessValidation';
 
 // Settings
 export function getAppSetting(key: string): string | null {
@@ -325,7 +328,10 @@ export function getCompanyProfileDetails(companyId: number) {
     `).all(...storeIds) as any[];
 
     invoices = invoices.map(inv => {
-      const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id) as any[];
+      const items = db.prepare(`
+        SELECT * FROM invoice_items WHERE invoice_id = ?
+        ORDER BY CASE WHEN product_order IS NULL THEN 1 ELSE 0 END, product_order, id
+      `).all(inv.id) as any[];
       const financials = getInvoiceFinancials(db, inv.id);
       return {
         ...inv,
@@ -340,6 +346,7 @@ export function getCompanyProfileDetails(companyId: number) {
           quantity: it.quantity,
           unitPrice: it.unit_price,
           totalPrice: it.total_price,
+          productOrder: it.product_order,
           externalProductId: it.external_product_id,
           finishedProductId: it.finished_product_id,
         }))
@@ -405,14 +412,17 @@ export function createInvoiceBatchFromSync(orders: InvoiceOrderInput[], invoiceD
   return createInvoiceBatchTransaction(db, orders, invoiceDate);
 }
 
+export function createManualInvoice(data: ManualInvoiceInput) {
+  return createManualInvoiceTransaction(db, data);
+}
+
 export function getStoreBySupabaseId(supabaseStoreId: string) {
   const store = db.prepare('SELECT id FROM stores WHERE supabase_store_id = ?').get(supabaseStoreId) as any;
   return store ? store.id : null;
 }
 
 // Invoices
-export function getInvoicesByDateRange(startDate?: string, endDate?: string, issuerId?: number) {
-  let query = `
+const invoiceSelect = `
     SELECT i.*, 
            ii.issuer_id, ii.series AS invoice_series, ii.sequence_number AS invoice_sequence,
            ii.reference AS invoice_reference, ii.issuer_snapshot_json,
@@ -427,6 +437,41 @@ export function getInvoicesByDateRange(startDate?: string, endDate?: string, iss
     LEFT JOIN invoice_identities ii ON ii.invoice_id = i.id
     LEFT JOIN billing_issuers bi ON bi.id = ii.issuer_id
   `;
+
+function hydrateInvoice(inv: any) {
+  const items = db.prepare(`
+    SELECT * FROM invoice_items WHERE invoice_id = ?
+    ORDER BY CASE WHEN product_order IS NULL THEN 1 ELSE 0 END, product_order, id
+  `).all(inv.id) as any[];
+  return {
+    ...inv,
+    ...getInvoiceFinancials(db, inv.id),
+    issuer_settings: invoiceSettingsFromIdentity(inv),
+    items: items.map(item => ({
+      id: item.id,
+      productName: item.product_name,
+      name_ro: item.product_name_ro,
+      variant_label: item.variant_label,
+      unit: item.unit,
+      quantity: item.quantity,
+      unitPrice: item.unit_price,
+      totalPrice: item.total_price,
+      productOrder: item.product_order,
+      externalProductId: item.external_product_id,
+      finishedProductId: item.finished_product_id,
+    })),
+  };
+}
+
+export function getInvoiceById(invoiceIdInput: number) {
+  const invoiceId = requirePositiveInteger(invoiceIdInput, 'Factura');
+  const invoice = db.prepare(`${invoiceSelect} WHERE i.id = ?`).get(invoiceId) as any;
+  if (!invoice) throw new Error('Factura nu există.');
+  return hydrateInvoice(invoice);
+}
+
+export function getInvoicesByDateRange(startDate?: string, endDate?: string, issuerId?: number) {
+  let query = invoiceSelect;
   const params: any[] = [];
   const conditions: string[] = [];
   if (startDate && endDate) {
@@ -442,26 +487,7 @@ export function getInvoicesByDateRange(startDate?: string, endDate?: string, iss
 
   const invoices = db.prepare(query).all(...params) as any[];
 
-  return invoices.map(inv => {
-    const items = db.prepare(`SELECT * FROM invoice_items WHERE invoice_id = ?`).all(inv.id) as any[];
-    return {
-      ...inv,
-      ...getInvoiceFinancials(db, inv.id),
-      issuer_settings: invoiceSettingsFromIdentity(inv),
-      items: items.map(item => ({
-        id: item.id,
-        productName: item.product_name,
-        name_ro: item.product_name_ro,
-        variant_label: item.variant_label,
-        unit: item.unit,
-        quantity: item.quantity,
-        unitPrice: item.unit_price,
-        totalPrice: item.total_price,
-        externalProductId: item.external_product_id,
-        finishedProductId: item.finished_product_id,
-      }))
-    };
-  });
+  return invoices.map(hydrateInvoice);
 }
 
 export function updateInvoiceWithItems(
@@ -521,7 +547,10 @@ export function reissueCancelledInvoice(invoiceId: number, invoiceDate: string) 
 }
 
 export function getCloudProducts() {
-  return db.prepare('SELECT * FROM cloud_products ORDER BY name').all();
+  return db.prepare(`
+    SELECT * FROM cloud_products
+    ORDER BY CASE WHEN display_order IS NULL THEN 1 ELSE 0 END, display_order, name COLLATE NOCASE, id
+  `).all();
 }
 
 export function syncProductsFromVrBaker(products: VrBakerProduct[]) {
@@ -534,12 +563,12 @@ export function syncProductsFromVrBaker(products: VrBakerProduct[]) {
     const findByName = db.prepare('SELECT id FROM cloud_products WHERE LOWER(name) = LOWER(?)');
     const update = db.prepare(`
       UPDATE cloud_products
-      SET name = ?, name_ro = ?, variant_label = ?, unit = ?, category = ?, price_standard = ?, available = ?, supabase_product_id = ?, updated_at = CURRENT_TIMESTAMP
+      SET name = ?, name_ro = ?, variant_label = ?, unit = ?, category = ?, price_standard = ?, available = ?, display_order = ?, supabase_product_id = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `);
     const insert = db.prepare(`
-      INSERT INTO cloud_products (supabase_product_id, name, name_ro, variant_label, unit, category, price_standard, available)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cloud_products (supabase_product_id, name, name_ro, variant_label, unit, category, price_standard, available, display_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const product of products) {
       const local = (findByExternalId.get(product.id) || findByName.get(product.name)) as { id: number } | undefined;
@@ -551,6 +580,7 @@ export function syncProductsFromVrBaker(products: VrBakerProduct[]) {
         product.category || null,
         product.priceStandard,
         product.available ? 1 : 0,
+        product.displayOrder,
       ] as const;
       if (local) update.run(...values, product.id, local.id);
       else insert.run(product.id, ...values);
@@ -565,6 +595,30 @@ export function syncProductsFromVrBaker(products: VrBakerProduct[]) {
           AND available != 0
       `).run(...products.map((product) => product.id));
     }
+    db.prepare(`
+      UPDATE invoice_items
+      SET product_order = (
+        SELECT cp.display_order FROM cloud_products cp
+        WHERE cp.supabase_product_id = invoice_items.external_product_id
+        LIMIT 1
+      )
+      WHERE external_product_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM cloud_products cp
+          WHERE cp.supabase_product_id = invoice_items.external_product_id
+        )
+    `).run();
+    db.prepare(`
+      UPDATE credit_note_items
+      SET product_order = (
+        SELECT item.product_order FROM invoice_items item
+        WHERE item.id = credit_note_items.source_invoice_item_id
+      )
+      WHERE EXISTS (
+        SELECT 1 FROM invoice_items item
+        WHERE item.id = credit_note_items.source_invoice_item_id
+      )
+    `).run();
     return products.length;
   })();
 }

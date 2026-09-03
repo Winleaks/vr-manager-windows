@@ -143,6 +143,7 @@ export function ensureCreditNoteSchema(connection: SqliteDatabase) {
       vat_rate REAL NOT NULL DEFAULT 0,
       vat_amount REAL NOT NULL DEFAULT 0 CHECK(vat_amount >= 0),
       total_amount REAL NOT NULL CHECK(total_amount > 0),
+      product_order INTEGER,
       external_product_id TEXT,
       finished_product_id INTEGER,
       return_to_stock INTEGER NOT NULL DEFAULT 0 CHECK(return_to_stock IN (0, 1)),
@@ -191,6 +192,10 @@ export function ensureCreditNoteSchema(connection: SqliteDatabase) {
     CREATE INDEX IF NOT EXISTS idx_credit_entries_scope ON company_credit_entries(company_id, issuer_id, status, created_at);
     CREATE INDEX IF NOT EXISTS idx_credit_applications_invoice ON invoice_credit_applications(invoice_id, reversed_at);
   `);
+
+  if (!columnExists(connection, 'credit_note_items', 'product_order')) {
+    connection.exec('ALTER TABLE credit_note_items ADD COLUMN product_order INTEGER;');
+  }
 
   connection.prepare(`UPDATE billing_issuers SET credit_note_series = CASE code WHEN 'goodness' THEN 'CN-TGB' WHEN 'vatra' THEN 'CN-VATRA' ELSE 'CN-' || UPPER(code) END WHERE credit_note_series IS NULL OR credit_note_series = ''`).run();
 
@@ -314,7 +319,8 @@ export function getCreditNoteDraft(connection: SqliteDatabase, invoiceIdsInput?:
       SELECT item.*,
         COALESCE((SELECT SUM(cni.quantity) FROM credit_note_items cni JOIN credit_notes cn ON cn.id = cni.credit_note_id WHERE cni.source_invoice_item_id = item.id AND cn.status = 'issued'), 0) AS credited_quantity,
         COALESCE((SELECT SUM(cni.total_amount) FROM credit_note_items cni JOIN credit_notes cn ON cn.id = cni.credit_note_id WHERE cni.source_invoice_item_id = item.id AND cn.status = 'issued'), 0) AS credited_value
-      FROM invoice_items item WHERE item.invoice_id = ? ORDER BY item.id
+      FROM invoice_items item WHERE item.invoice_id = ?
+      ORDER BY CASE WHEN item.product_order IS NULL THEN 1 ELSE 0 END, item.product_order, item.id
     `).all(invoice.id) as any[]).map((item) => {
       const finishedProductId = resolveFinishedProduct(connection, item);
       return {
@@ -382,7 +388,7 @@ export function createCreditNoteTransaction(connection: SqliteDatabase, input: C
     const getSource = connection.prepare(`
       SELECT item.id AS source_item_id, item.invoice_id, item.product_name, item.product_name_ro,
              item.variant_label, item.unit, item.quantity, item.unit_price, item.total_price,
-             item.external_product_id, item.finished_product_id,
+             item.external_product_id, item.finished_product_id, item.product_order,
              i.invoice_date, i.invoice_number, i.status AS invoice_status,
              s.name AS store_name, s.company_id, c.name AS company_name, c.address AS company_address,
              c.cui AS company_cui, c.reg_com AS company_reg_com, cl.name AS client_name,
@@ -432,12 +438,12 @@ export function createCreditNoteTransaction(connection: SqliteDatabase, input: C
     `).run(first.company_id, first.issuer_id, reference, issuer.credit_note_series, sequence, issueDate, reason, backdateReason, JSON.stringify(issuerSnapshot(issuer)), JSON.stringify(customerSnapshot(first)), totalAmount, totalAmount);
     const creditNoteId = Number(creditNote.lastInsertRowid);
     const insertItem = connection.prepare(`
-      INSERT INTO credit_note_items (credit_note_id, source_invoice_id, source_invoice_item_id, store_name, product_name, product_name_ro, variant_label, unit, quantity, unit_amount, net_amount, vat_rate, vat_amount, total_amount, external_product_id, finished_product_id, return_to_stock)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)
+      INSERT INTO credit_note_items (credit_note_id, source_invoice_id, source_invoice_item_id, store_name, product_name, product_name_ro, variant_label, unit, quantity, unit_amount, net_amount, vat_rate, vat_amount, total_amount, product_order, external_product_id, finished_product_id, return_to_stock)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)
     `);
     const byInvoice = new Map<number, number>();
     for (const row of prepared) {
-      insertItem.run(creditNoteId, row.source.invoice_id, row.source.source_item_id, row.source.store_name, row.source.product_name, row.source.product_name_ro, row.source.variant_label, row.source.unit, row.selection.quantity, row.selection.unitAmount, row.total, row.total, row.source.external_product_id, row.finishedProductId, row.selection.returnToStock ? 1 : 0);
+      insertItem.run(creditNoteId, row.source.invoice_id, row.source.source_item_id, row.source.store_name, row.source.product_name, row.source.product_name_ro, row.source.variant_label, row.source.unit, row.selection.quantity, row.selection.unitAmount, row.total, row.total, row.source.product_order, row.source.external_product_id, row.finishedProductId, row.selection.returnToStock ? 1 : 0);
       byInvoice.set(row.source.invoice_id, roundMoney((byInvoice.get(row.source.invoice_id) || 0) + row.total));
       if (row.selection.returnToStock) {
         const stock = connection.prepare('SELECT current_stock FROM finished_products WHERE id = ?').get(row.finishedProductId) as { current_stock: number };
@@ -504,7 +510,10 @@ export function getCreditNote(connection: SqliteDatabase, creditNoteIdInput: num
   const note = connection.prepare(`SELECT cn.*, c.name AS company_name, bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color FROM credit_notes cn JOIN companies c ON c.id = cn.company_id JOIN billing_issuers bi ON bi.id = cn.issuer_id WHERE cn.id = ?`).get(creditNoteId) as any;
   if (!note) throw new Error('Credit Note-ul nu există.');
   const invoices = connection.prepare(`SELECT i.id, i.invoice_number, i.invoice_date, link.credited_total FROM credit_note_invoice_links link JOIN invoices i ON i.id = link.invoice_id WHERE link.credit_note_id = ? ORDER BY i.invoice_date, i.id`).all(creditNoteId);
-  const items = connection.prepare('SELECT * FROM credit_note_items WHERE credit_note_id = ? ORDER BY source_invoice_id, id').all(creditNoteId);
+  const items = connection.prepare(`
+    SELECT * FROM credit_note_items WHERE credit_note_id = ?
+    ORDER BY source_invoice_id, CASE WHEN product_order IS NULL THEN 1 ELSE 0 END, product_order, id
+  `).all(creditNoteId);
   return { ...note, issuerSnapshot: JSON.parse(note.issuer_snapshot_json), customerSnapshot: JSON.parse(note.customer_snapshot_json), invoices, items };
 }
 

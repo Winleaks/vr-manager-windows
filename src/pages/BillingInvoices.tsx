@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { 
-  Receipt, Search, Edit3, Trash2, Printer, X, Plus, Save,
+  Receipt, Search, Edit3, Trash2, Printer, X, Plus, Save, FilePlus2,
   CheckCircle2, Clock, AlertCircle, Building2, Store, FileText, Loader2, RefreshCw, FileMinus2
 } from 'lucide-react';
 import { api } from '../shared/api';
@@ -327,6 +327,7 @@ export function BillingInvoices() {
           </div>
           <p className="text-slate-500 mt-2">Evidența facturilor pe societăți emitente, cu anulare auditabilă și retipărire PDF.</p>
         </div>
+        {isWriter && <button type="button" onClick={() => { window.location.hash = '/facturare/factura-manuala'; }} className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-sm"><FilePlus2 size={18} />Creează factură manuală</button>}
       </div>
       {testMode && <div role="status" className="mb-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">Mod test activ: butonul coș șterge definitiv doar facturile fără plăți, Credit Notes, credit aplicat sau reemitere.</div>}
 
@@ -416,7 +417,7 @@ export function BillingInvoices() {
           <div className="p-12 text-center text-slate-500">
             <FileText size={48} className="mx-auto mb-4 text-slate-300" />
             <p className="text-lg font-medium text-slate-700">Nu am găsit nicio factură.</p>
-            <p className="text-sm mt-1">Poți genera facturi noi din secțiunea <strong>Comenzi</strong>.</p>
+            <p className="text-sm mt-1">Poți genera facturi din <strong>Comenzi</strong> sau din <strong>Factură manuală</strong>.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">

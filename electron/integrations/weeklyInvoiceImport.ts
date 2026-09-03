@@ -12,6 +12,7 @@ export interface WeeklyInvoiceGroup {
     quantity: number;
     unitPrice: number;
     totalPrice: number;
+    productOrder: number | null;
   }>;
   sourceOrders: Array<{ id: string; updatedAt: string }>;
   sourceFingerprint: string;
@@ -44,13 +45,18 @@ export function aggregateWeeklyOrders(orders: VrBakerOrder[]): WeeklyInvoiceGrou
           quantity: item.quantity,
           unitPrice: item.unitPrice,
           totalPrice: item.quantity * item.unitPrice,
+          productOrder: item.displayOrder,
         });
       }
     }
   }
   return [...stores.values()].map((group) => {
     const sourceOrders = group.sourceOrders.sort((a, b) => a.id.localeCompare(b.id));
-    const items = [...group.items.values()].sort((a, b) => `${a.productName}:${a.unitPrice}`.localeCompare(`${b.productName}:${b.unitPrice}`));
+    const items = [...group.items.values()].sort((a, b) => {
+      const orderA = a.productOrder ?? Number.MAX_SAFE_INTEGER;
+      const orderB = b.productOrder ?? Number.MAX_SAFE_INTEGER;
+      return orderA - orderB || `${a.productName}:${a.unitPrice}`.localeCompare(`${b.productName}:${b.unitPrice}`);
+    });
     // Keep the legacy fingerprint shape stable so adding bilingual presentation
     // fields does not falsely report old invoices as having a changed source.
     const fingerprintItems = items.map((item) => ({

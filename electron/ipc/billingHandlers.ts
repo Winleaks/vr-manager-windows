@@ -56,6 +56,10 @@ export function registerBillingHandlers() {
   handleTrustedIpc('billing:recordCompanyPayment', (_, data) => billingRepo.recordCompanyPayment(data));
   handleTrustedIpc('billing:updatePayment', (_, data) => billingRepo.updatePayment(data));
   handleTrustedIpc('billing:getInvoices', (_, startDate, endDate, issuerId) => billingRepo.getInvoicesByDateRange(startDate, endDate, issuerId));
+  handleTrustedIpc('billing:createManualInvoice', (_, data) => {
+    const created = billingRepo.createManualInvoice(data);
+    return { ...created, invoice: billingRepo.getInvoiceById(created.invoiceId) };
+  });
   handleTrustedIpc('billing:updateInvoice', (_, data) => billingRepo.updateInvoiceWithItems(data.id, data.invoiceDate, data.items || []));
   handleTrustedIpc('billing:cancelInvoice', (_, data) => billingRepo.cancelInvoice(data.invoiceId, data.reason));
   handleTrustedIpc('billing:getTestMode', () => billingRepo.getBillingTestMode());

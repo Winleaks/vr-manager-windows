@@ -26,8 +26,22 @@ test('weekly invoice items keep English and Romanian names without changing the 
       unit: 'buc',
       category: 'patisserie',
       priceStandard: 3,
+      displayOrder: 7,
       unitPrice: 2.5,
       quantity: 2,
+      available: true,
+    }, {
+      id: '55555555-5555-4555-8555-555555555555',
+      productId: '66666666-6666-4666-8666-666666666666',
+      productName: 'Apple Pie',
+      nameRo: 'Plăcintă cu mere',
+      variantLabel: '',
+      unit: 'buc',
+      category: 'patisserie',
+      priceStandard: 4,
+      displayOrder: 20,
+      unitPrice: 3,
+      quantity: 1,
       available: true,
     }],
   };
@@ -42,10 +56,24 @@ test('weekly invoice items keep English and Romanian names without changing the 
     quantity: 2,
     unitPrice: 2.5,
     totalPrice: 5,
+    productOrder: 7,
+  }, {
+    externalProductId: '66666666-6666-4666-8666-666666666666',
+    productName: 'Apple Pie',
+    name_ro: 'Plăcintă cu mere',
+    variant_label: '',
+    unit: 'buc',
+    quantity: 1,
+    unitPrice: 3,
+    totalPrice: 3,
+    productOrder: 20,
   }]);
   const legacyPayload = {
     sourceOrders: [{ id: order.id, updatedAt: order.updatedAt }],
-    items: [{ productName: 'Plăcintă cu brânză', quantity: 2, unitPrice: 2.5, totalPrice: 5 }],
+    items: [
+      { productName: 'Plăcintă cu brânză', quantity: 2, unitPrice: 2.5, totalPrice: 5 },
+      { productName: 'Plăcintă cu mere', quantity: 1, unitPrice: 3, totalPrice: 3 },
+    ],
   };
   assert.equal(group.sourceFingerprint, createHash('sha256').update(JSON.stringify(legacyPayload)).digest('hex'));
 });

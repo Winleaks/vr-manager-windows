@@ -26,6 +26,7 @@ export function ensureFinishedProductCatalogSchema(connection: SqliteDatabase) {
   if (!columns.has('catalog_source')) connection.exec("ALTER TABLE finished_products ADD COLUMN catalog_source TEXT NOT NULL DEFAULT 'manual';");
   if (!columns.has('source_category')) connection.exec('ALTER TABLE finished_products ADD COLUMN source_category TEXT;');
   if (!columns.has('standard_price')) connection.exec('ALTER TABLE finished_products ADD COLUMN standard_price REAL NOT NULL DEFAULT 0;');
+  if (!columns.has('display_order')) connection.exec('ALTER TABLE finished_products ADD COLUMN display_order INTEGER;');
   connection.exec("UPDATE finished_products SET name_ro = name WHERE name_ro IS NULL OR trim(name_ro) = '';");
   connection.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_finished_products_external ON finished_products(external_product_id) WHERE external_product_id IS NOT NULL;');
 }
@@ -114,7 +115,7 @@ export function syncFinishedProductCatalog(
         connection.prepare(`
           UPDATE finished_products
           SET name = ?, name_ro = ?, production_unit = ?, external_product_id = ?, catalog_source = 'vrbaker',
-              source_category = ?, standard_price = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+              source_category = ?, standard_price = ?, display_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `).run(
           name,
@@ -123,6 +124,7 @@ export function syncFinishedProductCatalog(
           product.id,
           product.category,
           product.priceStandard,
+          product.displayOrder,
           product.available ? 1 : 0,
           local.id,
         );
@@ -130,9 +132,9 @@ export function syncFinishedProductCatalog(
       } else {
         connection.prepare(`
           INSERT INTO finished_products
-            (name, name_ro, production_unit, external_product_id, catalog_source, source_category, standard_price, is_active)
-          VALUES (?, ?, ?, ?, 'vrbaker', ?, ?, ?)
-        `).run(name, romanianDisplayName(product), product.unit, product.id, product.category, product.priceStandard, product.available ? 1 : 0);
+            (name, name_ro, production_unit, external_product_id, catalog_source, source_category, standard_price, display_order, is_active)
+          VALUES (?, ?, ?, ?, 'vrbaker', ?, ?, ?, ?)
+        `).run(name, romanianDisplayName(product), product.unit, product.id, product.category, product.priceStandard, product.displayOrder, product.available ? 1 : 0);
         created += 1;
       }
     }

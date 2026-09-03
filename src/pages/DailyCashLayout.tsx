@@ -85,13 +85,20 @@ function DailyCashSidebar() {
       setSaleError('Selectează produsul și introdu o cantitate și un preț mai mari decât zero.');
       return;
     }
-    setSaleData({
-      ...saleData,
-      items: [...saleData.items, {
+    const items = [...saleData.items, {
         finished_product_id: parseInt(currentSaleItem.finished_product_id),
         quantity,
         unit_price: unitPrice
-      }]
+      }].sort((a, b) => {
+        const productA = products.find((product) => product.id === a.finished_product_id);
+        const productB = products.find((product) => product.id === b.finished_product_id);
+        const orderA = productA?.display_order ?? Number.MAX_SAFE_INTEGER;
+        const orderB = productB?.display_order ?? Number.MAX_SAFE_INTEGER;
+        return orderA - orderB || String(productA?.name || '').localeCompare(String(productB?.name || ''), 'en-GB');
+      });
+    setSaleData({
+      ...saleData,
+      items
     });
     setSaleError('');
     setCurrentSaleItem({ finished_product_id: '', quantity: '', unit_price: '' });

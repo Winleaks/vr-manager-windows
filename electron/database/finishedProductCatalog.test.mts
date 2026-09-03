@@ -17,6 +17,7 @@ function product(overrides: Partial<VrBakerProduct> & Pick<VrBakerProduct, 'id' 
     unit: overrides.unit || 'buc',
     category: overrides.category || 'bakery',
     priceStandard: overrides.priceStandard || 0,
+    displayOrder: overrides.displayOrder ?? null,
     available: overrides.available !== false,
   };
 }
@@ -38,7 +39,7 @@ test('catalog schema migration preserves legacy finished products', () => {
     ensureFinishedProductCatalogSchema(connection);
     ensureFinishedProductCatalogSchema(connection);
     assert.deepEqual(connection.prepare(`
-      SELECT name, name_ro, current_stock, external_product_id, catalog_source, source_category, standard_price
+      SELECT name, name_ro, current_stock, external_product_id, catalog_source, source_category, standard_price, display_order
       FROM finished_products
     `).get(), {
       name: 'Produs vechi',
@@ -48,6 +49,7 @@ test('catalog schema migration preserves legacy finished products', () => {
       catalog_source: 'manual',
       source_category: null,
       standard_price: 0,
+      display_order: null,
     });
   } finally {
     connection.close();
@@ -70,8 +72,8 @@ test('VR Baker catalog replaces manual products while preserving matched stock a
     ).run(matchedId);
 
     const first = syncFinishedProductCatalog(connection, [
-      product({ id: breadId, name: 'Bread', nameRo: 'Pâine', variantLabel: '500g', priceStandard: 2.5 }),
-      product({ id: cakeId, name: 'Cake', nameRo: 'Cozonac', priceStandard: 8 }),
+      product({ id: breadId, name: 'Bread', nameRo: 'Pâine', variantLabel: '500g', priceStandard: 2.5, displayOrder: 4 }),
+      product({ id: cakeId, name: 'Cake', nameRo: 'Cozonac', priceStandard: 8, displayOrder: 2 }),
     ]);
     assert.deepEqual(first, {
       received: 2,
@@ -82,7 +84,7 @@ test('VR Baker catalog replaces manual products while preserving matched stock a
       deactivatedRemote: 0,
     });
     assert.deepEqual(connection.prepare(`
-      SELECT id, name, name_ro, current_stock, external_product_id, catalog_source, standard_price, is_active
+      SELECT id, name, name_ro, current_stock, external_product_id, catalog_source, standard_price, display_order, is_active
       FROM finished_products WHERE id = ?
     `).get(matchedId), {
       id: matchedId,
@@ -92,6 +94,7 @@ test('VR Baker catalog replaces manual products while preserving matched stock a
       external_product_id: breadId,
       catalog_source: 'vrbaker',
       standard_price: 2.5,
+      display_order: 4,
       is_active: 1,
     });
     assert.equal((connection.prepare(
@@ -102,14 +105,14 @@ test('VR Baker catalog replaces manual products while preserving matched stock a
     ).get(oldManualId) as { is_active: number }).is_active, 0);
 
     const second = syncFinishedProductCatalog(connection, [
-      product({ id: breadId, name: 'Bread', nameRo: 'Pâine', variantLabel: '600g', priceStandard: 3 }),
+      product({ id: breadId, name: 'Bread', nameRo: 'Pâine', variantLabel: '600g', priceStandard: 3, displayOrder: 1 }),
     ]);
     assert.equal(second.created, 0);
     assert.equal(second.updated, 1);
     assert.equal(second.deactivatedRemote, 1);
     assert.deepEqual(connection.prepare(`
-      SELECT name, name_ro, current_stock, standard_price FROM finished_products WHERE id = ?
-    `).get(matchedId), { name: 'Bread - 600g', name_ro: 'Pâine - 600g', current_stock: -2, standard_price: 3 });
+      SELECT name, name_ro, current_stock, standard_price, display_order FROM finished_products WHERE id = ?
+    `).get(matchedId), { name: 'Bread - 600g', name_ro: 'Pâine - 600g', current_stock: -2, standard_price: 3, display_order: 1 });
     assert.equal((connection.prepare(
       'SELECT is_active FROM finished_products WHERE external_product_id = ?',
     ).get(cakeId) as { is_active: number }).is_active, 0);

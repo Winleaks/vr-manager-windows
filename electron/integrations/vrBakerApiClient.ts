@@ -28,6 +28,7 @@ export interface VrBakerOrderItem {
   unit: string;
   category: string;
   priceStandard: number;
+  displayOrder: number | null;
   unitPrice: number;
   quantity: number;
   available: boolean;
@@ -50,6 +51,7 @@ export interface VrBakerProduct {
   unit: string;
   category: string;
   priceStandard: number;
+  displayOrder: number | null;
   available: boolean;
 }
 
@@ -97,6 +99,15 @@ function finiteNonNegative(value: unknown, label: string) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1_000_000_000) {
     throw new Error(`${label} este invalid.`);
+  }
+  return parsed;
+}
+
+function optionalDisplayOrder(value: unknown) {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 1_000_000) {
+    throw new Error('Ordinea produsului este invalidă.');
   }
   return parsed;
 }
@@ -149,6 +160,7 @@ function parseProduct(value: unknown): VrBakerProduct {
     unit: optionalString(product.unit, 50) || 'buc',
     category: optionalString(product.category, 100) || 'patisserie',
     priceStandard: finiteNonNegative(product.price_standard ?? 0, 'Prețul standard'),
+    displayOrder: optionalDisplayOrder(product.display_order),
     available: product.available !== false,
   };
 }

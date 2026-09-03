@@ -14,6 +14,7 @@ import { ensureInvoiceItemLocalizationSchema } from './invoiceItemLocalization'
 import { ensureBillingIssuerSchema } from './billingIssuers'
 import { ensureCreditNoteSchema } from './creditNotes'
 import { ensureBillingPostcodeSchema } from './billingPostcodes'
+import { ensureProductOrderingSchema } from './productOrdering'
 
 export { verifyDatabaseFile } from './databaseValidation'
 
@@ -364,6 +365,13 @@ function runMigrations() {
         description: "Păstrare postcode separat pentru magazinele VR Baker",
         up: () => {
           ensureBillingPostcodeSchema(db);
+        }
+      },
+      {
+        version: 15,
+        description: "Ordinea produselor sincronizată din VR Baker Platform",
+        up: () => {
+          ensureProductOrderingSchema(db);
         }
       }
     ];

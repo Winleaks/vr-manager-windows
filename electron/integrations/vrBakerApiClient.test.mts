@@ -70,13 +70,14 @@ test('accepts canonical PostgreSQL UUIDs without RFC marker restrictions', async
       client_store: { id: '22222222-2222-4222-8222-222222222222', name: 'Magazin', postcode: 'SS14 1EU', client_company: null },
       order_items: [{
         id: '33333333-3333-4333-8333-333333333333', quantity: 2, unit_price_snapshot: 1.5,
-        products: { id: legacyProductId, name: 'Bread', name_ro: 'Pâine', available: true },
+        products: { id: legacyProductId, name: 'Bread', name_ro: 'Pâine', available: true, display_order: 12 },
       }],
     }], next_cursor: null } }), { status: 200 })) as typeof fetch,
   });
 
   const orders = await client.fetchWeeklyOrders('2026-08-03', '2026-08-09');
   assert.equal(orders[0]?.items[0]?.productId, legacyProductId);
+  assert.equal(orders[0]?.items[0]?.displayOrder, 12);
   assert.equal(orders[0]?.store.postcode, 'SS14 1EU');
 });
 

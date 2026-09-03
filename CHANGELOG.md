@@ -1,3 +1,16 @@
+### În lucru
+
+### VR - Hub Management v0.1.88
+
+- Ordinea produselor din `Product Order` (`display_order`) este sincronizată read-only din VR Baker Platform și folosită consecvent în cataloagele Hub Manager, selectoarele operaționale, vânzarea directă, facturi și Credit Notes.
+- Liniile facturilor păstrează ordinea produsului în SQLite; resincronizarea catalogului poate reordona prezentarea documentelor existente fără a modifica denumiri, cantități, prețuri sau totaluri.
+- Produsele fără o ordine configurată sunt afișate după produsele ordonate, cu fallback stabil alfabetic; materiile prime locale nu sunt afectate.
+- Confirmarea ștergerii în Modul test acceptă numărul istoric afișat pentru facturile migrate înaintea introducerii seriilor, păstrând referința canonică în audit.
+- Writer-ul poate emite facturi manuale dintr-o pagină dedicată, alegând compania, magazinul, data și produse existente din catalogul local.
+- Emitentul, seria, numărul și denumirile bilingve ale produselor sunt rezolvate autoritar în backend; facturile manuale nu creează legături false cu comenzile VR Baker.
+- Prețul standard este completat automat, cantitatea și prețul pot fi ajustate pentru document, iar PDF-ul este generat din factura recitită din SQLite.
+- Viewer-ele pot vedea facturile replicate, dar nu pot emite facturi manuale.
+
 ### VR - Hub Management v0.1.87
 
 - Facturile folosesc coloane compacte și centrate, cu mai mult spațiu pentru denumirile bilingve ale produselor și fără ruperea aceluiași produs între pagini.

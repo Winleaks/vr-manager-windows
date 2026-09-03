@@ -123,6 +123,8 @@ export const desktopApi = {
     updatePayment: (data: any) => ipcRenderer.invoke('billing:updatePayment', data),
     getInvoices: (startDate?: string, endDate?: string, issuerId?: number) =>
       ipcRenderer.invoke('billing:getInvoices', startDate, endDate, issuerId),
+    createManualInvoice: (data: { storeId: number; invoiceDate: string; items: Array<{ productId: number; quantity: number; unitPrice: number }> }) =>
+      ipcRenderer.invoke('billing:createManualInvoice', data),
     updateInvoice: (data: any) => ipcRenderer.invoke('billing:updateInvoice', data),
     cancelInvoice: (invoiceId: number, reason: string) => ipcRenderer.invoke('billing:cancelInvoice', { invoiceId, reason }),
     getTestMode: () => ipcRenderer.invoke('billing:getTestMode'),

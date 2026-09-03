@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS finished_products (
   catalog_source TEXT NOT NULL DEFAULT 'manual',
   source_category TEXT,
   standard_price REAL NOT NULL DEFAULT 0,
+  display_order INTEGER,
   notes TEXT,
   is_active BOOLEAN DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -270,6 +271,7 @@ CREATE TABLE IF NOT EXISTS invoice_items (
   quantity REAL NOT NULL,
   unit_price REAL NOT NULL,
   total_price REAL NOT NULL,
+  product_order INTEGER,
   FOREIGN KEY(invoice_id) REFERENCES invoices(id)
 );
 
@@ -321,6 +323,7 @@ CREATE TABLE IF NOT EXISTS cloud_products (
   category TEXT,
   price_standard REAL DEFAULT 0,
   available BOOLEAN DEFAULT 1,
+  display_order INTEGER,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -330,6 +333,7 @@ CREATE TABLE IF NOT EXISTS cloud_products (
 CREATE INDEX IF NOT EXISTS idx_raw_materials_supplier ON raw_materials(supplier_id);
 CREATE INDEX IF NOT EXISTS idx_raw_materials_category ON raw_materials(category_id);
 CREATE INDEX IF NOT EXISTS idx_finished_products_category ON finished_products(category_id);
+CREATE INDEX IF NOT EXISTS idx_finished_products_display_order ON finished_products(display_order);
 CREATE INDEX IF NOT EXISTS idx_recipe_items_recipe ON recipe_items(recipe_id);
 CREATE INDEX IF NOT EXISTS idx_recipe_items_raw_material ON recipe_items(raw_material_id);
 CREATE INDEX IF NOT EXISTS idx_productions_product_date ON productions(finished_product_id, production_date);
@@ -344,11 +348,13 @@ CREATE INDEX IF NOT EXISTS idx_stores_company ON stores(company_id);
 CREATE INDEX IF NOT EXISTS idx_stores_supabase ON stores(supabase_store_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_store_date ON invoices(store_id, invoice_date);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice ON invoice_items(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_items_product_order ON invoice_items(invoice_id, product_order, id);
 CREATE INDEX IF NOT EXISTS idx_invoice_import_period ON invoice_import_batches(period_start, period_end);
 CREATE INDEX IF NOT EXISTS idx_invoice_source_batch ON invoice_source_orders(batch_id);
 CREATE INDEX IF NOT EXISTS idx_payments_client ON payments(client_id);
 CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_cloud_products_supabase ON cloud_products(supabase_product_id);
+CREATE INDEX IF NOT EXISTS idx_cloud_products_display_order ON cloud_products(display_order);
 `;
 
 export const seedData = `

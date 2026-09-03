@@ -49,8 +49,13 @@
           },
         ];
         let billingCompanies = [
-          { id: 1, name: 'Client Demo LTD', issuer_id: 1, stores: [{ id: 1, name: 'Magazin Demo' }] },
+          { id: 1, name: 'Client Demo LTD', address: '10 Demo Street, London', issuer_id: 1, is_active: 1, stores: [{ id: 1, name: 'Magazin Demo', address: '25 Baker Street, London', postcode: 'NW1 6XE', is_active: 1 }] },
         ];
+        const billingProducts = [
+          { id: 1, supabase_product_id: 'demo-white-bread', name: 'WHITE BREAD', name_ro: 'PÂINE ALBĂ', unit: 'pcs', price_standard: 2.5, available: 1 },
+          { id: 2, supabase_product_id: 'demo-cheese-pie', name: 'CHEESE PIE', name_ro: 'PLĂCINTĂ CU BRÂNZĂ', unit: 'pcs', price_standard: 3.75, available: 1 },
+        ];
+        let billingInvoices = [];
         let creditNotes = [];
         let billingTestMode = false;
         const creditDraft = [{ id: 1, invoice_number: 'TGB-100', invoice_date: today, store_name: 'Magazin Demo', company_id: 1, company_name: 'Client Demo LTD', issuer_id: 1, issuer_name: 'THE GOODNESS BAKER LTD', grossAmount: 50, creditedAmount: 0, netAmount: 50, cashPaid: 0, appliedCredit: 0, outstanding: 50, items: [{ id: 1, productName: 'WHITE BREAD', nameRo: 'PÂINE ALBĂ', unit: 'buc', remainingQuantity: 10, remainingValue: 50, unitPrice: 5, canReturnToStock: true }] }];
@@ -128,7 +133,7 @@
           'productions.getAll': async () => [],
           'stockMovements.getAll': async () => [],
           'billing.getStats': async () => ({}),
-          'billing.getInvoices': async () => [],
+          'billing.getInvoices': async () => billingInvoices.slice(),
           'billing.getCreditNotes': async () => creditNotes.slice(),
           'billing.getCreditNoteDraft': async () => creditDraft,
           'billing.createCreditNote': async (input) => {
@@ -140,7 +145,34 @@
           'billing.openCreditNotePdf': async () => ({ success: true }),
           'billing.cancelCreditNote': async (id) => { creditNotes = creditNotes.map((note) => note.id === id ? { ...note, status: 'cancelled' } : note); return true; },
           'billing.getClients': async () => [],
-          'billing.getProducts': async () => [],
+          'billing.getProducts': async () => billingProducts.slice(),
+          'billing.createManualInvoice': async (input) => {
+            const company = billingCompanies.find((item) => item.stores.some((store) => store.id === input.storeId));
+            const store = company?.stores.find((item) => item.id === input.storeId);
+            const issuer = billingIssuers.find((item) => item.id === company?.issuer_id);
+            if (!company || !store || !issuer) throw new Error('Date demonstrative incomplete.');
+            const invoiceNumber = `${issuer.invoice_series}-${issuer.next_invoice_number}`;
+            issuer.next_invoice_number += 1;
+            const items = input.items.map((line) => {
+              const product = billingProducts.find((item) => item.id === line.productId);
+              return { productName: product.name, name_ro: product.name_ro, unit: product.unit, quantity: line.quantity, unitPrice: line.unitPrice, totalPrice: Number(line.quantity) * Number(line.unitPrice) };
+            });
+            const totalAmount = items.reduce((sum, item) => sum + item.totalPrice, 0);
+            const created = {
+              invoiceId: Date.now(), invoiceNumber, totalAmount, issuerId: issuer.id,
+              issuerSettings: {
+                code: issuer.code, issuerName: issuer.legal_name, issuerAddress: issuer.address,
+                issuerCrn: issuer.company_number, issuerVat: issuer.vat_number, vatRegistered: Boolean(issuer.vat_registered),
+                invoiceBankName1: issuer.bank_name_1, invoiceAccountNumber: issuer.account_number_1,
+                invoiceSortCode: issuer.sort_code_1, invoiceFooter: issuer.footer, invoiceColor: issuer.color,
+                invoiceAlternateRowColor: issuer.alternate_row_color, invoiceAlternateRowOpacity: issuer.alternate_row_opacity,
+                invoiceSeries: issuer.invoice_series,
+              },
+            };
+            const savedInvoice = { id: created.invoiceId, invoice_number: invoiceNumber, invoice_date: input.invoiceDate, total_amount: totalAmount, paid_amount: 0, status: 'unpaid', store_name: store.name, store_address: store.address, store_postcode: store.postcode, company_name: company.name, company_address: company.address, issuer_id: issuer.id, issuer_name: issuer.legal_name, issuer_code: issuer.code, issuer_color: issuer.color, issuer_settings: created.issuerSettings, items };
+            billingInvoices.unshift(savedInvoice);
+            return { ...created, invoice: savedInvoice };
+          },
           'billing.getIssuers': async () => billingIssuers.map((issuer) => ({ ...issuer })),
           'billing.getTestMode': async () => ({ enabled: billingTestMode }),
           'billing.setTestMode': async (enabled) => { billingTestMode = enabled === true; return { enabled: billingTestMode }; },

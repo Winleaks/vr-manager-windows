@@ -10,6 +10,7 @@ import {
 } from './billingIssuers.ts';
 import {
   cancelInvoiceTransaction,
+  createManualInvoiceTransaction,
   createWeeklyInvoiceBatchTransaction,
   deleteInvoiceForTestingTransaction,
   recordCompanyPaymentTransaction,
@@ -114,6 +115,52 @@ test('issues a mixed batch with independent counters and immutable issuer snapsh
   } finally { connection.close(); }
 });
 
+test('issues a manual invoice only from active catalog products and keeps bilingual product data', () => {
+  const { connection, store1, goodnessId } = fixture();
+  try {
+    const productId = Number(connection.prepare(`
+      INSERT INTO cloud_products (supabase_product_id, name, name_ro, variant_label, unit, price_standard, available, display_order)
+      VALUES ('product-bread', 'Sliced Bread', 'Pâine feliată', 'Large', 'pcs', 2.75, 1, 6)
+    `).run().lastInsertRowid);
+    const invoice = createManualInvoiceTransaction(connection, {
+      storeId: store1,
+      invoiceDate: '2026-09-03',
+      items: [{ productId, quantity: 3, unitPrice: 2.5 }],
+    });
+
+    assert.equal(invoice.invoiceNumber, 'TGB-10');
+    assert.equal(invoice.totalAmount, 7.5);
+    assert.deepEqual(connection.prepare(`
+      SELECT product_name, product_name_ro, variant_label, unit, quantity, unit_price, external_product_id, product_order
+      FROM invoice_items WHERE invoice_id = ?
+    `).get(invoice.invoiceId), {
+      product_name: 'Sliced Bread',
+      product_name_ro: 'Pâine feliată',
+      variant_label: null,
+      unit: 'pcs',
+      quantity: 3,
+      unit_price: 2.5,
+      external_product_id: 'product-bread',
+      product_order: 6,
+    });
+    assert.equal((connection.prepare("SELECT COUNT(*) AS value FROM billing_audit_events WHERE event_type = 'manual_invoice_issued' AND issuer_id = ?").get(goodnessId) as any).value, 1);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoice_import_batches WHERE invoice_id = ?').get(invoice.invoiceId) as any).value, 0);
+
+    assert.throws(() => createManualInvoiceTransaction(connection, {
+      storeId: store1,
+      invoiceDate: '2026-09-03',
+      items: [{ productId: 999999, quantity: 1, unitPrice: 1 }],
+    }), /nu mai există/);
+    connection.prepare('UPDATE cloud_products SET available = 0 WHERE id = ?').run(productId);
+    assert.throws(() => createManualInvoiceTransaction(connection, {
+      storeId: store1,
+      invoiceDate: '2026-09-03',
+      items: [{ productId, quantity: 1, unitPrice: 1 }],
+    }), /nu mai este disponibil/);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoices').get() as any).value, 1);
+  } finally { connection.close(); }
+});
+
 test('separates payments by issuer and reissues a cancelled weekly invoice with a new number', () => {
   const { connection, company1, company2, store1, store2, goodnessId, vatraId } = fixture();
   try {
@@ -148,6 +195,28 @@ test('permanently deletes only a simple invoice while billing test mode is expli
     assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoice_source_orders').get() as any).value, 0);
     assert.equal((connection.prepare('SELECT next_invoice_number FROM billing_issuers WHERE id = ?').get(goodnessId) as any).next_invoice_number, 10);
     assert.equal((connection.prepare("SELECT COUNT(*) AS value FROM billing_audit_events WHERE event_type = 'test_invoice_deleted'").get() as any).value, 1);
+  } finally { connection.close(); }
+});
+
+test('deletes a migrated legacy invoice using the number shown by the interface', () => {
+  const connection = new Database(':memory:');
+  connection.pragma('foreign_keys = ON');
+  connection.exec(initialSchema);
+  try {
+    connection.prepare("INSERT INTO app_settings (key, value) VALUES ('invoice_series', 'TGB'), ('invoice_start_number', '4'), ('issuer_name', 'THE GOODNESS BAKER LTD')").run();
+    const clientId = Number(connection.prepare("INSERT INTO clients (name) VALUES ('Client')").run().lastInsertRowid);
+    const companyId = Number(connection.prepare("INSERT INTO companies (client_id, name) VALUES (?, 'Companie')").run(clientId).lastInsertRowid);
+    const storeId = Number(connection.prepare("INSERT INTO stores (company_id, name) VALUES (?, 'Magazin')").run(companyId).lastInsertRowid);
+    const invoiceId = Number(connection.prepare("INSERT INTO invoices (store_id, invoice_number, invoice_date, total_amount) VALUES (?, '3', '2026-08-01', 10)").run(storeId).lastInsertRowid);
+    connection.prepare("INSERT INTO invoice_items (invoice_id, product_name, quantity, unit_price, total_price) VALUES (?, 'Produs', 1, 10, 10)").run(invoiceId);
+    ensureBillingIssuerSchema(connection);
+    ensureCreditNoteSchema(connection);
+    assert.equal((connection.prepare('SELECT reference FROM invoice_identities WHERE invoice_id = ?').get(invoiceId) as any).reference, 'TGB-3');
+
+    setBillingTestModeTransaction(connection, true, 'MOD TEST');
+    const deleted = deleteInvoiceForTestingTransaction(connection, invoiceId, 'STERGE 3');
+    assert.equal(deleted.reference, 'TGB-3');
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoices WHERE id = ?').get(invoiceId) as any).value, 0);
   } finally { connection.close(); }
 });
 
