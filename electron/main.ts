@@ -215,4 +215,12 @@ app.whenReady().then(async () => {
       createWindow()
     }
   })
+}).catch((error) => {
+  console.error('[STARTUP ERROR] Inițializarea aplicației a eșuat:', error)
+  const message = error instanceof Error ? error.message : 'Operația nu a putut fi finalizată.'
+  dialog.showErrorBox(
+    'VR - Hub Management nu a putut porni',
+    `Datele locale nu au fost modificate. Detalii: ${message}`,
+  )
+  app.quit()
 })

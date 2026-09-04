@@ -2,6 +2,34 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import Database from 'better-sqlite3';
 import { ensureProductOrderingSchema } from './productOrdering.ts';
+import { initialSchema } from './schema.ts';
+
+test('existing v14 databases can load the base schema before product ordering migration', () => {
+  const connection = new Database(':memory:');
+  try {
+    const v14Schema = initialSchema
+      .replaceAll('  display_order INTEGER,\n', '')
+      .replace('  product_order INTEGER,\n', '');
+    connection.exec(v14Schema);
+    connection.exec(`
+      ALTER TABLE invoice_items ADD COLUMN external_product_id TEXT;
+      ALTER TABLE invoice_items ADD COLUMN finished_product_id INTEGER;
+    `);
+
+    assert.doesNotThrow(() => connection.exec(initialSchema));
+    assert.doesNotThrow(() => ensureProductOrderingSchema(connection));
+    assert.deepEqual(
+      (connection.prepare('PRAGMA table_info(finished_products)').all() as Array<{ name: string }>).some((row) => row.name === 'display_order'),
+      true,
+    );
+    assert.deepEqual(
+      (connection.prepare('PRAGMA table_info(invoice_items)').all() as Array<{ name: string }>).some((row) => row.name === 'product_order'),
+      true,
+    );
+  } finally {
+    connection.close();
+  }
+});
 
 test('product ordering migration is idempotent and backfills historical invoice lines', () => {
   const connection = new Database(':memory:');

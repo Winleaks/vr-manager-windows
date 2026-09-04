@@ -1,5 +1,9 @@
 ### În lucru
 
+### VR - Hub Management v0.1.89
+
+- Bazele existente pot trece corect de la schema v14 la v15: indicii pentru ordinea produselor sunt creați numai după adăugarea coloanelor necesare, eliminând pornirea fără fereastră din v0.1.88.
+- Erorile fatale de inițializare sunt acum raportate operatorului printr-un dialog explicit, în loc ca aplicația să rămână fără fereastră și fără explicație.
 - Pornirea Writer-ului nu mai afișează eroarea de reconciliere Daily Cash atunci când reconcilierea unică a fost deja aplicată sau ziua curentă a fost închisă manual.
 - Verificarea markerului de reconciliere are loc înaintea citirii zilei și a backupului, evitând operații inutile la fiecare repornire sau actualizare.
 
