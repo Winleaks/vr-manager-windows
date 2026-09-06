@@ -1,5 +1,10 @@
 ### În lucru
 
+- Replica Writer este publicată exclusiv în folderul existent `My Drive / VR - Management / Baza de date`, iar facturile în `My Drive / VR - Management / Facturi`.
+- Fiecare upload al bazei și al PDF-urilor este confirmat prin folder părinte, nume, dimensiune și checksum MD5; o conexiune OAuth existentă nu mai este raportată fals drept sincronizare funcțională.
+- Reconectarea Writer-ului publică imediat un snapshot verificat, sincronizarea automată raportează eșecurile în interfață, iar o bază locală goală nu poate suprascrie nici copia nouă, nici backupul istoric.
+- Ecranele de facturare nu mai pretind că PDF-ul se află în Google Drive atunci când încărcarea sau verificarea lui a eșuat.
+
 ### VR - Hub Management v0.1.90
 
 - Facturile săptămânale pot fi filtrate și generate atomic pentru o singură zonă de livrare, inclusiv grupa controlată `FĂRĂ ZONĂ ALOCATĂ`.

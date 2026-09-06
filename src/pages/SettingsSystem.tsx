@@ -22,15 +22,34 @@ export function SettingsSystem() {
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<{
     isConnected: boolean;
+    connectionHealthy: boolean;
+    syncHealth: 'disconnected' | 'healthy' | 'stale' | 'error';
     userEmail: string | null;
     lastCloudBackup: string | null;
+    lastCloudBackupIso: string | null;
+    lastUploadAttempt: string | null;
+    lastSuccessfulUpload: string | null;
+    lastError: string | null;
+    rootFolderName: string;
     availableBackups: Array<{
       fileId: string;
       fileName: string;
       mtime: number;
       formattedTime: string;
     }>;
-  }>({ isConnected: false, userEmail: null, lastCloudBackup: null, availableBackups: [] });
+  }>({
+    isConnected: false,
+    connectionHealthy: false,
+    syncHealth: 'disconnected',
+    userEmail: null,
+    lastCloudBackup: null,
+    lastCloudBackupIso: null,
+    lastUploadAttempt: null,
+    lastSuccessfulUpload: null,
+    lastError: null,
+    rootFolderName: 'VR - Management',
+    availableBackups: [],
+  });
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [showBackupList, setShowBackupList] = useState(false);
   const [authUrlModal, setAuthUrlModal] = useState<string | null>(null);
@@ -73,8 +92,14 @@ export function SettingsSystem() {
     try {
       const res = await api.system.connectGoogleDrive();
       if (res && res.success) {
-        alert('Autentificarea cu Google Drive s-a realizat cu succes!\nSincronizarea automată a fost activată.');
-        fetchCloudStatus();
+        if (deviceRole === 'writer' && res.initialSync && !res.initialSync.success) {
+          alert(`Contul Google Drive a fost conectat, dar prima copie nu a fost confirmată:\n${res.initialSync.error || 'Eroare necunoscută'}`);
+        } else {
+          alert(deviceRole === 'writer'
+            ? 'Google Drive a fost conectat, iar prima copie a bazei a fost încărcată și verificată.'
+            : 'Google Drive a fost conectat, iar verificarea copiei Viewer a fost pornită.');
+        }
+        await fetchCloudStatus();
       } else {
         alert('Eroare la conectare: ' + (res?.message || 'Eroare necunoscută'));
       }
@@ -88,8 +113,8 @@ export function SettingsSystem() {
     try {
       const res = await api.system.saveToCloud();
       if (res && res.success) {
-        alert('Baza de date a fost salvată în Google Drive cu succes.');
-        fetchCloudStatus();
+        alert('Baza de date a fost încărcată și verificată în Google Drive cu succes.');
+        await fetchCloudStatus();
       } else {
         alert('Eroare la salvarea în cloud:\n' + (res?.error || 'Eroare necunoscută'));
       }
@@ -236,10 +261,15 @@ export function SettingsSystem() {
             <div>
               <h2 className="text-lg font-bold text-white flex items-center gap-2">
                 Replicare prin Google Drive
-                {cloudStatus.isConnected ? (
+                {cloudStatus.syncHealth === 'healthy' ? (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                    Activă
+                    Funcțională
+                  </span>
+                ) : cloudStatus.isConnected ? (
+                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${cloudStatus.syncHealth === 'error' ? 'bg-rose-500/20 text-rose-300 border-rose-500/30' : 'bg-amber-500/20 text-amber-300 border-amber-500/30'}`}>
+                    <AlertCircle size={12} />
+                    {cloudStatus.syncHealth === 'error' ? 'Eroare' : 'Copie învechită'}
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
@@ -303,7 +333,13 @@ export function SettingsSystem() {
                   <div className="overflow-hidden">
                     <span className="text-xs text-indigo-300 block font-medium">Cont Google Conectat:</span>
                     <span className="text-sm font-bold text-white truncate block">
-                      {(cloudStatus as any).userEmail || 'Conectat'}
+                      {cloudStatus.userEmail || 'Conectat — verificarea contului a eșuat'}
+                    </span>
+                    <span className="text-xs text-indigo-200/80 block mt-1">
+                      Bază: My Drive / {cloudStatus.rootFolderName} / Baza de date
+                    </span>
+                    <span className="text-xs text-indigo-200/80 block">
+                      Facturi: My Drive / {cloudStatus.rootFolderName} / Facturi
                     </span>
                   </div>
                 </div>
@@ -315,6 +351,16 @@ export function SettingsSystem() {
                   Deconectează
                 </button>
               </div>
+
+              {cloudStatus.syncHealth !== 'healthy' && (
+                <div className={`rounded-xl border p-4 flex items-start gap-3 ${cloudStatus.syncHealth === 'error' ? 'bg-rose-500/10 border-rose-400/30 text-rose-100' : 'bg-amber-500/10 border-amber-400/30 text-amber-100'}`}>
+                  <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                  <div className="text-sm">
+                    <strong className="block mb-1">Copia Google Drive nu este confirmată ca fiind la zi.</strong>
+                    {cloudStatus.lastError || `Ultima copie din My Drive / ${cloudStatus.rootFolderName} este mai veche de 20 de minute. Apasă „Sincronizează Acum în Cloud”.`}
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {deviceRole === 'writer' ? (

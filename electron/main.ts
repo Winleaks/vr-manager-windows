@@ -156,7 +156,7 @@ app.whenReady().then(async () => {
   const runAutomaticBackup = async () => {
     if (getDeviceRole() !== 'writer') return
     const result = await backupDb()
-    if (result.success && win) win.webContents.send('backup-completed')
+    if (win && !win.isDestroyed()) win.webContents.send('backup-completed', result)
   }
   const runViewerSync = async () => {
     if (getDeviceRole() !== 'viewer') return

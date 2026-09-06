@@ -15,6 +15,18 @@ import {
 } from '../security/fileValidation';
 import { checkForUpdates, downloadUpdate, getUpdateState, installUpdate } from '../updater/updateCoordinator';
 
+async function createAndSaveCloudSnapshot(isAutomatic = false) {
+  const snapshotPath = path.join(app.getPath('temp'), `vr-hub-management-cloud-${randomUUID()}.db`);
+  try {
+    await createVerifiedSnapshot(snapshotPath);
+    return await saveToCloud(isAutomatic, snapshotPath);
+  } catch {
+    return { success: false, error: 'Snapshotul pentru cloud nu a putut fi creat sau verificat.' };
+  } finally {
+    try { if (fs.existsSync(snapshotPath)) fs.unlinkSync(snapshotPath); } catch {}
+  }
+}
+
 export function registerSystemHandlers() {
   handleTrustedIpc('system:getAppVersion', () => {
     return app.getVersion();
@@ -157,24 +169,21 @@ export function registerSystemHandlers() {
 
   handleTrustedIpc('connect-google-drive', async (event) => {
     const result = await connectGoogleDrive();
-    if (result.success && getDeviceRole() === 'viewer') {
+    if (!result.success) return result;
+    if (getDeviceRole() === 'writer') {
+      const initialSync = await createAndSaveCloudSnapshot(false);
+      return { ...result, initialSync };
+    }
+    if (getDeviceRole() === 'viewer') {
       const syncResult = await syncViewerFromCloud();
       if (syncResult.updated) event.sender.send('database-replica-updated', syncResult);
+      return { ...result, viewerSync: syncResult };
     }
     return result;
   });
 
   handleTrustedIpc('save-to-cloud', async () => {
-    const snapshotPath = path.join(app.getPath('temp'), `vr-hub-management-cloud-${randomUUID()}.db`);
-    try {
-      await createVerifiedSnapshot(snapshotPath);
-      return await saveToCloud(false, snapshotPath);
-    } catch (error) {
-      console.error('Manual cloud snapshot failed:', error);
-      return { success: false, error: 'Snapshotul pentru cloud nu a putut fi creat sau verificat.' };
-    } finally {
-      try { if (fs.existsSync(snapshotPath)) fs.unlinkSync(snapshotPath); } catch {}
-    }
+    return await createAndSaveCloudSnapshot(false);
   });
 
   handleTrustedIpc('restore-from-cloud', async (_event, fileId?: string) => {
@@ -208,12 +217,17 @@ export function registerSystemHandlers() {
     const state = getDeviceState();
     const cloud = await getCloudStatus();
     return {
-      active: cloud.isConnected,
+      active: cloud.syncHealth === 'healthy',
+      connected: cloud.isConnected,
+      connectionHealthy: cloud.connectionHealthy,
+      syncHealth: cloud.syncHealth,
+      lastError: cloud.lastError,
+      rootFolderName: cloud.rootFolderName,
       role: state.role,
       lastSync: state.role === 'viewer' ? state.lastRemoteModifiedTime || null : cloud.lastCloudBackup,
-      message: cloud.isConnected
-        ? state.role === 'viewer' ? 'Viewer conectat la Google Drive' : 'Writer conectat la Google Drive'
-        : 'Google Drive neconectat',
+      message: cloud.syncHealth === 'healthy'
+        ? state.role === 'viewer' ? 'Viewer actualizat din Google Drive' : 'Writer sincronizat cu Google Drive'
+        : cloud.lastError || (cloud.isConnected ? 'Copia Google Drive nu este la zi' : 'Google Drive neconectat'),
     };
   });
 }

@@ -262,9 +262,12 @@ export function BillingClients() {
       const buffer = generateInvoicePDF(settings, pdfData);
       const filename = `Factura_${inv.invoice_number}.pdf`;
 
-      await api.system.savePdfAuto({ buffer, filename, issuerCode: inv.issuer_code || settings.code });
-      api.system.uploadPdfToCloud(filename, buffer).catch(console.error);
-      alert(`Factura #${inv.invoice_number} a fost salvată pe calculator și în Google Drive!`);
+      const localSave = await api.system.savePdfAuto({ buffer, filename, issuerCode: inv.issuer_code || settings.code });
+      if (!localSave.success) throw new Error(localSave.error || 'PDF-ul nu a putut fi salvat local.');
+      const cloudSave = await api.system.uploadPdfToCloud(filename, buffer);
+      alert(cloudSave.success
+        ? `Factura #${inv.invoice_number} a fost salvată pe calculator și verificată în Google Drive.`
+        : `Factura #${inv.invoice_number} a fost salvată pe calculator, dar nu a fost confirmată în Google Drive: ${cloudSave.error || 'Eroare necunoscută'}`);
     } catch (e: any) {
       alert('Eroare la generarea PDF: ' + e.message);
     } finally {

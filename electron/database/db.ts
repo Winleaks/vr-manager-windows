@@ -400,6 +400,13 @@ export interface BackupResult {
   success: boolean;
   path?: string;
   error?: string;
+  cloud?: {
+    success: boolean;
+    uploaded?: boolean;
+    skipped?: boolean;
+    error?: string;
+    modifiedTime?: string | null;
+  };
 }
 
 function withDatabaseMaintenance<T>(operation: () => Promise<T>): Promise<T> {
@@ -501,11 +508,12 @@ export function backupDb(): Promise<BackupResult> {
     try {
       const { saveToCloud } = require('./cloudSync')
       const cloudResult = await saveToCloud(true, result.path)
-      if (!cloudResult.success) console.warn('Silent cloud sync skipped or failed.')
-    } catch (error) {
-      console.warn('Silent cloud sync failed:', error)
+      if (!cloudResult.success) console.warn('[CLOUD SYNC] Backupul local a reușit, dar publicarea în Drive nu a fost confirmată.')
+      return { ...result, cloud: cloudResult }
+    } catch {
+      console.warn('[CLOUD SYNC] Backupul local a reușit, dar sincronizarea Drive a eșuat neașteptat.')
+      return { ...result, cloud: { success: false, error: 'Sincronizarea Google Drive a eșuat.' } }
     }
-    return result
   }).catch((error: unknown) => {
     console.error('Backup failed:', error)
     return { success: false, error: 'Backupul local nu a putut fi creat sau verificat.' }

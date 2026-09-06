@@ -274,14 +274,19 @@ export function BillingInvoices() {
       const buffer = generateInvoicePDF(settings, pdfData);
       const filename = `Factura_${inv.invoice_number}.pdf`;
 
-      await api.system.savePdfAuto({ buffer, filename, issuerCode: inv.issuer_code || settings.code });
-      api.system.uploadPdfToCloud(filename, buffer).catch(console.error);
+      const localSave = await api.system.savePdfAuto({ buffer, filename, issuerCode: inv.issuer_code || settings.code });
+      if (!localSave.success) throw new Error(localSave.error || 'PDF-ul nu a putut fi salvat local.');
+      const cloudSave = await api.system.uploadPdfToCloud(filename, buffer);
+      if (!cloudSave.success) {
+        throw new Error(`PDF-ul a fost salvat local, dar nu a fost confirmat în Google Drive: ${cloudSave.error || 'Eroare necunoscută'}`);
+      }
 
       if (!isQuiet) {
-        alert(`Factura #${inv.invoice_number} a fost actualizată pe calculator și în Google Drive!`);
+        alert(`Factura #${inv.invoice_number} a fost actualizată pe calculator și verificată în Google Drive.`);
       }
     } catch (e: any) {
-      if (!isQuiet) alert('Eroare la generarea PDF: ' + e.message);
+      if (isQuiet) throw e;
+      alert('Eroare la generarea PDF: ' + e.message);
     } finally {
       setGeneratingPdfId(null);
     }
