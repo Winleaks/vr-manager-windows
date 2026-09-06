@@ -153,6 +153,8 @@ export const desktopApi = {
       ipcRenderer.invoke('billing:previewWeeklyInvoices', startDate, endDate),
     createWeeklyInvoices: (startDate: string, endDate: string, storeExternalIds: string[]) =>
       ipcRenderer.invoke('billing:createWeeklyInvoices', startDate, endDate, storeExternalIds),
+    createWeeklyInvoicesByZone: (startDate: string, endDate: string, zoneId: string | null) =>
+      ipcRenderer.invoke('billing:createWeeklyInvoicesByZone', startDate, endDate, zoneId),
     getProducts: () => ipcRenderer.invoke('billing:getProducts'),
     syncProducts: () => ipcRenderer.invoke('billing:syncProducts'),
     syncEntities: () => ipcRenderer.invoke('billing:syncEntities'),

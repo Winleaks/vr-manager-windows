@@ -297,7 +297,7 @@ const actions: Record<string, ActionDefinition> = {
       let query = supabaseAdmin
         .from("orders")
         .select(
-          "id, delivery_date, status, updated_at, client_store:client_store_id(id, name, address, postcode, phone, client_company_id, client_company:client_company_id(id, name, address, vat_number, registration_number)), order_items(id, qty_ordered, qty_delivered, unit_price_snapshot, products:product_id(id, name, name_ro, variant_label, unit, category, price_standard, available, display_order))",
+          "id, delivery_date, status, updated_at, client_store:client_store_id(id, name, address, postcode, phone, client_company_id, zone_id, route_order, zone:zone_id(id, name, color, active, driver_id, driver:driver_id(id, name)), client_company:client_company_id(id, name, address, vat_number, registration_number)), order_items(id, qty_ordered, qty_delivered, unit_price_snapshot, products:product_id(id, name, name_ro, variant_label, unit, category, price_standard, available, display_order))",
         )
         .gte("delivery_date", weekStart)
         .lte("delivery_date", weekEnd)
@@ -307,6 +307,17 @@ const actions: Record<string, ActionDefinition> = {
       if (cursor) query = query.gt("id", cursor);
       const { data, error } = await query;
       ensureDatabaseSuccess(error);
+      let zones: unknown[] | undefined;
+      if (!cursor) {
+        const { data: zoneRows, error: zonesError } = await supabaseAdmin
+          .from("zones")
+          .select("id, name, color, active, driver_id, driver:driver_id(id, name)")
+          .eq("active", true)
+          .order("name", { ascending: true })
+          .limit(5000);
+        ensureDatabaseSuccess(zonesError);
+        zones = zoneRows ?? [];
+      }
       const rows = data ?? [];
       const hasMore = rows.length > limit;
       const page = rows.slice(0, limit).map((order: Record<string, unknown>) => ({
@@ -322,6 +333,7 @@ const actions: Record<string, ActionDefinition> = {
       }));
       return {
         orders: page,
+        ...(zones ? { zones } : {}),
         next_cursor: hasMore && page.length > 0
           ? String((page[page.length - 1] as Record<string, unknown>).id)
           : null,

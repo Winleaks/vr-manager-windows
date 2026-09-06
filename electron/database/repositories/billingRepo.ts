@@ -12,6 +12,7 @@ import {
   setBillingTestModeTransaction,
   updatePaymentTransaction,
   type WeeklyInvoiceInput,
+  type WeeklyInvoiceBatchAuditContext,
   type CompanyPaymentInput,
   type InvoiceOrderInput,
   type ManualInvoiceInput,
@@ -700,6 +701,6 @@ export function getIssuerPreviewByStoreExternalId(storeExternalId: string) {
   };
 }
 
-export function createWeeklyInvoices(orders: WeeklyInvoiceInput[], invoiceDate: string) {
-  return createWeeklyInvoiceBatchTransaction(db, orders, invoiceDate);
+export function createWeeklyInvoices(orders: WeeklyInvoiceInput[], invoiceDate: string, auditContext?: WeeklyInvoiceBatchAuditContext) {
+  return createWeeklyInvoiceBatchTransaction(db, orders, invoiceDate, auditContext);
 }

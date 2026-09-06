@@ -1,5 +1,14 @@
 ### În lucru
 
+### VR - Hub Management v0.1.90
+
+- Facturile săptămânale pot fi filtrate și generate atomic pentru o singură zonă de livrare, inclusiv grupa controlată `FĂRĂ ZONĂ ALOCATĂ`.
+- Zonele active, culoarea, șoferul și ordinea magazinelor sunt preluate read-only prin același export VR Baker, fără o sincronizare desktop separată.
+- Emiterea pe zonă revalidează sursa în backend, omite facturile deja generate și păstrează emitentul, seria și contorul propriu fiecărei societăți.
+- În Modul test, ștergerea unei facturi elimină tranzacțional și încasările, Credit Notes, aplicările de credit și legăturile de reemitere asociate, după crearea obligatorie a unui backup verificat.
+- Efectele Credit Notes asupra stocului și soldurilor sunt inversate înaintea ștergerii, iar contoarele sunt retrase numai când numărul șters este ultimul număr sigur.
+- Simulatorul recompilă automat `better-sqlite3` pentru ABI-ul Electron înainte de pornire și îl readuce la ABI-ul Node înaintea testelor, evitând eroarea `NODE_MODULE_VERSION`.
+
 ### VR - Hub Management v0.1.89
 
 - Bazele existente pot trece corect de la schema v14 la v15: indicii pentru ordinea produselor sunt creați numai după adăugarea coloanelor necesare, eliminând pornirea fără fereastră din v0.1.88.

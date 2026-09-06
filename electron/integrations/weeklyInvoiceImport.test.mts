@@ -15,6 +15,8 @@ test('weekly invoice items keep English and Romanian names without changing the 
       name: 'Store',
       address: '',
       phone: '',
+      routeOrder: null,
+      zone: null,
       company: null,
     },
     items: [{
@@ -76,4 +78,38 @@ test('weekly invoice items keep English and Romanian names without changing the 
     ],
   };
   assert.equal(group.sourceFingerprint, createHash('sha256').update(JSON.stringify(legacyPayload)).digest('hex'));
+});
+
+test('weekly stores are ordered by zone and driver route, with unassigned stores last', () => {
+  const base: VrBakerOrder = {
+    id: '11111111-1111-4111-8111-111111111111',
+    deliveryDate: '2026-08-24',
+    status: 'open',
+    updatedAt: '2026-08-24T10:00:00Z',
+    store: {
+      id: '22222222-2222-4222-8222-222222222222',
+      name: 'Second stop', address: '', phone: '', routeOrder: 2,
+      zone: { id: '77777777-7777-4777-8777-777777777777', name: 'North', color: '#111111', driver: null },
+      company: null,
+    },
+    items: [{
+      id: '33333333-3333-4333-8333-333333333333',
+      productId: '44444444-4444-4444-8444-444444444444',
+      productName: 'Bread', nameRo: 'Pâine', variantLabel: '', unit: 'buc', category: 'bakery',
+      priceStandard: 2, displayOrder: 1, unitPrice: 2, quantity: 1, available: true,
+    }],
+  };
+  const first = {
+    ...base,
+    id: '55555555-5555-4555-8555-555555555555',
+    store: { ...base.store, id: '66666666-6666-4666-8666-666666666666', name: 'First stop', routeOrder: 1 },
+  };
+  const unassigned = {
+    ...base,
+    id: '88888888-8888-4888-8888-888888888888',
+    store: { ...base.store, id: '99999999-9999-4999-8999-999999999999', name: 'Unassigned', routeOrder: null, zone: null },
+  };
+  assert.deepEqual(aggregateWeeklyOrders([base, unassigned, first]).map((group) => group.store.name), [
+    'First stop', 'Second stop', 'Unassigned',
+  ]);
 });

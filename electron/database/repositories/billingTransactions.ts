@@ -15,6 +15,7 @@ import {
 } from '../billingIssuers.ts';
 import {
   addPaymentCreditEntry,
+  cancelCreditNoteTransaction,
   getInvoiceFinancials,
   syncCompanyCreditBalance,
   syncInvoiceFinancialStatus,
@@ -63,6 +64,15 @@ export interface WeeklyInvoiceInput extends InvoiceOrderInput {
   periodEnd: string;
   sourceFingerprint: string;
   sourceOrders: Array<{ id: string; updatedAt: string }>;
+}
+
+export interface WeeklyInvoiceBatchAuditContext {
+  kind: 'zone';
+  zoneId: string | null;
+  zoneName: string;
+  driverId: string | null;
+  driverName: string | null;
+  storeCount: number;
 }
 
 export interface CompanyPaymentInput {
@@ -367,6 +377,7 @@ export function createWeeklyInvoiceBatchTransaction(
   connection: SqliteDatabase,
   orders: WeeklyInvoiceInput[],
   invoiceDateInput: string,
+  auditContext?: WeeklyInvoiceBatchAuditContext,
 ) {
   ensureInvoiceProductColumns(connection);
   const invoiceDate = requireIsoDate(invoiceDateInput, 'Data facturii');
@@ -450,7 +461,12 @@ export function createWeeklyInvoiceBatchTransaction(
         const original = prepared.find((row) => row.issuer.id === issuerId)!.issuer.next_invoice_number;
         if (updateCounter.run(next, issuerId, original).changes !== 1) throw new Error('Contorul emitentului a fost modificat concurent. Reîncearcă emiterea.');
         connection.prepare(`INSERT INTO billing_audit_events (event_type, issuer_id, details) VALUES ('weekly_invoice_batch_issued', ?, ?)`)
-          .run(issuerId, JSON.stringify({ count: created.filter((invoice) => invoice.issuerId === issuerId).length, firstSequence: original, nextSequence: next }));
+          .run(issuerId, JSON.stringify({
+            count: created.filter((invoice) => invoice.issuerId === issuerId).length,
+            firstSequence: original,
+            nextSequence: next,
+            ...(auditContext ? { selection: auditContext } : {}),
+          }));
       }
       return created;
     }
@@ -725,16 +741,133 @@ export function deleteInvoiceForTestingTransaction(connection: SqliteDatabase, i
       throw new Error(`Pentru confirmare scrie exact: STERGE ${invoice.invoice_number}`);
     }
 
-    const payments = Number((connection.prepare('SELECT COUNT(*) AS value FROM payments WHERE invoice_id = ?').get(invoiceId) as { value: number }).value);
-    const creditNotes = Number((connection.prepare(`
-      SELECT COUNT(*) AS value FROM credit_note_invoice_links link
-      JOIN credit_notes cn ON cn.id = link.credit_note_id
-      WHERE link.invoice_id = ?
-    `).get(invoiceId) as { value: number }).value);
-    const creditApplications = Number((connection.prepare('SELECT COUNT(*) AS value FROM invoice_credit_applications WHERE invoice_id = ?').get(invoiceId) as { value: number }).value);
-    const replacements = Number((connection.prepare('SELECT COUNT(*) AS value FROM invoice_replacements WHERE cancelled_invoice_id = ? OR replacement_invoice_id = ?').get(invoiceId, invoiceId) as { value: number }).value);
-    if (payments || creditNotes || creditApplications || replacements || Number(invoice.paid_amount) > EPSILON) {
-      throw new Error('Factura are plăți, Credit Notes, credit aplicat sau legături de reemitere. Pentru ștergerea întregului scenariu de test restaurează copia de siguranță inițială.');
+    const affectedInvoiceIds = new Set<number>();
+    const affectedCreditScopes = new Map<string, { companyId: number; issuerId: number }>();
+    const rememberScope = (companyId: number, issuerId: number) => {
+      affectedCreditScopes.set(`${companyId}:${issuerId}`, { companyId, issuerId });
+    };
+    let deletedCreditApplications = 0;
+
+    const linkedCreditNotes = connection.prepare(`
+      SELECT DISTINCT cn.id, cn.reference, cn.status, cn.issuer_id, cn.company_id,
+             cn.series, cn.sequence_number, cn.pdf_path
+      FROM credit_notes cn
+      WHERE cn.id IN (
+        SELECT credit_note_id FROM credit_note_invoice_links WHERE invoice_id = ?
+        UNION
+        SELECT credit_note_id FROM credit_note_items WHERE source_invoice_id = ?
+      )
+      ORDER BY cn.issuer_id, cn.sequence_number DESC, cn.id DESC
+    `).all(invoiceId, invoiceId) as Array<{
+      id: number; reference: string; status: string; issuer_id: number; company_id: number;
+      series: string; sequence_number: number; pdf_path: string | null;
+    }>;
+
+    for (const note of linkedCreditNotes) {
+      if (note.status === 'issued') {
+        cancelCreditNoteTransaction(
+          connection,
+          note.id,
+          `Ștergere definitivă scenariu de test pentru factura ${invoice.reference}`,
+          true,
+        );
+      }
+
+      const creditEntry = connection.prepare(`
+        SELECT id FROM company_credit_entries
+        WHERE source_type = 'credit_note' AND source_id = ?
+      `).get(note.id) as { id: number } | undefined;
+      if (creditEntry) {
+        const applications = connection.prepare(
+          'SELECT invoice_id FROM invoice_credit_applications WHERE credit_entry_id = ?',
+        ).all(creditEntry.id) as Array<{ invoice_id: number }>;
+        for (const application of applications) affectedInvoiceIds.add(application.invoice_id);
+        deletedCreditApplications += connection.prepare(
+          'DELETE FROM invoice_credit_applications WHERE credit_entry_id = ?',
+        ).run(creditEntry.id).changes;
+        connection.prepare('DELETE FROM company_credit_entries WHERE id = ?').run(creditEntry.id);
+      }
+
+      connection.prepare(`
+        DELETE FROM finished_product_movements
+        WHERE reference_id = ? AND reference_type IN ('credit_note', 'credit_note_cancellation')
+      `).run(note.id);
+      connection.prepare('DELETE FROM credit_note_items WHERE credit_note_id = ?').run(note.id);
+      connection.prepare('DELETE FROM credit_note_invoice_links WHERE credit_note_id = ?').run(note.id);
+      connection.prepare('DELETE FROM credit_notes WHERE id = ?').run(note.id);
+      rememberScope(note.company_id, note.issuer_id);
+
+      const laterCreditNote = connection.prepare(`
+        SELECT 1 FROM credit_notes
+        WHERE issuer_id = ? AND series = ? AND sequence_number > ? LIMIT 1
+      `).get(note.issuer_id, note.series, note.sequence_number);
+      const creditCounter = connection.prepare(
+        'SELECT next_credit_note_number FROM billing_issuers WHERE id = ?',
+      ).get(note.issuer_id) as { next_credit_note_number: number } | undefined;
+      if (!laterCreditNote && creditCounter?.next_credit_note_number === note.sequence_number + 1) {
+        connection.prepare(`
+          UPDATE billing_issuers SET next_credit_note_number = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND next_credit_note_number = ?
+        `).run(note.sequence_number, note.issuer_id, creditCounter.next_credit_note_number);
+      }
+    }
+
+    const directApplications = connection.prepare(`
+      SELECT app.id, app.credit_entry_id, app.amount, app.reversed_at,
+             entry.company_id, entry.issuer_id, entry.status AS entry_status
+      FROM invoice_credit_applications app
+      JOIN company_credit_entries entry ON entry.id = app.credit_entry_id
+      WHERE app.invoice_id = ?
+    `).all(invoiceId) as Array<{
+      id: number; credit_entry_id: number; amount: number; reversed_at: string | null;
+      company_id: number; issuer_id: number; entry_status: string;
+    }>;
+    for (const application of directApplications) {
+      if (!application.reversed_at) {
+        if (application.entry_status !== 'active') {
+          throw new Error('Aplicarea creditului facturii este inconsistentă și nu poate fi ștearsă în siguranță.');
+        }
+        connection.prepare(
+          'UPDATE company_credit_entries SET available_amount = available_amount + ? WHERE id = ?',
+        ).run(application.amount, application.credit_entry_id);
+      }
+      rememberScope(application.company_id, application.issuer_id);
+      connection.prepare('DELETE FROM invoice_credit_applications WHERE id = ?').run(application.id);
+      deletedCreditApplications += 1;
+    }
+
+    const payments = connection.prepare(
+      'SELECT id FROM payments WHERE invoice_id = ?',
+    ).all(invoiceId) as Array<{ id: number }>;
+    for (const payment of payments) {
+      const paymentCredit = connection.prepare(`
+        SELECT id, company_id, issuer_id FROM company_credit_entries
+        WHERE source_type = 'payment_overpayment' AND source_id = ?
+      `).get(payment.id) as { id: number; company_id: number; issuer_id: number } | undefined;
+      if (paymentCredit) {
+        const applications = connection.prepare(
+          'SELECT invoice_id FROM invoice_credit_applications WHERE credit_entry_id = ?',
+        ).all(paymentCredit.id) as Array<{ invoice_id: number }>;
+        for (const application of applications) affectedInvoiceIds.add(application.invoice_id);
+        deletedCreditApplications += connection.prepare(
+          'DELETE FROM invoice_credit_applications WHERE credit_entry_id = ?',
+        ).run(paymentCredit.id).changes;
+        connection.prepare('DELETE FROM company_credit_entries WHERE id = ?').run(paymentCredit.id);
+        rememberScope(paymentCredit.company_id, paymentCredit.issuer_id);
+      }
+    }
+    const deletedPayments = connection.prepare('DELETE FROM payments WHERE invoice_id = ?').run(invoiceId).changes;
+    const removedReplacementLinks = connection.prepare(
+      'DELETE FROM invoice_replacements WHERE cancelled_invoice_id = ? OR replacement_invoice_id = ?',
+    ).run(invoiceId, invoiceId).changes;
+
+    for (const affectedInvoiceId of affectedInvoiceIds) {
+      if (affectedInvoiceId !== invoiceId && connection.prepare('SELECT 1 FROM invoices WHERE id = ?').get(affectedInvoiceId)) {
+        syncInvoiceFinancialStatus(connection, affectedInvoiceId);
+      }
+    }
+    for (const scope of affectedCreditScopes.values()) {
+      syncCompanyCreditBalance(connection, scope.companyId, scope.issuerId);
     }
 
     const laterIdentity = invoice.sequence_number === null ? true : Boolean(connection.prepare(`
@@ -754,8 +887,26 @@ export function deleteInvoiceForTestingTransaction(connection: SqliteDatabase, i
         .run(invoice.sequence_number, invoice.issuer_id, issuer!.next_invoice_number);
     }
     connection.prepare("INSERT INTO billing_audit_events (event_type, issuer_id, company_id, details) VALUES ('test_invoice_deleted', ?, ?, ?)")
-      .run(invoice.issuer_id, invoice.company_id, JSON.stringify({ reference: invoice.reference, testMode: true, counterRewound: canRewind, pdfPath: invoice.pdf_path }));
-    return { reference: invoice.reference, counterRewound: canRewind, pdfPath: invoice.pdf_path };
+      .run(invoice.issuer_id, invoice.company_id, JSON.stringify({
+        reference: invoice.reference,
+        testMode: true,
+        counterRewound: canRewind,
+        pdfPath: invoice.pdf_path,
+        deletedPayments,
+        deletedCreditNotes: linkedCreditNotes.map((note) => note.reference),
+        deletedCreditApplications,
+        removedReplacementLinks,
+      }));
+    return {
+      reference: invoice.reference,
+      counterRewound: canRewind,
+      pdfPath: invoice.pdf_path,
+      deletedPayments,
+      deletedCreditNotes: linkedCreditNotes.length,
+      deletedCreditNoteReferences: linkedCreditNotes.map((note) => note.reference),
+      deletedCreditApplications,
+      removedReplacementLinks,
+    };
   })();
 }
 

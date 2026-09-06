@@ -133,7 +133,13 @@ export function BillingInvoices() {
         const result = await api.billing.deleteTestInvoice(inv.id, value);
         await loadInvoices();
         setPendingInvoiceAction(null);
-        alert(`Factura de test #${result.reference} a fost ștearsă definitiv.${result.counterRewound ? ' Contorul emitentului a fost readus la numărul liber.' : ' Contorul nu a fost modificat.'}`);
+        const dependencies = [
+          result.deletedPayments ? `${result.deletedPayments} încasări` : '',
+          result.deletedCreditNotes ? `${result.deletedCreditNotes} Credit Notes` : '',
+          result.deletedCreditApplications ? `${result.deletedCreditApplications} aplicări de credit` : '',
+          result.removedReplacementLinks ? `${result.removedReplacementLinks} legături de reemitere` : '',
+        ].filter(Boolean).join(', ');
+        alert(`Factura de test #${result.reference} și toate dependențele ei au fost șterse definitiv.${dependencies ? ` Au fost eliminate: ${dependencies}.` : ''}${result.counterRewound ? ' Contorul emitentului a fost readus la numărul liber.' : ' Contorul nu a fost modificat.'}`);
       } catch (e: any) {
         throw new Error('Eroare la ștergerea facturii de test: ' + e.message);
       }
@@ -673,7 +679,7 @@ export function BillingInvoices() {
       )}
       {pendingInvoiceAction && <TextConfirmationModal
         title={testMode ? `Șterge definitiv factura #${pendingInvoiceAction.invoice_number}` : `Anulează factura #${pendingInvoiceAction.invoice_number}`}
-        description={testMode ? 'Ștergerea este permisă numai pentru o factură de test fără dependențe financiare și poate fi recuperată doar din backup.' : 'Factura și numărul rămân în registru. Facturile cu plăți sau Credit Notes nu pot fi anulate direct.'}
+        description={testMode ? 'Se va crea o copie de siguranță, apoi vor fi șterse tranzacțional factura și toate dependențele ei: încasări, Credit Notes, aplicări de credit și legături de reemitere. Operația poate fi recuperată numai din backup.' : 'Factura și numărul rămân în registru. Facturile cu plăți sau Credit Notes nu pot fi anulate direct.'}
         fieldLabel={testMode ? 'Confirmare' : 'Motivul anulării'}
         confirmLabel={testMode ? 'Șterge definitiv' : 'Anulează factura'}
         expectedText={testMode ? `STERGE ${pendingInvoiceAction.invoice_number}` : undefined}

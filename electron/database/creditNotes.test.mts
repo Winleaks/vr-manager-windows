@@ -11,6 +11,10 @@ import {
   getCreditNoteDraft,
   getInvoiceFinancials,
 } from './creditNotes.ts';
+import {
+  deleteInvoiceForTestingTransaction,
+  setBillingTestModeTransaction,
+} from './repositories/billingTransactions.ts';
 
 function today() {
   const date = new Date();
@@ -124,5 +128,74 @@ test('paid invoice creates issuer credit, applies it FIFO and cancellation rever
     assert.equal((connection.prepare('SELECT balance FROM company_issuer_credits WHERE company_id = ? AND issuer_id = ?').get(companyId, issuerId) as any).balance, 0);
     assert.equal((connection.prepare('SELECT current_stock FROM finished_products WHERE id = ?').get(productId) as any).current_stock, 3);
     assert.ok((connection.prepare('SELECT reversed_at FROM invoice_credit_applications WHERE id = ?').get(application.applications[0]) as any).reversed_at);
+  } finally { connection.close(); }
+});
+
+test('test invoice deletion removes its Credit Note cascade and restores stock and other balances', () => {
+  const { connection, companyId, store1, issuerId, productId, invoice } = fixture();
+  try {
+    connection.prepare("UPDATE company_credit_entries SET status = 'reversed', available_amount = 0 WHERE source_type = 'legacy'").run();
+    const source = invoice(store1, 'TGB-1', 20, 20);
+    const target = invoice(store1, 'TGB-2', 20, 0);
+    const note = createCreditNoteTransaction(connection, {
+      issueDate: today(),
+      reason: 'Scenariu de test',
+      items: [{ invoiceItemId: source.itemId, quantity: 4, unitAmount: 5, returnToStock: true }],
+    });
+    applyCompanyCreditTransaction(connection, {
+      companyId,
+      issuerId,
+      invoiceId: target.invoiceId,
+      amount: 10,
+      reason: 'Aplicare test',
+    });
+    assert.equal((connection.prepare('SELECT current_stock FROM finished_products WHERE id = ?').get(productId) as any).current_stock, 7);
+    assert.equal(getInvoiceFinancials(connection, target.invoiceId).outstanding, 10);
+
+    setBillingTestModeTransaction(connection, true, 'MOD TEST');
+    const deleted = deleteInvoiceForTestingTransaction(connection, source.invoiceId, 'STERGE TGB-1');
+
+    assert.equal(deleted.deletedCreditNotes, 1);
+    assert.equal(deleted.deletedCreditApplications, 1);
+    assert.deepEqual(deleted.deletedCreditNoteReferences, [note.reference]);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoices WHERE id = ?').get(source.invoiceId) as any).value, 0);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM credit_notes WHERE id = ?').get(note.creditNoteId) as any).value, 0);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM credit_note_items WHERE credit_note_id = ?').get(note.creditNoteId) as any).value, 0);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM company_credit_entries WHERE source_type = ? AND source_id = ?').get('credit_note', note.creditNoteId) as any).value, 0);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM finished_product_movements WHERE reference_id = ?').get(note.creditNoteId) as any).value, 0);
+    assert.equal((connection.prepare('SELECT current_stock FROM finished_products WHERE id = ?').get(productId) as any).current_stock, 3);
+    assert.equal(getInvoiceFinancials(connection, target.invoiceId).outstanding, 20);
+    assert.equal((connection.prepare('SELECT balance FROM company_issuer_credits WHERE company_id = ? AND issuer_id = ?').get(companyId, issuerId) as any).balance, 0);
+    assert.equal((connection.prepare('SELECT next_credit_note_number FROM billing_issuers WHERE id = ?').get(issuerId) as any).next_credit_note_number, 7);
+  } finally { connection.close(); }
+});
+
+test('test invoice cascade deletion rolls back every financial and stock change on failure', () => {
+  const { connection, store1, issuerId, productId, invoice } = fixture();
+  try {
+    connection.prepare("UPDATE company_credit_entries SET status = 'reversed', available_amount = 0 WHERE source_type = 'legacy'").run();
+    const source = invoice(store1, 'TGB-1', 20, 20);
+    const note = createCreditNoteTransaction(connection, {
+      issueDate: today(),
+      reason: 'Scenariu rollback',
+      items: [{ invoiceItemId: source.itemId, quantity: 4, unitAmount: 5, returnToStock: true }],
+    });
+    setBillingTestModeTransaction(connection, true, 'MOD TEST');
+    connection.exec(`
+      CREATE TRIGGER block_test_invoice_delete
+      BEFORE DELETE ON invoices
+      BEGIN
+        SELECT RAISE(ABORT, 'simulated delete failure');
+      END;
+    `);
+
+    assert.throws(
+      () => deleteInvoiceForTestingTransaction(connection, source.invoiceId, 'STERGE TGB-1'),
+      /simulated delete failure/,
+    );
+    assert.equal((connection.prepare('SELECT status FROM credit_notes WHERE id = ?').get(note.creditNoteId) as any).status, 'issued');
+    assert.equal((connection.prepare('SELECT current_stock FROM finished_products WHERE id = ?').get(productId) as any).current_stock, 7);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoices WHERE id = ?').get(source.invoiceId) as any).value, 1);
+    assert.equal((connection.prepare('SELECT next_credit_note_number FROM billing_issuers WHERE id = ?').get(issuerId) as any).next_credit_note_number, 8);
   } finally { connection.close(); }
 });

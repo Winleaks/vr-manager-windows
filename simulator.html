@@ -55,6 +55,39 @@
           { id: 1, supabase_product_id: 'demo-white-bread', name: 'WHITE BREAD', name_ro: 'PÂINE ALBĂ', unit: 'pcs', price_standard: 2.5, available: 1 },
           { id: 2, supabase_product_id: 'demo-cheese-pie', name: 'CHEESE PIE', name_ro: 'PLĂCINTĂ CU BRÂNZĂ', unit: 'pcs', price_standard: 3.75, available: 1 },
         ];
+        const demoInvoiceSettings = {
+          code: 'goodness', issuerName: 'THE GOODNESS BAKER LTD', issuerAddress: 'Demo address, London',
+          issuerCrn: '12345678', issuerVat: 'GB123456789', vatRegistered: true,
+          invoiceBankName1: 'Demo Bank', invoiceAccountNumber: '12345678', invoiceSortCode: '12-34-56',
+          invoiceFooter: 'Thank you for your business.', invoiceColor: '#4F46E5',
+          invoiceAlternateRowColor: '#EEF2FF', invoiceAlternateRowOpacity: 5, invoiceSeries: 'TGB',
+        };
+        const demoZones = [
+          { id: '11111111-1111-4111-8111-111111111111', name: 'NORTH LONDON', color: '#2563EB', driver: { id: '22222222-2222-4222-8222-222222222222', name: 'Șofer Nord' } },
+          { id: '33333333-3333-4333-8333-333333333333', name: 'SOUTH LONDON', color: '#16A34A', driver: { id: '44444444-4444-4444-8444-444444444444', name: 'Șofer Sud' } },
+        ];
+        let billingOrderPreview = [
+          {
+            store: { id: '55555555-5555-4555-8555-555555555555', name: 'Magazin Nord Demo', address: '1 North Road', postcode: 'N1 1AA', routeOrder: 1, zone: demoZones[0], company: { name: 'Client Nord LTD' } },
+            items: [{ productName: 'WHITE BREAD', name_ro: 'PÂINE ALBĂ', unit: 'pcs', quantity: 10, unitPrice: 2.5, totalPrice: 25 }],
+            sourceOrders: [], sourceFingerprint: 'demo-north', billingState: 'ready', issuerId: 1,
+            issuerName: 'THE GOODNESS BAKER LTD', issuerCode: 'goodness', issuerColor: '#4F46E5', estimatedInvoiceReference: 'TGB-101',
+          },
+          {
+            store: { id: '66666666-6666-4666-8666-666666666666', name: 'Magazin Nealocat Demo', address: '2 Demo Road', postcode: 'E1 1AA', routeOrder: null, zone: null, company: { name: 'Client Nealocat LTD' } },
+            items: [{ productName: 'CHEESE PIE', name_ro: 'PLĂCINTĂ CU BRÂNZĂ', unit: 'pcs', quantity: 5, unitPrice: 3.75, totalPrice: 18.75 }],
+            sourceOrders: [], sourceFingerprint: 'demo-unassigned', billingState: 'ready', issuerId: 1,
+            issuerName: 'THE GOODNESS BAKER LTD', issuerCode: 'goodness', issuerColor: '#4F46E5', estimatedInvoiceReference: 'TGB-102',
+          },
+        ];
+        const emitDemoWeeklyOrders = (orders) => {
+          const updatedOrders = orders.map((order) => {
+            const assignedInvoiceNumber = `TGB-${billingIssuers[0].next_invoice_number++}`;
+            return { ...order, billingState: 'invoiced', assignedInvoiceId: Date.now() + Math.random(), assignedInvoiceNumber, assignedInvoiceDate: today, issuerSettings: demoInvoiceSettings };
+          });
+          billingOrderPreview = billingOrderPreview.map((order) => updatedOrders.find((updated) => updated.store.id === order.store.id) || order);
+          return { success: true, updatedOrders };
+        };
         let billingInvoices = [];
         let creditNotes = [];
         let billingTestMode = false;
@@ -80,7 +113,7 @@
         };
         const handlers = {
           'system.getDeviceRole': async () => ({ role: 'writer' }),
-          'system.getAppVersion': async () => '0.1.85',
+          'system.getAppVersion': async () => '0.1.90',
           'system.getLastBackupTime': async () => null,
           'system.getSyncStatus': async () => ({ active: false, lastSync: null, role: 'writer', message: 'Simulator local' }),
           'system.getUpdateState': async () => ({ status: 'idle', updateInfo: null, progress: 0, error: null }),
@@ -181,6 +214,9 @@
           'billing.getAllCompaniesAndStores': async () => billingCompanies.map((company) => ({ ...company, stores: company.stores.slice() })),
           'billing.getSettings': async () => ({ invoiceLogo: '' }),
           'billing.getVrBakerStatus': async () => ({ endpoint: 'https://demo.supabase.co/functions/v1/external-api', hasToken: true }),
+          'billing.previewWeeklyInvoices': async () => ({ success: true, message: 'Date demonstrative pentru facturarea pe zone.', zones: demoZones, ordersByStore: billingOrderPreview.map((order) => ({ ...order })) }),
+          'billing.createWeeklyInvoices': async (_startDate, _endDate, storeIds) => emitDemoWeeklyOrders(billingOrderPreview.filter((order) => storeIds.includes(order.store.id) && order.billingState === 'ready')),
+          'billing.createWeeklyInvoicesByZone': async (_startDate, _endDate, zoneId) => emitDemoWeeklyOrders(billingOrderPreview.filter((order) => (order.store.zone?.id || null) === zoneId && order.billingState === 'ready')),
           'billing.updateIssuer': async (input) => {
             billingIssuers = billingIssuers.map((issuer) => issuer.id === input.id ? {
               ...issuer, legal_name: input.legalName, address: input.address, company_number: input.companyNumber,

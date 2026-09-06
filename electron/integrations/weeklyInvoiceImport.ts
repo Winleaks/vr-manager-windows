@@ -67,5 +67,13 @@ export function aggregateWeeklyOrders(orders: VrBakerOrder[]): WeeklyInvoiceGrou
     })).sort((a, b) => `${a.productName}:${a.unitPrice}`.localeCompare(`${b.productName}:${b.unitPrice}`));
     const sourceFingerprint = createHash('sha256').update(JSON.stringify({ sourceOrders, items: fingerprintItems })).digest('hex');
     return { store: group.store, items, sourceOrders, sourceFingerprint };
-  }).filter((group) => group.items.length > 0).sort((a, b) => a.store.name.localeCompare(b.store.name));
+  }).filter((group) => group.items.length > 0).sort((a, b) => {
+    const zoneA = a.store.zone?.name || '\uffff';
+    const zoneB = b.store.zone?.name || '\uffff';
+    const zoneOrder = zoneA.localeCompare(zoneB, 'ro');
+    if (zoneOrder !== 0) return zoneOrder;
+    const routeA = a.store.routeOrder ?? Number.MAX_SAFE_INTEGER;
+    const routeB = b.store.routeOrder ?? Number.MAX_SAFE_INTEGER;
+    return routeA - routeB || a.store.name.localeCompare(b.store.name, 'ro');
+  });
 }

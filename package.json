@@ -1,14 +1,16 @@
 {
   "name": "vr-hub-management",
   "private": true,
-  "version": "0.1.89",
+  "version": "0.1.90",
   "description": "Platformă desktop integrată pentru management, producție, facturare și operațiuni VR",
   "author": "Razvan Cristofor",
   "main": "dist-electron/main.js",
   "scripts": {
+    "predev": "electron-rebuild -f -w better-sqlite3",
     "dev": "vite",
     "build": "vite build && electron-builder",
     "lint": "oxlint",
+    "pretest": "npm rebuild better-sqlite3",
     "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON electron/security/*.test.mts electron/database/*.test.mts electron/device/*.test.mts electron/integrations/*.test.mts electron/migration/*.test.mts electron/updater/*.test.mts",
     "typecheck": "tsc -b",
     "preview": "vite preview",
@@ -32,6 +34,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.6",
     "@tailwindcss/postcss": "^4.3.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.13.2",

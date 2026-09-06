@@ -115,6 +115,34 @@ test('issues a mixed batch with independent counters and immutable issuer snapsh
   } finally { connection.close(); }
 });
 
+test('stores the authoritative zone snapshot in the invoice batch audit', () => {
+  const { connection, store1, goodnessId } = fixture();
+  try {
+    createWeeklyInvoiceBatchTransaction(
+      connection,
+      [weekly(store1, 'store-goodness', 'order-zone')],
+      '2026-08-31',
+      {
+        kind: 'zone',
+        zoneId: '11111111-1111-4111-8111-111111111111',
+        zoneName: 'North',
+        driverId: '22222222-2222-4222-8222-222222222222',
+        driverName: 'Driver One',
+        storeCount: 1,
+      },
+    );
+    const row = connection.prepare("SELECT details FROM billing_audit_events WHERE event_type = 'weekly_invoice_batch_issued' AND issuer_id = ? ORDER BY id DESC LIMIT 1").get(goodnessId) as any;
+    assert.deepEqual(JSON.parse(row.details).selection, {
+      kind: 'zone',
+      zoneId: '11111111-1111-4111-8111-111111111111',
+      zoneName: 'North',
+      driverId: '22222222-2222-4222-8222-222222222222',
+      driverName: 'Driver One',
+      storeCount: 1,
+    });
+  } finally { connection.close(); }
+});
+
 test('issues a manual invoice only from active catalog products and keeps bilingual product data', () => {
   const { connection, store1, goodnessId } = fixture();
   try {
@@ -220,14 +248,18 @@ test('deletes a migrated legacy invoice using the number shown by the interface'
   } finally { connection.close(); }
 });
 
-test('test deletion refuses invoices with financial dependencies', () => {
+test('test deletion removes invoice payments and imported source links atomically', () => {
   const { connection, company1, store1, goodnessId } = fixture();
   try {
     const [invoice] = createWeeklyInvoiceBatchTransaction(connection, [weekly(store1, 'store-goodness', 'order-paid-delete')], '2026-08-31');
     recordCompanyPaymentTransaction(connection, { companyId: company1, issuerId: goodnessId, invoiceId: invoice.invoiceId, amount: 5, paymentDate: '2026-09-01', method: 'cash' });
     setBillingTestModeTransaction(connection, true, 'MOD TEST');
-    assert.throws(() => deleteInvoiceForTestingTransaction(connection, invoice.invoiceId, `STERGE ${invoice.invoiceNumber}`), /plăți/);
-    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoices WHERE id = ?').get(invoice.invoiceId) as any).value, 1);
+    const deleted = deleteInvoiceForTestingTransaction(connection, invoice.invoiceId, `STERGE ${invoice.invoiceNumber}`);
+    assert.equal(deleted.deletedPayments, 1);
+    assert.equal(deleted.deletedCreditNotes, 0);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoices WHERE id = ?').get(invoice.invoiceId) as any).value, 0);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM payments WHERE invoice_id = ?').get(invoice.invoiceId) as any).value, 0);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoice_source_orders').get() as any).value, 0);
   } finally { connection.close(); }
 });
 

@@ -10,12 +10,26 @@ export interface VrBakerCompany {
   registrationNumber: string;
 }
 
+export interface VrBakerDriver {
+  id: string;
+  name: string;
+}
+
+export interface VrBakerZone {
+  id: string;
+  name: string;
+  color: string;
+  driver: VrBakerDriver | null;
+}
+
 export interface VrBakerStore {
   id: string;
   name: string;
   address: string;
   postcode?: string;
   phone: string;
+  routeOrder: number | null;
+  zone: VrBakerZone | null;
   company: VrBakerCompany | null;
 }
 
@@ -112,6 +126,15 @@ function optionalDisplayOrder(value: unknown) {
   return parsed;
 }
 
+function optionalRouteOrder(value: unknown) {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 1_000_000) {
+    throw new Error('Ordinea magazinului în rută este invalidă.');
+  }
+  return parsed;
+}
+
 export function validateWeeklyPeriod(startDate: string, endDate: string) {
   if (!ISO_DATE_PATTERN.test(startDate) || !ISO_DATE_PATTERN.test(endDate)) {
     throw new Error('Perioada trebuie să folosească formatul YYYY-MM-DD.');
@@ -138,6 +161,26 @@ function parseCompany(value: unknown): VrBakerCompany | null {
   };
 }
 
+function parseDriver(value: unknown): VrBakerDriver | null {
+  if (value === null || value === undefined) return null;
+  const driver = requireRecord(value, 'Șoferul zonei VR Baker');
+  return {
+    id: requireUuid(driver.id, 'ID șofer'),
+    name: requireString(driver.name, 'Numele șoferului', 300),
+  };
+}
+
+function parseZone(value: unknown): VrBakerZone | null {
+  if (value === null || value === undefined) return null;
+  const zone = requireRecord(value, 'Zona VR Baker');
+  return {
+    id: requireUuid(zone.id, 'ID zonă'),
+    name: requireString(zone.name, 'Numele zonei', 300),
+    color: optionalString(zone.color, 32) || '#64748B',
+    driver: parseDriver(zone.driver),
+  };
+}
+
 function parseStore(value: unknown): VrBakerStore {
   const store = requireRecord(value, 'Magazinul VR Baker');
   return {
@@ -146,6 +189,8 @@ function parseStore(value: unknown): VrBakerStore {
     address: optionalString(store.address),
     postcode: optionalString(store.postcode, 20),
     phone: optionalString(store.phone, 100),
+    routeOrder: optionalRouteOrder(store.route_order),
+    zone: parseZone(store.zone),
     company: parseCompany(store.client_company),
   };
 }
@@ -260,11 +305,16 @@ export class VrBakerApiClient {
   }
 
   async fetchWeeklyOrders(startDate: string, endDate: string) {
+    return (await this.fetchWeeklyBillingSnapshot(startDate, endDate)).orders;
+  }
+
+  async fetchWeeklyBillingSnapshot(startDate: string, endDate: string) {
     validateWeeklyPeriod(startDate, endDate);
     const collected: VrBakerOrder[] = [];
+    const zones = new Map<string, VrBakerZone>();
     let cursor: string | null = null;
     for (let page = 0; page < 100; page += 1) {
-      const data = await this.request<{ orders: unknown[]; next_cursor?: string | null }>('orders.weekly_export', {
+      const data = await this.request<{ orders: unknown[]; zones?: unknown[]; next_cursor?: string | null }>('orders.weekly_export', {
         week_start: startDate,
         week_end: endDate,
         cursor,
@@ -273,8 +323,24 @@ export class VrBakerApiClient {
       if (!data || !Array.isArray(data.orders)) throw new Error('Exportul săptămânal VR Baker este invalid.');
       const parsed = data.orders.map(parseOrder);
       collected.push(...parsed);
+      if (data.zones !== undefined) {
+        if (!Array.isArray(data.zones) || data.zones.length > 5_000) throw new Error('Lista zonelor VR Baker este invalidă.');
+        for (const rawZone of data.zones) {
+          const zone = parseZone(rawZone);
+          if (!zone) throw new Error('Zona VR Baker este invalidă.');
+          zones.set(zone.id, zone);
+        }
+      }
+      for (const order of parsed) {
+        if (order.store.zone) zones.set(order.store.zone.id, order.store.zone);
+      }
       const next = data.next_cursor || null;
-      if (!next) return collected;
+      if (!next) {
+        return {
+          orders: collected,
+          zones: [...zones.values()].sort((a, b) => a.name.localeCompare(b.name, 'ro')),
+        };
+      }
       if (!UUID_PATTERN.test(next) || next === cursor) throw new Error('Paginarea VR Baker este invalidă.');
       cursor = next;
     }
