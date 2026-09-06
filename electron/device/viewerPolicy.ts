@@ -37,6 +37,7 @@ const VIEWER_ALLOWED_CHANNELS = new Set([
   'billing:getCompanies',
   'billing:getStores',
   'billing:getAllCompaniesAndStores',
+  'billing:getManualInvoiceCompanies',
   'billing:getCompanyProfile',
   'billing:getInvoices',
   'billing:getStats',

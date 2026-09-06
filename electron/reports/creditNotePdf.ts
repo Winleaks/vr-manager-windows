@@ -74,5 +74,11 @@ export function generateCreditNotePdf(note: any): Uint8Array {
   doc.setFont('Arial', 'normal'); doc.setFontSize(8); doc.setTextColor(71, 85, 105);
   doc.text(text('Acest document ajustează facturile originale enumerate mai sus. Păstrați-l împreună cu documentele sursă.'), 14, y + 26, { maxWidth: 182 });
   drawPdfFooters(doc, footerLayout);
+  if (note.testDocument === true) {
+    for (let page = 1; page <= doc.getNumberOfPages(); page += 1) {
+      doc.setPage(page); doc.setFont('Arial', 'bold'); doc.setFontSize(28); doc.setTextColor(220, 38, 38);
+      doc.text('TEST - NOT A TAX INVOICE', 105, 148, { align: 'center', angle: 35 });
+    }
+  }
   return new Uint8Array(doc.output('arraybuffer'));
 }

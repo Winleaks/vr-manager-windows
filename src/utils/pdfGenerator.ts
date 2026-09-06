@@ -376,6 +376,17 @@ export function generateInvoicePDF(
   // Footerul este desenat după ce numărul total de pagini este cunoscut.
   drawPdfFooters(doc, footerLayout);
 
+  if (settings.testDocument === true) {
+    const pages = doc.getNumberOfPages();
+    for (let page = 1; page <= pages; page += 1) {
+      doc.setPage(page);
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(28);
+      doc.setTextColor(220, 38, 38);
+      doc.text('TEST - NOT A TAX INVOICE', 105, 148, { align: 'center', angle: 35 });
+    }
+  }
+
   // Returnare Uint8Array
   const arrayBuffer = doc.output('arraybuffer');
   return new Uint8Array(arrayBuffer);

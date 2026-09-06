@@ -31,7 +31,7 @@ export function BillingManualInvoice() {
 
   useEffect(() => {
     Promise.all([
-      api.billing.getAllCompaniesAndStores(),
+      api.billing.getManualInvoiceCompanies(),
       api.billing.getProducts(),
       api.billing.getIssuers(),
       api.system.getDeviceRole(),

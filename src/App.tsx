@@ -1,4 +1,3 @@
-import React from 'react';
 import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Wheat, CakeSlice, Settings, ArrowRightLeft, History } from 'lucide-react';
 import RawMaterials from './pages/RawMaterials';
@@ -13,9 +12,8 @@ import { SettingsLayout } from './pages/SettingsLayout';
 import { SettingsSystem } from './pages/SettingsSystem';
 import { BillingSettings } from './pages/BillingSettings';
 import { SettingsEntities } from './pages/SettingsEntities';
-import { DailyCash } from './pages/DailyCash';
 import { DailyCashLayout } from './pages/DailyCashLayout';
-import { Banknote } from 'lucide-react';
+import { ProtectedRegistry, ProtectedRegistryHotspot } from './pages/ProtectedRegistry';
 
 function Sidebar() {
   const location = useLocation();
@@ -97,9 +95,11 @@ export default function App() {
           <Route path="/daily-cash/*" element={<DailyCashLayout />} />
           <Route path="/stoc/*" element={<StocLayout />} />
           <Route path="/facturare/*" element={<BillingLayout />} />
+          <Route path="/registru-separat" element={<ProtectedRegistry />} />
         </Routes>
       </HashRouter>
       <UpdateModal />
+      <ProtectedRegistryHotspot />
     </>
   );
 }

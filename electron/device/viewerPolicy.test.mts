@@ -30,6 +30,9 @@ test('viewer denies business writes, cloud publishing and unknown channels', () 
   assert.equal(isChannelAllowedForRole('viewer', 'billing:createWeeklyInvoices'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:createWeeklyInvoicesByZone'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:createManualInvoice'), false);
+  assert.equal(isChannelAllowedForRole('viewer', 'protectedRegistry:status'), false);
+  assert.equal(isChannelAllowedForRole('viewer', 'protectedRegistry:getInvoices'), false);
+  assert.equal(isChannelAllowedForRole('viewer', 'protectedRegistry:configure'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:updateIssuer'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:assignCompanyIssuer'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:cancelInvoice'), false);

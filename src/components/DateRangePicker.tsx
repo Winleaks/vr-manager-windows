@@ -85,7 +85,6 @@ export function DateRangePicker({ startDate, endDate, onChange }: DateRangePicke
     const val = e.target.value;
     if (!val) return;
     const [year, month] = val.split('-').map(Number);
-    const start = new Date(year, month, 1);
     const end = new Date(year, month + 1, 0); // last day of month
     
     // To avoid timezone issues when converting to ISO string
@@ -129,7 +128,7 @@ export function DateRangePicker({ startDate, endDate, onChange }: DateRangePicke
               onChange={handleWeekChange}
             >
               <option value="" disabled className="text-slate-800">Alege Săptămâna...</option>
-              {generateWeekOptions().map(opt => React.cloneElement(opt as React.ReactElement, { className: "text-slate-800" }))}
+              {generateWeekOptions().map(opt => React.cloneElement(opt as React.ReactElement<{ className?: string }>, { className: "text-slate-800" }))}
             </select>
             <ChevronDown size={14} className="absolute right-2 pointer-events-none opacity-70" />
           </div>
@@ -141,7 +140,7 @@ export function DateRangePicker({ startDate, endDate, onChange }: DateRangePicke
               onChange={handleMonthChange}
             >
               <option value="" disabled className="text-slate-800">Alege Luna...</option>
-              {generateMonthOptions().map(opt => React.cloneElement(opt as React.ReactElement, { className: "text-slate-800" }))}
+              {generateMonthOptions().map(opt => React.cloneElement(opt as React.ReactElement<{ className?: string }>, { className: "text-slate-800" }))}
             </select>
             <ChevronDown size={14} className="absolute right-2 pointer-events-none opacity-70" />
           </div>

@@ -11,6 +11,7 @@ import { registerStockMovementHandlers } from './ipc/stockMovementHandlers'
 import { registerSystemHandlers } from './ipc/systemHandlers'
 import { registerDailyCashHandlers } from './ipc/dailyCashHandlers'
 import { registerBillingHandlers } from './ipc/billingHandlers'
+import { registerProtectedRegistryHandlers } from './ipc/protectedRegistryHandlers'
 import { trustIpcSender } from './ipc/trustedHandler'
 import { getDeviceRole } from './device/deviceRole'
 import { syncViewerFromCloud } from './database/cloudSync'
@@ -19,6 +20,7 @@ import { checkForUpdates, initializeUpdater } from './updater/updateCoordinator'
 import { cashRepo } from './database/repositories/cashRepo'
 import { millisecondsUntilNextLocalMidnight } from './database/cashDayRollover'
 import { runStartupCashReconciliation } from './startupCashReconciliation'
+import { cleanupStaleProtectedRegistryTemporaryFiles, lockAllProtectedRegistrySessions } from './protectedRegistry/service'
 
 const DIST_PATH = path.join(__dirname, '../dist')
 process.env.DIST = DIST_PATH
@@ -100,10 +102,12 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   if (cashDayRolloverTimer) clearTimeout(cashDayRolloverTimer)
   closeDb();
+  lockAllProtectedRegistrySessions();
 })
 
 app.whenReady().then(async () => {
   app.setAppUserModelId('com.winleaks.vrhubmanagement')
+  cleanupStaleProtectedRegistryTemporaryFiles()
   if (process.platform === 'win32' && getDeviceRole() === 'writer') {
     try {
       const processes = execFileSync('tasklist.exe', ['/FO', 'CSV', '/NH'], {
@@ -204,6 +208,7 @@ app.whenReady().then(async () => {
   registerSystemHandlers()
   registerDailyCashHandlers()
   registerBillingHandlers()
+  registerProtectedRegistryHandlers()
   initializeUpdater()
   createWindow()
   setTimeout(() => {

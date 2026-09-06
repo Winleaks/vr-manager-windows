@@ -1,4 +1,3 @@
-import React from 'react';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import { LayoutDashboard, FileText, Settings, ArrowLeft, Users, Receipt, Package, ShoppingBag, FileMinus2, FilePlus2 } from 'lucide-react';
 import { BillingDashboard } from './BillingDashboard';

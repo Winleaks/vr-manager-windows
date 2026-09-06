@@ -11,6 +11,13 @@ import { creditNoteFilename, saveCreditNotePdf } from '../reports/creditNoteDeli
 import { downloadCreditNotePdfFromCloud, uploadCreditNotePdfToCloud } from '../database/cloudSync';
 import { backupDb } from '../database/db';
 import { selectReadyGroupsForZone } from '../integrations/weeklyZoneBilling';
+import {
+  assertNormalStoreAllowed,
+  filterNormalWeeklyGroups,
+  getNormalManualInvoiceCompanies,
+  loadProtectedRoutingPolicy,
+  withRegistryRoutingLock,
+} from '../protectedRegistry/service';
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : 'Operațiunea a eșuat.';
@@ -28,7 +35,8 @@ async function prepareWeeklyPreview(startDate: string, endDate: string) {
   const stores = [...new Map(orders.map((order) => [order.store.id, order.store])).values()];
   const companies = [...new Map(stores.flatMap((store) => store.company ? [[store.company.id, store.company] as const] : [])).values()];
   billingRepo.syncEntitiesFromVrBaker(companies, stores);
-  const ordersByStore = aggregateWeeklyOrders(orders).map((group) => ({
+  const visibleGroups = await filterNormalWeeklyGroups(aggregateWeeklyOrders(orders));
+  const ordersByStore = visibleGroups.map((group) => ({
     ...group,
     ...billingRepo.getIssuerPreviewByStoreExternalId(group.store.id),
     ...billingRepo.getWeeklyImportState(group.store.id, startDate, endDate, group.sourceFingerprint),
@@ -39,7 +47,7 @@ async function prepareWeeklyPreview(startDate: string, endDate: string) {
 type PreparedWeeklyPreview = Awaited<ReturnType<typeof prepareWeeklyPreview>>;
 type PreparedWeeklyGroup = PreparedWeeklyPreview['ordersByStore'][number];
 
-function issueWeeklyGroups(
+async function issueWeeklyGroups(
   groups: PreparedWeeklyGroup[],
   startDate: string,
   endDate: string,
@@ -48,6 +56,8 @@ function issueWeeklyGroups(
   if (groups.length === 0 || groups.length > 500) throw new Error('Lotul de facturi este gol sau depășește limita permisă.');
   const changed = groups.find((group) => group.billingState !== 'ready');
   if (changed) throw new Error(changed.billingState === 'source_changed' ? 'Sursa unei facturi emise s-a modificat; este necesară rezolvare manuală.' : 'Factura pentru unul dintre magazine există deja.');
+  const allowedGroups = await filterNormalWeeklyGroups(groups);
+  if (allowedGroups.length !== groups.length) throw new Error('Unul dintre magazine a fost mutat în registrul separat. Reîncarcă previzualizarea.');
   const prepared = groups.map((group) => {
     const storeId = billingRepo.getStoreBySupabaseId(group.store.id);
     if (!storeId) throw new Error(`Magazinul „${group.store.name}” nu a fost mapat local.`);
@@ -106,13 +116,17 @@ export function registerBillingHandlers() {
     return true;
   });
   handleTrustedIpc('billing:getAllCompaniesAndStores', () => billingRepo.getAllCompaniesAndStores());
+  handleTrustedIpc('billing:getManualInvoiceCompanies', () => getNormalManualInvoiceCompanies());
   handleTrustedIpc('billing:getCompanyProfile', (_, companyId) => billingRepo.getCompanyProfileDetails(companyId));
   handleTrustedIpc('billing:recordCompanyPayment', (_, data) => billingRepo.recordCompanyPayment(data));
   handleTrustedIpc('billing:updatePayment', (_, data) => billingRepo.updatePayment(data));
   handleTrustedIpc('billing:getInvoices', (_, startDate, endDate, issuerId) => billingRepo.getInvoicesByDateRange(startDate, endDate, issuerId));
-  handleTrustedIpc('billing:createManualInvoice', (_, data) => {
-    const created = billingRepo.createManualInvoice(data);
-    return { ...created, invoice: billingRepo.getInvoiceById(created.invoiceId) };
+  handleTrustedIpc('billing:createManualInvoice', async (_, data) => {
+    return withRegistryRoutingLock(async () => {
+      await assertNormalStoreAllowed(data.storeId);
+      const created = billingRepo.createManualInvoice(data);
+      return { ...created, invoice: billingRepo.getInvoiceById(created.invoiceId) };
+    });
   });
   handleTrustedIpc('billing:updateInvoice', (_, data) => billingRepo.updateInvoiceWithItems(data.id, data.invoiceDate, data.items || []));
   handleTrustedIpc('billing:cancelInvoice', (_, data) => billingRepo.cancelInvoice(data.invoiceId, data.reason));
@@ -127,14 +141,22 @@ export function registerBillingHandlers() {
     void backupDb();
     return result;
   });
-  handleTrustedIpc('billing:reissueCancelledInvoice', (_, invoiceId: number) => billingRepo.reissueCancelledInvoice(invoiceId, new Date().toISOString().slice(0, 10)));
+  handleTrustedIpc('billing:reissueCancelledInvoice', async (_, invoiceId: number) => withRegistryRoutingLock(async () => {
+    const source = billingRepo.getInvoiceById(invoiceId) as any;
+    if (!source) throw new Error('Factura anulată nu există.');
+    await assertNormalStoreAllowed(source.store_id);
+    return billingRepo.reissueCancelledInvoice(invoiceId, new Date().toISOString().slice(0, 10));
+  }));
   handleTrustedIpc('billing:getStats', (_, issuerId?: number) => billingRepo.getBillingStats(issuerId));
   handleTrustedIpc('billing:getProducts', () => billingRepo.getCloudProducts());
   handleTrustedIpc('billing:getIssuers', () => billingRepo.getBillingIssuers());
   handleTrustedIpc('billing:updateIssuer', (_, data) => billingRepo.updateBillingIssuer(data));
   handleTrustedIpc('billing:assignCompanyIssuer', (_, data) => billingRepo.assignCompanyIssuer(data.companyId, data.issuerId));
   handleTrustedIpc('billing:getCreditNoteDraft', (_, invoiceIds?: number[]) => billingRepo.readCreditNoteDraft(invoiceIds));
-  handleTrustedIpc('billing:createCreditNote', (_, data) => billingRepo.issueCreditNote(data));
+  handleTrustedIpc('billing:createCreditNote', async (_, data) => withRegistryRoutingLock(async () => {
+    await loadProtectedRoutingPolicy();
+    return billingRepo.issueCreditNote(data);
+  }));
   handleTrustedIpc('billing:getCreditNotes', (_, filters?: any) => billingRepo.listCreditNotes(filters));
   handleTrustedIpc('billing:getCreditNote', (_, id: number) => billingRepo.readCreditNote(id));
   handleTrustedIpc('billing:cancelCreditNote', (_, data) => billingRepo.cancelCreditNote(data.id, data.reason, data.acknowledgeAccountingRisk));
@@ -216,12 +238,11 @@ export function registerBillingHandlers() {
       if (!Array.isArray(storeExternalIds) || storeExternalIds.length === 0 || storeExternalIds.length > 500) throw new Error('Selecția magazinelor este invalidă.');
       const requested = new Set(storeExternalIds);
       if (requested.size !== storeExternalIds.length) throw new Error('Selecția magazinelor conține duplicate.');
-      const groups = (await prepareWeeklyPreview(startDate, endDate)).ordersByStore.filter((group) => requested.has(group.store.id));
-      if (groups.length !== requested.size) throw new Error('Unele magazine selectate nu mai există în exportul actual.');
-      return {
-        success: true,
-        updatedOrders: issueWeeklyGroups(groups, startDate, endDate),
-      };
+      return await withRegistryRoutingLock(async () => {
+        const groups = (await prepareWeeklyPreview(startDate, endDate)).ordersByStore.filter((group) => requested.has(group.store.id));
+        if (groups.length !== requested.size) throw new Error('Unele magazine selectate nu mai există în exportul actual.');
+        return { success: true, updatedOrders: await issueWeeklyGroups(groups, startDate, endDate) };
+      });
     } catch (error) {
       return { success: false, message: message(error) };
     }
@@ -229,12 +250,11 @@ export function registerBillingHandlers() {
 
   handleTrustedIpc('billing:createWeeklyInvoicesByZone', async (_, startDate: string, endDate: string, zoneIdInput: unknown) => {
     try {
-      const preview = await prepareWeeklyPreview(startDate, endDate);
-      const { zone, groups } = selectReadyGroupsForZone(preview.ordersByStore, preview.zones, zoneIdInput);
-      return {
-        success: true,
-        updatedOrders: issueWeeklyGroups(groups, startDate, endDate, zone),
-      };
+      return await withRegistryRoutingLock(async () => {
+        const preview = await prepareWeeklyPreview(startDate, endDate);
+        const { zone, groups } = selectReadyGroupsForZone(preview.ordersByStore, preview.zones, zoneIdInput);
+        return { success: true, updatedOrders: await issueWeeklyGroups(groups, startDate, endDate, zone) };
+      });
     } catch (error) {
       return { success: false, message: message(error) };
     }

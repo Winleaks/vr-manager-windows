@@ -92,6 +92,15 @@ export interface CloudBackupMetadata {
   size?: string | null;
 }
 
+export interface VerifiedCloudBuffer {
+  fileId: string;
+  fileName: string;
+  version: string | null;
+  modifiedTime: string | null;
+  md5Checksum: string | null;
+  buffer: Uint8Array;
+}
+
 function calculateFileMd5(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = createHash('md5');
@@ -283,7 +292,7 @@ export async function connectGoogleDrive(): Promise<{ success: boolean; message?
         if (windows.length > 0) {
           windows[0].webContents.send('google-auth-url', url);
         }
-      } catch (e) {}
+      } catch {}
     });
 
     // Timeout after 3 minutes just in case
@@ -472,11 +481,13 @@ async function fetchUploadedMetadata(drive: any, fileId: string): Promise<Upload
 
 async function uploadVerifiedBuffer(
   drive: any,
-  input: { filename: string; parentId: string; mimeType: string; buffer: Uint8Array },
+  input: { filename: string; parentId: string; mimeType: string; buffer: Uint8Array; strictParent?: boolean },
 ) {
   const expectedMd5 = createHash('md5').update(Buffer.from(input.buffer)).digest('hex');
   const expectedSize = input.buffer.byteLength;
-  const existing = await findFileForUpload(drive, input.filename, input.parentId);
+  const existing = input.strictParent
+    ? await findExactCloudFile(drive, input.parentId, input.filename)
+    : await findFileForUpload(drive, input.filename, input.parentId);
   let fileId: string;
 
   if (existing?.id) {
@@ -507,6 +518,128 @@ async function uploadVerifiedBuffer(
     md5Checksum: expectedMd5,
     size: expectedSize,
   });
+}
+
+function validatePrivateCloudPath(folderNames: string[], filename: string) {
+  if (!Array.isArray(folderNames) || folderNames.length === 0 || folderNames.length > 6) {
+    throw new Error('Calea Google Drive este invalidă.');
+  }
+  for (const segment of folderNames) {
+    if (typeof segment !== 'string' || !/^[A-Za-z0-9 ĂÂÎȘȚăâîșț_-]{1,60}$/.test(segment) || segment === '.' || segment === '..') {
+      throw new Error('Calea Google Drive conține un folder invalid.');
+    }
+  }
+  if (typeof filename !== 'string' || !/^[A-Za-z0-9._-]{1,120}$/.test(filename) || filename.startsWith('.')) {
+    throw new Error('Numele fișierului Google Drive este invalid.');
+  }
+}
+
+async function resolvePrivateCloudFolder(drive: any, folderNames: string[], create: boolean) {
+  const rootFolderId = create
+    ? await getOrCreateFolder(drive, CLOUD_ROOT_FOLDER_NAME)
+    : await findFolder(drive, CLOUD_ROOT_FOLDER_NAME);
+  if (!rootFolderId) return null;
+  let parentId = rootFolderId;
+  for (const folderName of folderNames) {
+    const next = create
+      ? await getOrCreateFolder(drive, folderName, parentId)
+      : await findFolder(drive, folderName, parentId);
+    if (!next) return null;
+    parentId = next;
+  }
+  return parentId;
+}
+
+async function findExactCloudFile(drive: any, parentId: string, filename: string) {
+  const response = await drive.files.list({
+    q: `name='${escapeDriveQueryValue(filename)}' and '${parentId}' in parents and trashed=false`,
+    orderBy: 'modifiedTime desc',
+    pageSize: 2,
+    fields: 'files(id,name,version,modifiedTime,md5Checksum,size,parents)',
+  });
+  return response.data.files?.[0] || null;
+}
+
+/**
+ * Writer-only primitive used by the encrypted parallel register. It never searches
+ * outside the canonical VR - Management folder and verifies Drive's checksum.
+ */
+export async function readVerifiedPrivateCloudFile(folderNames: string[], filename: string): Promise<VerifiedCloudBuffer | null> {
+  if (getDeviceRole() !== 'writer') throw new Error('Calculatorul Viewer nu poate accesa registrul separat.');
+  if (!loadTokens()) throw new Error('Google Drive nu este conectat.');
+  validatePrivateCloudPath(folderNames, filename);
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    const parentId = await resolvePrivateCloudFolder(drive, folderNames, false);
+    if (!parentId) return null;
+    const file = await findExactCloudFile(drive, parentId, filename);
+    if (!file?.id) return null;
+    const size = Number(file.size || 0);
+    if (!Number.isSafeInteger(size) || size < 0 || size > 30 * 1024 * 1024) throw new Error('Fișierul registrului depășește limita permisă.');
+    const response = await drive.files.get({ fileId: file.id, alt: 'media' }, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(response.data as ArrayBuffer);
+    if (buffer.length !== size) throw new Error('Dimensiunea fișierului descărcat nu corespunde metadatelor Drive.');
+    const checksum = createHash('md5').update(buffer).digest('hex');
+    if (file.md5Checksum && checksum !== file.md5Checksum) throw new Error('Checksum-ul fișierului descărcat nu corespunde versiunii Drive.');
+    return {
+      fileId: file.id,
+      fileName: file.name || filename,
+      version: file.version || null,
+      modifiedTime: file.modifiedTime || null,
+      md5Checksum: file.md5Checksum || checksum,
+      buffer: new Uint8Array(buffer),
+    };
+  } catch (error) {
+    throw new Error(publicGoogleDriveError(error, 'Fișierul registrului nu a putut fi citit și verificat din Google Drive.'));
+  }
+}
+
+export async function writeVerifiedPrivateCloudFile(input: {
+  folderNames: string[];
+  filename: string;
+  mimeType: string;
+  buffer: Uint8Array;
+  expectedVersion?: string | null;
+}) {
+  if (getDeviceRole() !== 'writer') throw new Error('Calculatorul Viewer nu poate publica registrul separat.');
+  if (!loadTokens()) throw new Error('Google Drive nu este conectat.');
+  validatePrivateCloudPath(input.folderNames, input.filename);
+  if (!/^[-\w.+/;= ]{3,100}$/.test(input.mimeType)) throw new Error('Tipul fișierului este invalid.');
+  if (input.buffer.byteLength > 30 * 1024 * 1024) throw new Error('Fișierul depășește limita permisă.');
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    const parentId = await resolvePrivateCloudFolder(drive, input.folderNames, true);
+    if (!parentId) throw new Error('Folderul Google Drive nu a putut fi creat.');
+    const existing = await findExactCloudFile(drive, parentId, input.filename);
+    const currentVersion = existing?.version || null;
+    if (input.expectedVersion !== undefined && currentVersion !== input.expectedVersion) {
+      throw new Error('Registrul a fost modificat în Google Drive de o altă operație. Reîncarcă înainte de a continua.');
+    }
+    return await uploadVerifiedBuffer(drive, {
+      filename: input.filename,
+      parentId,
+      mimeType: input.mimeType,
+      buffer: input.buffer,
+      strictParent: true,
+    });
+  } catch (error) {
+    const details = error instanceof Error ? error.message : '';
+    if (details.startsWith('Registrul a fost modificat')) throw error;
+    throw new Error(publicGoogleDriveError(error, 'Fișierul registrului nu a putut fi încărcat și verificat în Google Drive.'));
+  }
+}
+
+export async function deletePrivateCloudFile(folderNames: string[], filename: string) {
+  if (getDeviceRole() !== 'writer') throw new Error('Calculatorul Viewer nu poate modifica registrul separat.');
+  if (!loadTokens()) throw new Error('Google Drive nu este conectat.');
+  validatePrivateCloudPath(folderNames, filename);
+  const drive = google.drive({ version: 'v3', auth: oauth2Client });
+  const parentId = await resolvePrivateCloudFolder(drive, folderNames, false);
+  if (!parentId) return false;
+  const file = await findExactCloudFile(drive, parentId, filename);
+  if (!file?.id) return false;
+  await drive.files.delete({ fileId: file.id });
+  return true;
 }
 
 export async function saveToCloud(isAutomatic = false, snapshotPath?: string): Promise<CloudSaveResult> {
