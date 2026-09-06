@@ -1,5 +1,7 @@
 ### În lucru
 
+- În Modul test, facturile deja anulate afișează acum acțiunea de ștergere definitivă; butonul de reemitere rămâne disponibil numai în operarea live.
+
 ### VR - Hub Management v0.1.91
 
 - Societatea emitentă se configurează acum direct în profilul fiecărui client din `Clienți & Entități`, cu alegeri distincte pentru emitentul implicit, `VATRA ROMANEASCA LTD` și `THE GOODNESS BAKER LTD`.

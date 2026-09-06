@@ -511,8 +511,8 @@ export function BillingInvoices() {
                             <Edit3 size={16} />
                           </button>}
 
-                          {/* În modul live anulează; în modul test șterge definitiv */}
-                          {!isCancelled && <button
+                          {/* În modul live anulează facturile active; în modul test șterge definitiv inclusiv facturile anulate. */}
+                          {(testMode || !isCancelled) && <button
                             disabled={!isWriter}
                             onClick={() => handleDeleteInvoice(inv)}
                             className={`p-2 rounded-lg transition-colors disabled:opacity-40 ${testMode ? 'text-rose-700 bg-rose-50 hover:bg-rose-100' : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'}`}
@@ -520,7 +520,7 @@ export function BillingInvoices() {
                           >
                             <Trash2 size={16} />
                           </button>}
-                          {isCancelled && <button disabled={!isWriter} onClick={() => handleReissue(inv)} className="p-2 text-amber-700 hover:bg-amber-50 rounded-lg disabled:opacity-40" title="Reemite cu număr nou"><RefreshCw size={16} /></button>}
+                          {isCancelled && !testMode && <button disabled={!isWriter} onClick={() => handleReissue(inv)} className="p-2 text-amber-700 hover:bg-amber-50 rounded-lg disabled:opacity-40" title="Reemite cu număr nou"><RefreshCw size={16} /></button>}
                         </div>
                       </td>
                     </tr>
