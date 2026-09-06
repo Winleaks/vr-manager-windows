@@ -1,5 +1,11 @@
 ### În lucru
 
+### VR - Hub Management v0.1.94
+
+- Repară reconectarea Google Drive din v0.1.93: buildul Windows include din nou perechea completă de credentiale a clientului OAuth Desktop la schimbul codului de autorizare, păstrând portul local dinamic, PKCE și validarea stării.
+- Workflow-ul de release refuză publicarea dacă lipsește oricare dintre valorile OAuth necesare, prevenind generarea unui installer care nu se poate conecta la Google Drive.
+- Mesajul pentru o configurație OAuth incompletă nu mai identifică eronat clientul existent drept aplicație Web.
+
 ### VR - Hub Management v0.1.93
 
 - Reconectarea Google Drive folosește un port local liber ales automat, eliminând conflictele produse de portul fix la autentificarea OAuth pe Windows.

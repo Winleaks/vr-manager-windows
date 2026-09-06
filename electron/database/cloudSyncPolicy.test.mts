@@ -25,6 +25,17 @@ test('desktop OAuth listens on an available loopback port instead of a fixed por
   assert.doesNotMatch(source, /listen\(3456/);
 });
 
+test('desktop OAuth token exchange receives the matching client credentials from the release build', () => {
+  const cloudSource = fs.readFileSync(path.join(process.cwd(), 'electron/database/cloudSync.ts'), 'utf8');
+  const viteSource = fs.readFileSync(path.join(process.cwd(), 'vite.config.ts'), 'utf8');
+  const workflowSource = fs.readFileSync(path.join(process.cwd(), '.github/workflows/release.yml'), 'utf8');
+
+  assert.match(cloudSource, /new google\.auth\.OAuth2\(CLIENT_ID, CLIENT_SECRET, redirectUri\)/);
+  assert.match(viteSource, /__VR_HUB_GOOGLE_CLIENT_SECRET__.*VR_HUB_GOOGLE_CLIENT_SECRET/);
+  assert.match(workflowSource, /VR_HUB_GOOGLE_CLIENT_SECRET:.*secrets\.VR_HUB_GOOGLE_CLIENT_SECRET/);
+  assert.match(workflowSource, /IsNullOrWhiteSpace\(\$env:VR_HUB_GOOGLE_CLIENT_SECRET\)/);
+});
+
 test('accepts an uploaded file only after identity, parent, checksum and size verification', () => {
   const result = assertUploadedFileMatches(
     { id: 'drive-file', name: 'backup.db', parents: ['database-folder'], md5Checksum: 'aabb', size: '42', modifiedTime: '2026-09-06T10:00:00Z' },

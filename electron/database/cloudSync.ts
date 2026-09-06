@@ -40,14 +40,17 @@ const legacyConfigFilePath = path.join(baseDir, 'config_google_drive.json');
 const GOOGLE_TOKENS_KEY = 'google-drive-oauth-tokens';
 
 declare const __VR_HUB_GOOGLE_CLIENT_ID__: string;
+declare const __VR_HUB_GOOGLE_CLIENT_SECRET__: string;
 
 const CLIENT_ID = __VR_HUB_GOOGLE_CLIENT_ID__;
+const CLIENT_SECRET = __VR_HUB_GOOGLE_CLIENT_SECRET__;
 function hasGoogleOAuthBuildConfig() {
-  return Boolean(CLIENT_ID);
+  return Boolean(CLIENT_ID && CLIENT_SECRET);
 }
 
 const oauth2Client = new google.auth.OAuth2(
-  CLIENT_ID
+  CLIENT_ID,
+  CLIENT_SECRET,
 );
 
 export interface CloudSyncStatus {
@@ -152,7 +155,7 @@ function publicGoogleOAuthError(error: unknown) {
     oauthError: oauthError || null,
   });
   if (/client_secret|unauthorized_client|invalid_client/i.test(details)) {
-    return 'Configurația Google Drive trebuie înlocuită cu un OAuth Client ID de tip Desktop app. Clientul web vechi nu poate fi folosit în siguranță de aplicația Windows.';
+    return 'Configurația OAuth Google Drive inclusă în această versiune este incompletă sau nu corespunde clientului Desktop. Actualizează aplicația la cea mai nouă versiune.';
   }
   if (/redirect_uri_mismatch/i.test(details)) return 'Adresa locală de revenire Google Drive nu este acceptată de configurația OAuth.';
   if (/access_denied/i.test(details)) return 'Autorizarea Google Drive a fost anulată sau refuzată.';
@@ -325,7 +328,7 @@ export async function connectGoogleDrive(): Promise<{ success: boolean; message?
           if (!address || typeof address === 'string') throw new Error('Portul local OAuth nu a putut fi rezervat.');
           callbackBaseUrl = `http://127.0.0.1:${address.port}`;
           const redirectUri = `${callbackBaseUrl}/oauth2callback`;
-          authorizationClient = new google.auth.OAuth2(CLIENT_ID, undefined, redirectUri);
+          authorizationClient = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, redirectUri);
           const challenge = await authorizationClient.generateCodeVerifierAsync();
           codeVerifier = challenge.codeVerifier;
           const url = authorizationClient.generateAuthUrl({

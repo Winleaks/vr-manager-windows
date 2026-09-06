@@ -14,6 +14,7 @@ export default defineConfig({
         vite: {
           define: {
             __VR_HUB_GOOGLE_CLIENT_ID__: JSON.stringify(process.env.VR_HUB_GOOGLE_CLIENT_ID || ''),
+            __VR_HUB_GOOGLE_CLIENT_SECRET__: JSON.stringify(process.env.VR_HUB_GOOGLE_CLIENT_SECRET || ''),
           },
           build: {
             rollupOptions: {
