@@ -244,6 +244,10 @@ export function ensureBillingIssuerSchema(connection: SqliteDatabase) {
   `);
 
   if (!columnExists(connection, 'companies', 'issuer_id')) connection.exec('ALTER TABLE companies ADD COLUMN issuer_id INTEGER;');
+  const hadIssuerAssignmentMode = columnExists(connection, 'companies', 'issuer_assignment_mode');
+  if (!hadIssuerAssignmentMode) {
+    connection.exec("ALTER TABLE companies ADD COLUMN issuer_assignment_mode TEXT NOT NULL DEFAULT 'default' CHECK(issuer_assignment_mode IN ('default', 'explicit'));");
+  }
   if (!columnExists(connection, 'payments', 'issuer_id')) connection.exec('ALTER TABLE payments ADD COLUMN issuer_id INTEGER;');
   if (!columnExists(connection, 'invoices', 'cancelled_at')) connection.exec('ALTER TABLE invoices ADD COLUMN cancelled_at DATETIME;');
   if (!columnExists(connection, 'invoices', 'cancellation_reason')) connection.exec('ALTER TABLE invoices ADD COLUMN cancellation_reason TEXT;');
@@ -293,6 +297,15 @@ export function ensureBillingIssuerSchema(connection: SqliteDatabase) {
   `).run();
 
   const defaultIssuer = connection.prepare('SELECT * FROM billing_issuers WHERE is_default = 1').get() as BillingIssuerRow;
+  if (!hadIssuerAssignmentMode) {
+    connection.prepare(`
+      UPDATE companies
+      SET issuer_assignment_mode = CASE
+        WHEN issuer_id IS NULL OR issuer_id = ? THEN 'default'
+        ELSE 'explicit'
+      END
+    `).run(defaultIssuer.id);
+  }
   connection.prepare('UPDATE companies SET issuer_id = ? WHERE issuer_id IS NULL').run(defaultIssuer.id);
 
   const snapshotJson = JSON.stringify(issuerSnapshot(defaultIssuer));
@@ -435,19 +448,27 @@ export function updateBillingIssuer(connection: SqliteDatabase, input: UpdateBil
   })();
 }
 
-export function assignCompanyIssuer(connection: SqliteDatabase, companyIdInput: number, issuerIdInput: number) {
+export function assignCompanyIssuer(connection: SqliteDatabase, companyIdInput: number, issuerIdInput: number | null) {
   const companyId = requirePositiveInteger(companyIdInput, 'Compania');
-  const issuerId = requirePositiveInteger(issuerIdInput, 'Emitentul');
+  const assignmentMode = issuerIdInput === null ? 'default' : 'explicit';
+  const issuerId = assignmentMode === 'default'
+    ? (connection.prepare('SELECT id FROM billing_issuers WHERE is_default = 1').get() as { id: number } | undefined)?.id
+    : requirePositiveInteger(issuerIdInput, 'Emitentul');
+  if (!issuerId) throw new Error('Emitentul implicit nu este configurat.');
   const issuer = getBillingIssuer(connection, issuerId);
   if (!issuer || !isIssuerReady(issuer)) throw new Error('Emitentul selectat nu este activ și configurat complet.');
-  const company = connection.prepare('SELECT id, issuer_id FROM companies WHERE id = ? AND is_active = 1').get(companyId) as { id: number; issuer_id: number | null } | undefined;
+  const company = connection.prepare('SELECT id, issuer_id, issuer_assignment_mode FROM companies WHERE id = ? AND is_active = 1').get(companyId) as { id: number; issuer_id: number | null; issuer_assignment_mode: string } | undefined;
   if (!company) throw new Error('Compania nu există sau este inactivă.');
   return connection.transaction(() => {
-    connection.prepare('UPDATE companies SET issuer_id = ? WHERE id = ?').run(issuerId, companyId);
+    connection.prepare('UPDATE companies SET issuer_id = ?, issuer_assignment_mode = ? WHERE id = ?').run(issuerId, assignmentMode, companyId);
     connection.prepare('INSERT OR IGNORE INTO company_issuer_credits (company_id, issuer_id, balance) VALUES (?, ?, 0)').run(companyId, issuerId);
     connection.prepare(`INSERT INTO billing_audit_events (event_type, issuer_id, company_id, details) VALUES ('company_issuer_assigned', ?, ?, ?)`)
-      .run(issuerId, companyId, JSON.stringify({ previousIssuerId: company.issuer_id }));
-    return true;
+      .run(issuerId, companyId, JSON.stringify({
+        previousIssuerId: company.issuer_id,
+        previousAssignmentMode: company.issuer_assignment_mode,
+        assignmentMode,
+      }));
+    return { issuerId, assignmentMode };
   })();
 }
 

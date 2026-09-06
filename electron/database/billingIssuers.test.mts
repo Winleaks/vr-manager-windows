@@ -95,6 +95,38 @@ test('migrates the configured issuer and keeps historical invoice identity immut
   connection.close();
 });
 
+test('keeps default and explicit issuer choices distinct at company level', () => {
+  const { connection, company1, company2, goodnessId, vatraId } = fixture();
+  try {
+    assert.deepEqual(
+      connection.prepare('SELECT issuer_id, issuer_assignment_mode FROM companies WHERE id = ?').get(company1),
+      { issuer_id: goodnessId, issuer_assignment_mode: 'default' },
+    );
+    assert.deepEqual(
+      connection.prepare('SELECT issuer_id, issuer_assignment_mode FROM companies WHERE id = ?').get(company2),
+      { issuer_id: vatraId, issuer_assignment_mode: 'explicit' },
+    );
+
+    assignCompanyIssuer(connection, company2, null);
+    assert.deepEqual(
+      connection.prepare('SELECT issuer_id, issuer_assignment_mode FROM companies WHERE id = ?').get(company2),
+      { issuer_id: goodnessId, issuer_assignment_mode: 'default' },
+    );
+
+    assignCompanyIssuer(connection, company2, goodnessId);
+    assert.deepEqual(
+      connection.prepare('SELECT issuer_id, issuer_assignment_mode FROM companies WHERE id = ?').get(company2),
+      { issuer_id: goodnessId, issuer_assignment_mode: 'explicit' },
+    );
+    const audit = connection.prepare("SELECT details FROM billing_audit_events WHERE event_type = 'company_issuer_assigned' AND company_id = ? ORDER BY id DESC LIMIT 1").get(company2) as { details: string };
+    assert.deepEqual(JSON.parse(audit.details), {
+      previousIssuerId: goodnessId,
+      previousAssignmentMode: 'default',
+      assignmentMode: 'explicit',
+    });
+  } finally { connection.close(); }
+});
+
 test('issues a mixed batch with independent counters and immutable issuer snapshots', () => {
   const { connection, store1, store2, goodnessId, vatraId } = fixture();
   try {

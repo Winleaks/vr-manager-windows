@@ -373,6 +373,13 @@ function runMigrations() {
         up: () => {
           ensureProductOrderingSchema(db);
         }
+      },
+      {
+        version: 16,
+        description: "Alegere implicită sau explicită a emitentului per client",
+        up: () => {
+          ensureBillingIssuerSchema(db);
+        }
       }
     ];
 

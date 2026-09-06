@@ -63,7 +63,7 @@ export function updateBillingIssuer(data: UpdateBillingIssuerInput) {
   return updateBillingIssuerTransaction(db, data);
 }
 
-export function assignCompanyIssuer(companyId: number, issuerId: number) {
+export function assignCompanyIssuer(companyId: number, issuerId: number | null) {
   return assignCompanyIssuerTransaction(db, companyId, issuerId);
 }
 

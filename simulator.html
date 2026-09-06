@@ -49,7 +49,7 @@
           },
         ];
         let billingCompanies = [
-          { id: 1, name: 'Client Demo LTD', address: '10 Demo Street, London', issuer_id: 1, is_active: 1, stores: [{ id: 1, name: 'Magazin Demo', address: '25 Baker Street, London', postcode: 'NW1 6XE', is_active: 1 }] },
+          { id: 1, name: 'Client Demo LTD', address: '10 Demo Street, London', issuer_id: 1, issuer_assignment_mode: 'default', is_active: 1, stores: [{ id: 1, name: 'Magazin Demo', address: '25 Baker Street, London', postcode: 'NW1 6XE', is_active: 1 }] },
         ];
         const billingProducts = [
           { id: 1, supabase_product_id: 'demo-white-bread', name: 'WHITE BREAD', name_ro: 'PÂINE ALBĂ', unit: 'pcs', price_standard: 2.5, available: 1 },
@@ -212,7 +212,21 @@
           'billing.setTestMode': async (enabled) => { billingTestMode = enabled === true; return { enabled: billingTestMode }; },
           'billing.deleteTestInvoice': async (_invoiceId, confirmation) => ({ reference: String(confirmation || '').replace(/^STERGE\s+/i, ''), counterRewound: true }),
           'billing.updatePayment': async (input) => ({ id: input.id, amount: input.amount, method: input.method, bankName: input.bankName || null }),
-          'billing.getAllCompaniesAndStores': async () => billingCompanies.map((company) => ({ ...company, stores: company.stores.slice() })),
+          'billing.getAllCompaniesAndStores': async () => billingCompanies.map((company) => {
+            const issuer = billingIssuers.find((item) => item.id === company.issuer_id);
+            return { ...company, issuer_name: issuer?.legal_name, issuer_code: issuer?.code, issuer_color: issuer?.color, stores: company.stores.slice() };
+          }),
+          'billing.getCompanyProfile': async (companyId) => {
+            const company = billingCompanies.find((item) => item.id === companyId);
+            if (!company) return null;
+            const issuer = billingIssuers.find((item) => item.id === company.issuer_id);
+            const invoices = billingInvoices.filter((invoice) => company.stores.some((store) => store.id === invoice.store_id));
+            return {
+              company: { ...company, issuer_name: issuer?.legal_name, issuer_code: issuer?.code, issuer_color: issuer?.color },
+              issuers: billingIssuers.map((item) => ({ ...item })), stores: company.stores.slice(), invoices,
+              unpaidInvoices: invoices, payments: [], issuerCredits: [], creditLedger: { entries: [], applications: [] },
+            };
+          },
           'billing.getSettings': async () => ({ invoiceLogo: '' }),
           'billing.getVrBakerStatus': async () => ({ endpoint: 'https://demo.supabase.co/functions/v1/external-api', hasToken: true }),
           'billing.previewWeeklyInvoices': async () => ({ success: true, message: 'Date demonstrative pentru facturarea pe zone.', zones: demoZones, ordersByStore: billingOrderPreview.map((order) => ({ ...order })) }),
@@ -234,7 +248,8 @@
           },
           'billing.saveSettings': async () => ({ success: true }),
           'billing.assignCompanyIssuer': async (companyId, issuerId) => {
-            billingCompanies = billingCompanies.map((company) => company.id === companyId ? { ...company, issuer_id: issuerId } : company);
+            const resolvedIssuerId = issuerId === null ? billingIssuers.find((issuer) => issuer.is_default === 1)?.id : issuerId;
+            billingCompanies = billingCompanies.map((company) => company.id === companyId ? { ...company, issuer_id: resolvedIssuerId, issuer_assignment_mode: issuerId === null ? 'default' : 'explicit' } : company);
             return { success: true };
           },
           'billing.configureVrBakerToken': async () => ({ success: true, message: 'Token demonstrativ validat.' }),

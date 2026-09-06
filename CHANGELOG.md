@@ -1,5 +1,8 @@
 ### În lucru
 
+- Societatea emitentă se configurează acum direct în profilul fiecărui client din `Clienți & Entități`, cu alegeri distincte pentru emitentul implicit, `VATRA ROMANEASCA LTD` și `THE GOODNESS BAKER LTD`.
+- Alegerea se aplică tuturor magazinelor clientului și numai facturilor viitoare; istoricul, plățile și creditele existente rămân legate de emitentul original.
+- Migrarea SQLite v16 păstrează atribuirile Vatra existente ca explicite și tratează clienții Goodness existenți drept utilizatori ai emitentului implicit.
 - Replica Writer este publicată exclusiv în folderul existent `My Drive / VR - Management / Baza de date`, iar facturile în `My Drive / VR - Management / Facturi`.
 - Fiecare upload al bazei și al PDF-urilor este confirmat prin folder părinte, nume, dimensiune și checksum MD5; o conexiune OAuth existentă nu mai este raportată fals drept sincronizare funcțională.
 - Reconectarea Writer-ului publică imediat un snapshot verificat, sincronizarea automată raportează eșecurile în interfață, iar o bază locală goală nu poate suprascrie nici copia nouă, nici backupul istoric.

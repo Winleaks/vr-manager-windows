@@ -60,6 +60,8 @@ export function BillingClients() {
   const [creditAmount, setCreditAmount] = useState('');
   const [creditReason, setCreditReason] = useState('');
   const [isWriter, setIsWriter] = useState(false);
+  const [isAssigningIssuer, setIsAssigningIssuer] = useState(false);
+  const [issuerAssignmentNotice, setIssuerAssignmentNotice] = useState('');
   const [editingPayment, setEditingPayment] = useState<any | null>(null);
   const [paymentEditForm, setPaymentEditForm] = useState({ amount: '', method: 'cash' as 'cash' | 'transfer', bankName: 'Barclays' as 'Barclays' | 'Virgin', reason: '' });
   const [isUpdatingPayment, setIsUpdatingPayment] = useState(false);
@@ -72,6 +74,7 @@ export function BillingClients() {
 
   useEffect(() => {
     if (selectedCompanyId) {
+      setIssuerAssignmentNotice('');
       loadCompanyProfile(selectedCompanyId);
     } else {
       setProfileData(null);
@@ -114,6 +117,23 @@ export function BillingClients() {
       console.error(e);
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const assignProfileIssuer = async (selection: string) => {
+    if (!profileData?.company?.id || !isWriter) return;
+    const issuerId = selection === 'default' ? null : Number(selection);
+    if (issuerId !== null && (!Number.isSafeInteger(issuerId) || issuerId <= 0)) return;
+    setIsAssigningIssuer(true);
+    setIssuerAssignmentNotice('');
+    try {
+      await api.billing.assignCompanyIssuer(profileData.company.id, issuerId);
+      await Promise.all([loadCompanyProfile(profileData.company.id), fetchCompanies()]);
+      setIssuerAssignmentNotice('Societatea emitentă a fost salvată. Alegerea se aplică numai facturilor viitoare.');
+    } catch (error: any) {
+      setIssuerAssignmentNotice(`Setarea nu a putut fi salvată: ${error.message || error}`);
+    } finally {
+      setIsAssigningIssuer(false);
     }
   };
 
@@ -284,6 +304,10 @@ export function BillingClients() {
   // --- VIZUALIZARE 1: PROFIL COMPANIE ---
   if (selectedCompanyId && profileData) {
     const { company, stores, invoices: allInvoices, payments: allPayments } = profileData;
+    const defaultIssuer = (profileData.issuers || []).find((issuer: any) => issuer.is_default === 1);
+    const issuerSelectionValue = company.issuer_assignment_mode === 'explicit'
+      ? String(company.issuer_id || '')
+      : 'default';
     const invoices = profileIssuerFilter === 'all' ? allInvoices : allInvoices.filter((invoice: any) => String(invoice.issuer_id) === profileIssuerFilter);
     const unpaidInvoices = invoices.filter((invoice: any) => invoice.status !== 'cancelled' && Number(invoice.outstanding || 0) > 0.005);
     const payments = profileIssuerFilter === 'all' ? allPayments : allPayments.filter((payment: any) => String(payment.issuer_id) === profileIssuerFilter);
@@ -319,7 +343,7 @@ export function BillingClients() {
                   {company.cui && <span>VAT No: <span className="font-semibold text-slate-800">{company.cui}</span></span>}
                   {company.reg_com && <span>CRN: <span className="font-semibold text-slate-800">{company.reg_com}</span></span>}
                   <span>{stores.length} magazine arondate</span>
-                  <span className="text-white px-2 py-0.5 rounded-full text-xs font-semibold" style={{ backgroundColor: company.issuer_color || '#64748B' }}>{company.issuer_name || 'Emitent implicit'}</span>
+                  <span className="text-white px-2 py-0.5 rounded-full text-xs font-semibold" style={{ backgroundColor: company.issuer_color || '#64748B' }}>{company.issuer_name || 'Emitent implicit'}{company.issuer_assignment_mode === 'default' ? ' · Implicit' : ''}</span>
                 </div>
               </div>
             </div>
@@ -336,6 +360,39 @@ export function BillingClients() {
             </button>
           </div>
         </div>
+
+        <section className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="rounded-xl bg-indigo-600 p-2.5 text-white"><Building2 size={20} /></div>
+              <div>
+                <h2 className="font-bold text-slate-900">Societatea de pe care facturăm acest client</h2>
+                <p className="mt-1 text-sm text-slate-600">Se aplică automat tuturor magazinelor clientului și numai facturilor viitoare. Facturile, plățile și creditele istorice nu se mută.</p>
+              </div>
+            </div>
+            <div className="w-full lg:w-96">
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-indigo-800">Facturăm de pe</label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={issuerSelectionValue}
+                  onChange={(event) => void assignProfileIssuer(event.target.value)}
+                  disabled={!isWriter || isAssigningIssuer}
+                  className="w-full rounded-xl border border-indigo-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <option value="default">Implicit — {defaultIssuer?.legal_name || 'emitentul implicit'}</option>
+                  {(profileData.issuers || []).map((issuer: any) => (
+                    <option key={issuer.id} value={issuer.id} disabled={!issuer.isReady}>
+                      {issuer.legal_name}{!issuer.isReady ? ' — configurare incompletă' : ''}
+                    </option>
+                  ))}
+                </select>
+                {isAssigningIssuer && <Loader2 className="shrink-0 animate-spin text-indigo-600" size={20} />}
+              </div>
+              {!isWriter && <p className="mt-1 text-xs text-slate-500">Setarea poate fi modificată numai pe calculatorul Writer.</p>}
+              {issuerAssignmentNotice && <p className={`mt-2 text-xs font-medium ${issuerAssignmentNotice.startsWith('Setarea nu') ? 'text-rose-700' : 'text-emerald-700'}`}>{issuerAssignmentNotice}</p>}
+            </div>
+          </div>
+        </section>
 
         {/* Carduri Sumar Financiar Companie */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

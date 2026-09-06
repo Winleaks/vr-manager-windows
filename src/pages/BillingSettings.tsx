@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Building2, Check, Database, FileImage, Loader2, Save, Search, ShieldCheck } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { AlertTriangle, Building2, Check, Database, FileImage, Loader2, Save, ShieldCheck } from 'lucide-react';
 import { api } from '../shared/api';
 import { NumericInput } from '../components/NumericInput';
 import { TextConfirmationModal } from '../components/TextConfirmationModal';
@@ -32,8 +32,6 @@ export function BillingSettings() {
   const [issuers, setIssuers] = useState<Issuer[]>([]);
   const [selectedIssuerId, setSelectedIssuerId] = useState<number | null>(null);
   const [issuerForm, setIssuerForm] = useState<any>(null);
-  const [companies, setCompanies] = useState<any[]>([]);
-  const [companySearch, setCompanySearch] = useState('');
   const [invoiceLogo, setInvoiceLogo] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -47,20 +45,16 @@ export function BillingSettings() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = async (preferredIssuerId?: number) => {
-    const [nextIssuers, nextCompanies, settings, status, device, testModeState] = await Promise.all([
-      api.billing.getIssuers(), api.billing.getAllCompaniesAndStores(), api.billing.getSettings(), api.billing.getVrBakerStatus(), api.system.getDeviceRole(), api.billing.getTestMode(),
+    const [nextIssuers, settings, status, device, testModeState] = await Promise.all([
+      api.billing.getIssuers(), api.billing.getSettings(), api.billing.getVrBakerStatus(), api.system.getDeviceRole(), api.billing.getTestMode(),
     ]);
-    setIssuers(nextIssuers || []); setCompanies(nextCompanies || []); setInvoiceLogo(settings.invoiceLogo || ''); setVrBaker(status); setIsWriter(device.role === 'writer'); setTestMode(testModeState.enabled === true);
+    setIssuers(nextIssuers || []); setInvoiceLogo(settings.invoiceLogo || ''); setVrBaker(status); setIsWriter(device.role === 'writer'); setTestMode(testModeState.enabled === true);
     const issuer = nextIssuers.find((item: Issuer) => item.id === preferredIssuerId) || nextIssuers.find((item: Issuer) => item.is_default === 1) || nextIssuers[0];
     if (issuer) { setSelectedIssuerId(issuer.id); setIssuerForm(toForm(issuer)); }
   };
 
   useEffect(() => { load().catch((cause) => setError(cause.message)); }, []);
   const selectedIssuer = issuers.find((issuer) => issuer.id === selectedIssuerId);
-  const filteredCompanies = useMemo(() => {
-    const query = companySearch.trim().toLocaleLowerCase('ro-RO');
-    return companies.filter((company) => !query || company.name.toLocaleLowerCase('ro-RO').includes(query));
-  }, [companies, companySearch]);
   const updateField = (name: string, value: unknown) => setIssuerForm((current: any) => ({ ...current, [name]: value }));
 
   const saveIssuer = async () => {
@@ -78,12 +72,6 @@ export function BillingSettings() {
     const file = event.target.files?.[0]; if (!file) return;
     if (file.size > 1024 * 1024) return setError('Logo-ul trebuie să fie mai mic de 1 MB.');
     const reader = new FileReader(); reader.onloadend = () => setInvoiceLogo(String(reader.result || '')); reader.readAsDataURL(file);
-  };
-
-  const assignIssuer = async (companyId: number, issuerId: number) => {
-    setError('');
-    try { await api.billing.assignCompanyIssuer(companyId, issuerId); await load(selectedIssuerId || undefined); }
-    catch (cause: any) { setError(cause.message || 'Emitentul nu a putut fi atribuit.'); }
   };
 
   const changeTestMode = async () => {
@@ -108,7 +96,7 @@ export function BillingSettings() {
 
   return <div className="p-8 max-w-7xl mx-auto space-y-8">
     <div className="flex items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-      <div><h1 className="text-2xl font-bold text-slate-900">Setări Facturare</h1><p className="text-sm text-slate-500 mt-1">Societăți emitente, serii independente și atribuirea clienților.</p></div>
+      <div><h1 className="text-2xl font-bold text-slate-900">Setări Facturare</h1><p className="text-sm text-slate-500 mt-1">Societăți emitente, serii independente și conexiunea VR Baker Platform.</p></div>
       <button onClick={saveIssuer} disabled={isSaving || !isWriter} className="bg-indigo-600 disabled:opacity-50 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2">
         {isSaving ? <Loader2 size={18} className="animate-spin" /> : saved ? <Check size={18} /> : <Save size={18} />}{saved ? 'Salvat' : 'Salvează emitentul'}
       </button>
@@ -149,14 +137,6 @@ export function BillingSettings() {
           <div className="border-t border-slate-200 pt-4"><label className="text-sm font-medium block mb-2">Logo comun facturilor</label><div className="flex items-center gap-4">{invoiceLogo ? <img src={invoiceLogo} alt="Logo factură" className="h-16 max-w-32 object-contain border rounded-lg p-2" /> : <div className="w-24 h-16 border border-dashed rounded-lg flex items-center justify-center text-slate-400"><FileImage /></div>}<input ref={fileInputRef} type="file" accept="image/png,image/jpeg" onChange={handleLogoUpload} className="text-sm" />{invoiceLogo && <button onClick={() => { setInvoiceLogo(''); if (fileInputRef.current) fileInputRef.current.value = ''; }} className="text-sm text-rose-600">Elimină</button>}</div></div>
         </div>
       </div>
-      </fieldset>
-    </section>
-
-    <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
-      <fieldset disabled={!isWriter} className="space-y-4">
-      <div><h2 className="text-lg font-bold">Emitentul fiecărui client</h2><p className="text-sm text-slate-500">Alegerea se aplică tuturor magazinelor companiei și numai facturilor viitoare.</p></div>
-      <div className="relative max-w-xl"><Search size={17} className="absolute left-3 top-3 text-slate-400" /><input className="w-full pl-10 pr-4 py-2.5 border rounded-xl" value={companySearch} onChange={(e) => setCompanySearch(e.target.value)} placeholder="Caută o companie-client..." /></div>
-      <div className="divide-y divide-slate-100 border rounded-xl max-h-96 overflow-y-auto">{filteredCompanies.map((company) => <div key={company.id} className="p-4 flex items-center justify-between gap-4"><div><div className="font-semibold text-slate-900">{company.name}</div><div className="text-xs text-slate-500">{company.stores?.length || 0} magazine</div></div><select value={company.issuer_id || ''} onChange={(e) => assignIssuer(company.id, Number(e.target.value))} className="min-w-72 border border-slate-200 rounded-xl px-3 py-2 text-sm">{issuers.map((issuer) => <option key={issuer.id} value={issuer.id} disabled={!issuer.isReady}>{issuer.legal_name}{issuer.is_default ? ' (Implicit)' : ''}{!issuer.isReady ? ' — configurare incompletă' : ''}</option>)}</select></div>)}</div>
       </fieldset>
     </section>
 
