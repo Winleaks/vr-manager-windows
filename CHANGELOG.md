@@ -1,5 +1,13 @@
 ### În lucru
 
+### VR - Hub Management v0.1.93
+
+- Reconectarea Google Drive folosește un port local liber ales automat, eliminând conflictele produse de portul fix la autentificarea OAuth pe Windows.
+- Tokenul este salvat numai după ce aplicația verifică efectiv accesul la Google Drive; erorile de autorizare, rețea și configurare sunt afișate explicit operatorului.
+- Verificarea opțională a emailului contului nu mai poate marca drept defectă o conexiune Drive funcțională.
+- Setările afișează numai folderul principal `My Drive / VR - Management`, fără numele sau calea fișierului bazei de date și a facturilor.
+- Registrul separat refuză configurarea înainte ca accesul Google Drive al Writer-ului să fie verificat.
+
 ### VR - Hub Management v0.1.92
 
 - Adaugă registrul oficial separat, disponibil numai pe Writer prin gestul ascuns și un PIN de 6 cifre, cu blocare temporară după încercări greșite, expirarea sesiunii și cheie de recuperare.
