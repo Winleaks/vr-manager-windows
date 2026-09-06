@@ -72,7 +72,14 @@ test('weekly VR Baker invoices are unique per store/week and source order', () =
       unit: 'buc',
     });
     assert.throws(() => createWeeklyInvoiceBatchTransaction(connection, [input], '2026-08-12'), /deja o factură/);
-    assert.throws(() => updateInvoiceTransaction(connection, created.invoiceId, created.invoiceNumber, '2026-08-12', input.items), /nu poate fi modificată automat/);
+    const updated = updateInvoiceTransaction(connection, created.invoiceId, created.invoiceNumber, '2026-08-12', [
+      { ...input.items[0], productName: 'Încercare de modificare', quantity: 99, unitPrice: 99 },
+    ]);
+    assert.deepEqual(updated, { invoiceId: created.invoiceId, totalAmount: 6, paidAmount: 0, status: 'unpaid' });
+    assert.equal((connection.prepare('SELECT invoice_date FROM invoices WHERE id = ?').get(created.invoiceId) as any).invoice_date, '2026-08-12');
+    assert.deepEqual(connection.prepare('SELECT product_name, quantity, unit_price FROM invoice_items WHERE invoice_id = ?').get(created.invoiceId), {
+      product_name: 'Cheese Pie', quantity: 2, unit_price: 3,
+    });
     assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoice_import_batches').get() as any).value, 1);
     assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoice_source_orders').get() as any).value, 1);
   } finally {

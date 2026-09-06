@@ -54,6 +54,7 @@ interface Invoice {
   cashPaid?: number;
   appliedCredit?: number;
   outstanding?: number;
+  is_imported?: number | boolean;
 }
 
 export function BillingInvoices() {
@@ -506,7 +507,7 @@ export function BillingInvoices() {
                             onClick={() => handleOpenEdit(inv)}
                             disabled={!isWriter}
                             className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                            title="Editează detaliile facturii"
+                            title={inv.is_imported ? 'Modifică data emiterii' : 'Editează detaliile facturii'}
                           >
                             <Edit3 size={16} />
                           </button>}
@@ -587,14 +588,16 @@ export function BillingInvoices() {
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="font-semibold text-slate-800">Produse / Pozitii Factură</h4>
-                  <button
+                  {!editingInvoice.is_imported && <button
                     type="button"
                     onClick={handleAddItem}
                     className="flex items-center gap-1.5 text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
                   >
                     <Plus size={14} /> Adaugă Produs
-                  </button>
+                  </button>}
                 </div>
+
+                {editingInvoice.is_imported && <p className="mb-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">Factura provine din VR Baker Platform. Poți corecta data emiterii; produsele, cantitățile și prețurile rămân legate de comenzile sursă.</p>}
 
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
                   <table className="w-full text-left border-collapse text-xs">
@@ -614,6 +617,7 @@ export function BillingInvoices() {
                             <input
                               type="text"
                               value={item.productName}
+                              readOnly={Boolean(editingInvoice.is_imported)}
                               onChange={(e) => handleItemChange(idx, 'productName', e.target.value)}
                               className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded text-slate-800"
                             />
@@ -622,6 +626,7 @@ export function BillingInvoices() {
                             <NumericInput
                               decimalScale={2}
                               value={item.quantity}
+                              disabled={Boolean(editingInvoice.is_imported)}
                               onValueChange={(value) => handleItemChange(idx, 'quantity', value)}
                               className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded text-slate-800 font-mono"
                             />
@@ -630,6 +635,7 @@ export function BillingInvoices() {
                             <NumericInput
                               decimalScale={2}
                               value={item.unitPrice}
+                              disabled={Boolean(editingInvoice.is_imported)}
                               onValueChange={(value) => handleItemChange(idx, 'unitPrice', value)}
                               className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded text-slate-800 font-mono"
                             />
@@ -638,13 +644,13 @@ export function BillingInvoices() {
                             £{item.totalPrice.toFixed(2)}
                           </td>
                           <td className="p-2 text-center">
-                            <button
+                            {!editingInvoice.is_imported && <button
                               type="button"
                               onClick={() => handleRemoveItem(idx)}
                               className="text-slate-400 hover:text-rose-600 p-1"
                             >
                               <Trash2 size={14} />
-                            </button>
+                            </button>}
                           </td>
                         </tr>
                       ))}

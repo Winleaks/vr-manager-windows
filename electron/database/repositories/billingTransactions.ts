@@ -622,23 +622,44 @@ export function updateInvoiceTransaction(
   const invoiceId = requirePositiveInteger(invoiceIdInput, 'Factura');
   const invoiceNumber = requireText(invoiceNumberInput, 'Numărul facturii', 100);
   const invoiceDate = requireIsoDate(invoiceDateInput, 'Data facturii');
-  const { items, totalAmount } = validateInvoiceItems(connection, itemsInput);
 
   return connection.transaction(() => {
-    const imported = connection.prepare('SELECT 1 FROM invoice_import_batches WHERE invoice_id = ?').get(invoiceId);
-    if (imported) {
-      throw new Error('Factura importată din VR Baker nu poate fi modificată automat; diferențele se rezolvă manual.');
-    }
+    const imported = Boolean(connection.prepare('SELECT 1 FROM invoice_import_batches WHERE invoice_id = ?').get(invoiceId));
     if (connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'credit_note_invoice_links'").get()) {
       const credited = connection.prepare(`SELECT 1 FROM credit_note_invoice_links link JOIN credit_notes cn ON cn.id = link.credit_note_id WHERE link.invoice_id = ? AND cn.status = 'issued' LIMIT 1`).get(invoiceId);
       const applied = connection.prepare('SELECT 1 FROM invoice_credit_applications WHERE invoice_id = ? AND reversed_at IS NULL LIMIT 1').get(invoiceId);
       if (credited || applied) throw new Error('Factura cu Credit Notes sau credit aplicat nu mai poate fi editată.');
     }
     const existing = connection.prepare(
-      'SELECT paid_amount, status FROM invoices WHERE id = ?',
-    ).get(invoiceId) as { paid_amount: number; status: string } | undefined;
+      `SELECT i.invoice_date, i.total_amount, i.paid_amount, i.status, s.company_id
+       FROM invoices i JOIN stores s ON s.id = i.store_id WHERE i.id = ?`,
+    ).get(invoiceId) as { invoice_date: string; total_amount: number; paid_amount: number; status: string; company_id: number } | undefined;
     if (!existing) throw new Error('Factura nu există.');
     if (existing.status === 'cancelled') throw new Error('O factură anulată nu poate fi modificată.');
+
+    if (imported) {
+      if (invoiceDate !== existing.invoice_date) {
+        const result = connection.prepare('UPDATE invoices SET invoice_date = ? WHERE id = ?').run(invoiceDate, invoiceId);
+        if (result.changes !== 1) throw new Error('Data facturii nu a putut fi actualizată.');
+        const hasAudit = Boolean(connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'billing_audit_events'").get());
+        if (hasAudit) {
+          const hasIdentities = Boolean(connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'invoice_identities'").get());
+          const identity = hasIdentities
+            ? connection.prepare('SELECT issuer_id FROM invoice_identities WHERE invoice_id = ?').get(invoiceId) as { issuer_id: number } | undefined
+            : undefined;
+          connection.prepare(`INSERT INTO billing_audit_events (event_type, issuer_id, company_id, invoice_id, details) VALUES ('invoice_date_updated', ?, ?, ?, ?)`)
+            .run(identity?.issuer_id ?? null, existing.company_id, invoiceId, JSON.stringify({ previousDate: existing.invoice_date, invoiceDate, imported: true }));
+        }
+      }
+      return {
+        invoiceId,
+        totalAmount: requireFiniteNonNegative(existing.total_amount, 'Totalul facturii'),
+        paidAmount: requireFiniteNonNegative(existing.paid_amount, 'Suma achitată a facturii'),
+        status: existing.status,
+      };
+    }
+
+    const { items, totalAmount } = validateInvoiceItems(connection, itemsInput);
     const paidAmount = requireFiniteNonNegative(existing.paid_amount, 'Suma achitată a facturii');
     if (paidAmount > totalAmount + 0.01) {
       throw new Error('Totalul facturii nu poate fi mai mic decât suma deja achitată.');

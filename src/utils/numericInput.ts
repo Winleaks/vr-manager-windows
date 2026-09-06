@@ -18,3 +18,7 @@ export function normalizeNumericInput(
   const decimals = digitsAndSeparators.slice(separatorIndex + 1).replace(/\./g, '').slice(0, decimalScale);
   return `${whole}.${decimals}`;
 }
+
+export function normalizePinInput(value: string) {
+  return value.replace(/\D/g, '').slice(0, 6);
+}

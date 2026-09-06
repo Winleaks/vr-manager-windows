@@ -19,6 +19,10 @@ textarea:not(:disabled):not([readonly]) {
   -webkit-user-select: text;
 }
 
+.secure-pin-input {
+  -webkit-text-security: disc;
+}
+
 @theme {
   --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   --font-mono: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
