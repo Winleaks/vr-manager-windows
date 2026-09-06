@@ -47,6 +47,8 @@ export const desktopApi = {
     savePdfAuto: (options: { buffer: Uint8Array; invoiceId: number }) =>
       ipcRenderer.invoke('save-pdf-auto', options),
     openPdfFile: (invoiceId: number) => ipcRenderer.invoke('open-pdf-file', invoiceId),
+    shareInvoicePdf: (invoiceId: number) => ipcRenderer.invoke('share-invoice-pdf', invoiceId),
+    printInvoicePdf: (invoiceId: number) => ipcRenderer.invoke('print-invoice-pdf', invoiceId),
     manualBackup: () => ipcRenderer.invoke('manual-backup'),
     restoreBackup: () => ipcRenderer.invoke('restore-backup'),
     getLastBackupTime: () => ipcRenderer.invoke('get-last-backup-time'),

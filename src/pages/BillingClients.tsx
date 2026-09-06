@@ -3,11 +3,12 @@ import { api } from '../shared/api';
 import { 
   Building2, Store, RefreshCw, AlertCircle, FileText, ArrowLeft, 
   DollarSign, CheckCircle2, PlusCircle, CreditCard, Banknote,
-  ChevronRight, Printer, ShieldCheck, Loader2, Search, X, FileMinus2, Edit3
+  ChevronRight, ShieldCheck, Loader2, Search, X, FileMinus2, Edit3
 } from 'lucide-react';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
 import { NumericInput } from '../components/NumericInput';
 import { TextConfirmationModal } from '../components/TextConfirmationModal';
+import { InvoiceDocumentActions } from '../components/InvoiceDocumentActions';
 
 interface Company {
   id: number;
@@ -55,7 +56,6 @@ export function BillingClients() {
     ,issuerId: ''
   });
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
-  const [generatingPdfId, setGeneratingPdfId] = useState<number | null>(null);
   const [creditInvoice, setCreditInvoice] = useState<any | null>(null);
   const [creditAmount, setCreditAmount] = useState('');
   const [creditReason, setCreditReason] = useState('');
@@ -253,13 +253,11 @@ export function BillingClients() {
     }
   };
 
-  const handlePrintPdf = async (inv: any) => {
-    setGeneratingPdfId(inv.id);
-    try {
-      const sharedSettings = await api.billing.getSettings();
-      const settings = { ...(inv.issuer_settings || {}), invoiceLogo: sharedSettings.invoiceLogo };
-      if (!inv.issuer_settings) throw new Error('Snapshotul emitentului facturii lipsește.');
-      const pdfData = {
+  const prepareInvoicePdf = async (inv: any) => {
+    const sharedSettings = await api.billing.getSettings();
+    const settings = { ...(inv.issuer_settings || {}), invoiceLogo: sharedSettings.invoiceLogo };
+    if (!inv.issuer_settings) throw new Error('Snapshotul emitentului facturii lipsește.');
+    const pdfData = {
         invoiceNumber: inv.invoice_number,
         invoiceDate: inv.invoice_date,
         client: {
@@ -277,20 +275,10 @@ export function BillingClients() {
         },
         items: inv.items || [],
         totalAmount: inv.total_amount
-      };
-
-      const buffer = generateInvoicePDF(settings, pdfData);
-      const localSave = await api.system.savePdfAuto({ buffer, invoiceId: inv.id });
-      if (!localSave.success) throw new Error(localSave.error || 'PDF-ul nu a putut fi salvat local.');
-      const cloudSave = await api.system.uploadPdfToCloud(inv.id, buffer);
-      alert(cloudSave.success
-        ? `Factura #${inv.invoice_number} a fost salvată pe calculator și verificată în Google Drive.`
-        : `Factura #${inv.invoice_number} a fost salvată pe calculator, dar nu a fost confirmată în Google Drive: ${cloudSave.error || 'Eroare necunoscută'}`);
-    } catch (e: any) {
-      alert('Eroare la generarea PDF: ' + e.message);
-    } finally {
-      setGeneratingPdfId(null);
-    }
+    };
+    const buffer = generateInvoicePDF(settings, pdfData);
+    const localSave = await api.system.savePdfAuto({ buffer, invoiceId: inv.id });
+    if (!localSave.success) throw new Error(localSave.error || 'PDF-ul nu a putut fi salvat local.');
   };
 
   const filteredCompanies = companies.filter(c => 
@@ -522,9 +510,10 @@ export function BillingClients() {
                               <td className="py-3.5 px-4 text-emerald-600 font-semibold">£{Number(inv.cashPaid || 0).toFixed(2)} + £{Number(inv.appliedCredit || 0).toFixed(2)} credit</td>
                               <td className="py-3.5 px-4 font-bold text-rose-600">£{due.toFixed(2)}</td>
                               <td className="py-3.5 px-4 text-right">
+                                <InvoiceDocumentActions invoiceId={inv.id} status={inv.status} size="compact" preparePdf={() => prepareInvoicePdf(inv)} />
                                 <button
                                   onClick={() => handleOpenPaymentModal(inv)}
-                                  className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-3.5 py-1.5 rounded-lg font-semibold text-xs transition-colors"
+                                  className="ml-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-3.5 py-1.5 rounded-lg font-semibold text-xs transition-colors"
                                 >
                                   Încasează această factură
                                 </button>
@@ -575,14 +564,7 @@ export function BillingClients() {
                           </td>
                           <td className="py-3.5 px-4 text-right">
                             {inv.status !== 'cancelled' && inv.status !== 'credited' && <button onClick={() => { window.location.hash = `/facturare/credit-notes?invoice=${inv.id}`; }} className="p-1.5 text-amber-700 hover:bg-amber-50 rounded transition-colors" title="Creează Credit Note"><FileMinus2 size={16} /></button>}
-                            <button
-                              onClick={() => handlePrintPdf(inv)}
-                              disabled={generatingPdfId === inv.id}
-                              className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
-                              title="Descarcă PDF"
-                            >
-                              {generatingPdfId === inv.id ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
-                            </button>
+                            <InvoiceDocumentActions invoiceId={inv.id} status={inv.status} size="compact" preparePdf={() => prepareInvoicePdf(inv)} />
                           </td>
                         </tr>
                       );

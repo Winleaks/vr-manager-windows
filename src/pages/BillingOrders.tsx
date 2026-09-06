@@ -6,6 +6,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import { format, startOfWeek, endOfWeek } from 'date-fns';
 import { ro } from 'date-fns/locale';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
+import { InvoiceDocumentActions } from '../components/InvoiceDocumentActions';
 import { TextConfirmationModal } from '../components/TextConfirmationModal';
 import { assignEstimatedInvoiceReferences } from '../utils/invoicePreviewNumbering';
 
@@ -116,24 +117,7 @@ export function BillingOrders() {
     }
   };
 
-  const generatePdfForOrder = async (order: any, isRegenerate = false) => {
-    try {
-      let currentOrder = order;
-      if (!isRegenerate) {
-        const startStr = format(weekStart, 'yyyy-MM-dd');
-        const endStr = format(weekEnd, 'yyyy-MM-dd');
-        const res = await api.billing.createWeeklyInvoices(startStr, endStr, [order.store.id]);
-        if (!res.success) throw new Error(res.message);
-        currentOrder = res.updatedOrders[0];
-
-        setSyncResult((prev: any) => ({
-          ...prev,
-          ordersByStore: assignEstimatedInvoiceReferences(prev.ordersByStore.map((o: any) =>
-            o.store.id === currentOrder.store.id ? currentOrder : o
-          ))
-        }));
-      }
-
+  const prepareOrderInvoicePdf = async (currentOrder: any, uploadCloud = false) => {
       const sharedSettings = await api.billing.getSettings();
       const settings = { ...currentOrder.issuerSettings, invoiceLogo: sharedSettings.invoiceLogo };
       if (!currentOrder.issuerSettings) throw new Error('Snapshotul emitentului facturii lipsește.');
@@ -162,11 +146,34 @@ export function BillingOrders() {
       if (!Number.isInteger(invoiceId) || invoiceId <= 0) throw new Error('Identificatorul facturii lipsește.');
       const localSave = await api.system.savePdfAuto({ buffer, invoiceId });
       if (!localSave.success) throw new Error(localSave.error || 'PDF-ul nu a putut fi salvat local.');
+      if (!uploadCloud) return true;
       const cloudSave = await api.system.uploadPdfToCloud(invoiceId, buffer);
-      if (!cloudSave.success && !isRegenerate) {
-        alert(`Factura #${currentOrder.assignedInvoiceNumber} a fost emisă și salvată local, dar nu a fost confirmată în Google Drive: ${cloudSave.error || 'Eroare necunoscută'}`);
-      }
       return cloudSave.success;
+  };
+
+  const generatePdfForOrder = async (order: any, isRegenerate = false) => {
+    try {
+      let currentOrder = order;
+      if (!isRegenerate) {
+        const startStr = format(weekStart, 'yyyy-MM-dd');
+        const endStr = format(weekEnd, 'yyyy-MM-dd');
+        const res = await api.billing.createWeeklyInvoices(startStr, endStr, [order.store.id]);
+        if (!res.success) throw new Error(res.message);
+        currentOrder = res.updatedOrders[0];
+
+        setSyncResult((prev: any) => ({
+          ...prev,
+          ordersByStore: assignEstimatedInvoiceReferences(prev.ordersByStore.map((o: any) =>
+            o.store.id === currentOrder.store.id ? currentOrder : o
+          ))
+        }));
+      }
+
+      const cloudSuccess = await prepareOrderInvoicePdf(currentOrder, true);
+      if (!cloudSuccess && !isRegenerate) {
+        alert(`Factura #${currentOrder.assignedInvoiceNumber} a fost emisă și salvată local, dar nu a fost confirmată în Google Drive.`);
+      }
+      return cloudSuccess;
     } catch (e: any) {
       alert('Eroare la generare: ' + e.message);
       return false;
@@ -260,23 +267,6 @@ export function BillingOrders() {
     setGeneratingOrderId(order.store.id);
     await generatePdfForOrder(order, false);
     setGeneratingOrderId(null);
-  };
-
-  const handleOpenPdf = async (order: any) => {
-    setGeneratingOrderId(order.store.id);
-    try {
-      const invoiceId = Number(order.assignedInvoiceId);
-      if (!Number.isInteger(invoiceId) || invoiceId <= 0) throw new Error('Identificatorul facturii lipsește.');
-      const res = await api.system.openPdfFile(invoiceId);
-      if (res.notFound) {
-        await generatePdfForOrder(order, true);
-        await api.system.openPdfFile(invoiceId);
-      }
-    } catch (e: any) {
-      alert('Eroare la deschiderea PDF: ' + e.message);
-    } finally {
-      setGeneratingOrderId(null);
-    }
   };
 
   const handleDeleteInvoice = async (order: any) => {
@@ -515,15 +505,11 @@ export function BillingOrders() {
                         
                         <div className="flex items-center gap-2">
                           {isGenerated ? (
-                            <button
-                              onClick={() => handleOpenPdf(data)}
+                            <InvoiceDocumentActions
+                              invoiceId={Number(data.assignedInvoiceId)}
                               disabled={isDoing || isBatchGenerating}
-                              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors bg-slate-100 hover:bg-slate-200 text-slate-700"
-                              title="Deschide PDF-ul facturii"
-                            >
-                              {isDoing ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
-                              Deschide PDF
-                            </button>
+                              preparePdf={() => prepareOrderInvoicePdf(data)}
+                            />
                           ) : data.billingState === 'ready' ? (
                             <button
                               onClick={() => handleGenerateIndividual(data)}

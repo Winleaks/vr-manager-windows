@@ -5,6 +5,8 @@ const VIEWER_ALLOWED_CHANNELS = new Set([
   'save-file',
   'save-pdf-auto',
   'open-pdf-file',
+  'share-invoice-pdf',
+  'print-invoice-pdf',
   'manual-backup',
   'get-last-backup-time',
   'check-for-updates',

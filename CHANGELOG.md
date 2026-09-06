@@ -1,5 +1,12 @@
 ### În lucru
 
+### VR - Hub Management v0.1.96
+
+- Facturile active pot fi trimise rapid prin Windows Share cu PDF-ul deja atașat; operatorul alege WhatsApp și apoi contactul, fără Explorer, WhatsApp Web sau alerte blocante.
+- Lista facturilor, profilul clientului și pagina de generare afișează aceleași iconuri compacte pentru WhatsApp și printare, cu tooltipuri, accesibilitate din tastatură și stare de încărcare.
+- Printarea deschide direct dialogul Windows, iar anularea lui nu este raportată ca eroare.
+- Writer și Viewer pot trimite sau printa numai PDF-ul rezolvat autoritar după ID-ul unei facturi active; căile arbitrare și facturile anulate sunt refuzate în procesul principal.
+
 ### VR - Hub Management v0.1.95
 
 - Previzualizarea comenzilor afișează numere consecutive pentru fiecare factură pregătită, cu secvențe independente pentru `THE GOODNESS BAKER LTD` și `VATRA ROMANEASCA LTD`; contoarele reale continuă să avanseze numai la emitere.

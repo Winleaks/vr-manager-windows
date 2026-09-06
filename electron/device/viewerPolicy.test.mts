@@ -18,6 +18,8 @@ test('viewer can read data and control its local role', () => {
   assert.equal(isChannelAllowedForRole('viewer', 'sync-viewer-now'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'get-update-state'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'get-daily-cash-report'), true);
+  assert.equal(isChannelAllowedForRole('viewer', 'share-invoice-pdf'), true);
+  assert.equal(isChannelAllowedForRole('viewer', 'print-invoice-pdf'), true);
 });
 
 test('viewer denies business writes, cloud publishing and unknown channels', () => {

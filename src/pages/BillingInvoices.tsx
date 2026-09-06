@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { 
-  Receipt, Search, Edit3, Trash2, Printer, X, Plus, Save, FilePlus2,
+  Receipt, Search, Edit3, Trash2, X, Plus, Save, FilePlus2,
   CheckCircle2, Clock, AlertCircle, Building2, Store, FileText, Loader2, RefreshCw, FileMinus2
 } from 'lucide-react';
 import { api } from '../shared/api';
@@ -11,6 +11,7 @@ import { ro } from 'date-fns/locale';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
 import { NumericInput } from '../components/NumericInput';
 import { TextConfirmationModal } from '../components/TextConfirmationModal';
+import { InvoiceDocumentActions } from '../components/InvoiceDocumentActions';
 
 interface InvoiceItem {
   id?: number;
@@ -246,13 +247,11 @@ export function BillingInvoices() {
     }
   };
 
-  const handlePrintPdf = async (inv: Invoice, isQuiet = false) => {
-    setGeneratingPdfId(inv.id);
-    try {
-      const sharedSettings = await api.billing.getSettings();
-      const settings = { ...(inv.issuer_settings || {}), invoiceLogo: sharedSettings.invoiceLogo };
-      if (!inv.issuer_settings) throw new Error('Snapshotul emitentului facturii lipsește.');
-      const pdfData = {
+  const prepareInvoicePdf = async (inv: Invoice, uploadCloud = false) => {
+    const sharedSettings = await api.billing.getSettings();
+    const settings = { ...(inv.issuer_settings || {}), invoiceLogo: sharedSettings.invoiceLogo };
+    if (!inv.issuer_settings) throw new Error('Snapshotul emitentului facturii lipsește.');
+    const pdfData = {
         invoiceNumber: inv.invoice_number,
         invoiceDate: inv.invoice_date,
         client: {
@@ -270,40 +269,26 @@ export function BillingInvoices() {
         },
         items: inv.items || [],
         totalAmount: inv.total_amount
-      };
-
-      const buffer = generateInvoicePDF(settings, pdfData);
-      const localSave = await api.system.savePdfAuto({ buffer, invoiceId: inv.id });
-      if (!localSave.success) throw new Error(localSave.error || 'PDF-ul nu a putut fi salvat local.');
+    };
+    const buffer = generateInvoicePDF(settings, pdfData);
+    const localSave = await api.system.savePdfAuto({ buffer, invoiceId: inv.id });
+    if (!localSave.success) throw new Error(localSave.error || 'PDF-ul nu a putut fi salvat local.');
+    if (uploadCloud) {
       const cloudSave = await api.system.uploadPdfToCloud(inv.id, buffer);
-      if (!cloudSave.success) {
-        throw new Error(`PDF-ul a fost salvat local, dar nu a fost confirmat în Google Drive: ${cloudSave.error || 'Eroare necunoscută'}`);
-      }
+      if (!cloudSave.success) throw new Error(`PDF-ul a fost salvat local, dar nu a fost confirmat în Google Drive: ${cloudSave.error || 'Eroare necunoscută'}`);
+    }
+  };
 
+  const handlePrintPdf = async (inv: Invoice, isQuiet = false) => {
+    setGeneratingPdfId(inv.id);
+    try {
+      await prepareInvoicePdf(inv, true);
       if (!isQuiet) {
         alert(`Factura #${inv.invoice_number} a fost actualizată pe calculator și verificată în Google Drive.`);
       }
     } catch (e: any) {
       if (isQuiet) throw e;
       alert('Eroare la generarea PDF: ' + e.message);
-    } finally {
-      setGeneratingPdfId(null);
-    }
-  };
-
-  const handleOpenPdf = async (inv: Invoice) => {
-    setGeneratingPdfId(inv.id);
-    try {
-      // Încercăm deschiderea directă a fișierului
-      const res = await api.system.openPdfFile(inv.id);
-
-      // Dacă fișierul nu există local, îl re-creăm și îl deschidem
-      if (res.notFound) {
-        await handlePrintPdf(inv, true);
-        await api.system.openPdfFile(inv.id);
-      }
-    } catch (e: any) {
-      alert('Eroare la deschiderea PDF: ' + e.message);
     } finally {
       setGeneratingPdfId(null);
     }
@@ -486,16 +471,12 @@ export function BillingInvoices() {
                       </td>
                       <td className="py-4 px-6 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {/* Deschide PDF */}
-                          {!isCancelled && <button
-                            onClick={() => handleOpenPdf(inv)}
+                          {!isCancelled && <InvoiceDocumentActions
+                            invoiceId={inv.id}
+                            status={inv.status}
                             disabled={generatingPdfId === inv.id}
-                            className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors flex items-center gap-1.5"
-                            title="Deschide PDF-ul facturii"
-                          >
-                            {generatingPdfId === inv.id ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
-                            <span className="text-xs font-semibold">Deschide PDF</span>
-                          </button>}
+                            preparePdf={() => prepareInvoicePdf(inv)}
+                          />}
                           {!isCancelled && Number(inv.creditedAmount || 0) < inv.total_amount - 0.005 && <button onClick={() => { window.location.hash = `/facturare/credit-notes?invoice=${inv.id}`; }} className="p-2 text-amber-700 hover:bg-amber-50 rounded-lg" title="Creează Credit Note"><FileMinus2 size={16} /></button>}
 
                           {/* Editează */}

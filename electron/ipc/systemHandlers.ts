@@ -16,6 +16,8 @@ import {
 import { checkForUpdates, downloadUpdate, getUpdateState, installUpdate } from '../updater/updateCoordinator';
 import * as billingRepo from '../database/repositories/billingRepo';
 import { localClientDocumentDirectory } from '../reports/clientDocumentStorage';
+import { openWindowsShareSheet } from '../reports/windowsShare';
+import { pathToFileURL } from 'node:url';
 
 async function createAndSaveCloudSnapshot(isAutomatic = false) {
   const snapshotPath = path.join(app.getPath('temp'), `vr-hub-management-cloud-${randomUUID()}.db`);
@@ -59,10 +61,64 @@ export function registerSystemHandlers() {
     return {
       filename: validatePdfFilename(`Factura_${invoice.invoice_number}.pdf`),
       companyName: invoice.company_name,
+      status: invoice.status,
       issuerCode: typeof invoice.issuer_code === 'string' && /^[a-z0-9-]{1,40}$/i.test(invoice.issuer_code)
         ? invoice.issuer_code.toLowerCase()
         : 'goodness',
     };
+  };
+
+  const resolveInvoicePdfFile = (invoiceId: number) => {
+    const documentsPath = app.getPath('documents');
+    const identity = invoiceDocumentIdentity(invoiceId);
+    if (identity.status === 'cancelled') throw new Error('O factură anulată nu poate fi trimisă sau printată.');
+    const facturiDir = localClientDocumentDirectory(documentsPath, identity.companyName, 'Facturi');
+    const primaryPath = resolvePdfPath(facturiDir, identity.filename);
+    const candidates = [
+      primaryPath,
+      resolvePdfPath(path.join(documentsPath, 'VR - Hub Management', 'Invoices', identity.issuerCode), identity.filename),
+      resolvePdfPath(path.join(documentsPath, 'Facturi Vatra Romaneasca'), identity.filename),
+    ];
+    const filePath = candidates.find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+    return { identity, filePath, primaryPath };
+  };
+
+  const printInvoicePdf = async (filePath: string, parent: BrowserWindow | null) => {
+    if (process.platform !== 'win32') {
+      return { success: false, unsupported: true, error: 'Printarea directă este disponibilă doar în aplicația Windows.' };
+    }
+    const printWindow = new BrowserWindow({
+      show: false,
+      parent: parent || undefined,
+      autoHideMenuBar: true,
+      webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+    });
+    printWindow.setMenu(null);
+    try {
+      await printWindow.loadURL(pathToFileURL(filePath).toString());
+      return await new Promise<{ success: boolean; canceled?: boolean; error?: string }>((resolve) => {
+        let settled = false;
+        const finish = (result: { success: boolean; canceled?: boolean; error?: string }) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          if (!printWindow.isDestroyed()) printWindow.destroy();
+          resolve(result);
+        };
+        const timeout = setTimeout(
+          () => finish({ success: false, error: 'Dialogul de printare nu a răspuns la timp.' }),
+          60_000,
+        );
+        printWindow.webContents.print({ silent: false, printBackground: true }, (success, failureReason) => {
+          if (success) finish({ success: true });
+          else if (/cancel/i.test(failureReason || '')) finish({ success: false, canceled: true });
+          else finish({ success: false, error: failureReason || 'Factura nu a putut fi printată.' });
+        });
+      });
+    } catch (error) {
+      if (!printWindow.isDestroyed()) printWindow.destroy();
+      return { success: false, error: error instanceof Error ? error.message : 'Factura nu a putut fi încărcată pentru printare.' };
+    }
   };
 
   handleTrustedIpc('save-pdf-auto', async (_event, options: { buffer: Uint8Array, invoiceId: number }) => {
@@ -132,6 +188,32 @@ export function registerSystemHandlers() {
     } catch (err: any) {
       console.error('Eroare la deschiderea PDF-ului:', err);
       return { success: false, error: err.message };
+    }
+  });
+
+  handleTrustedIpc('share-invoice-pdf', async (_event, invoiceId: number) => {
+    try {
+      const document = resolveInvoicePdfFile(invoiceId);
+      if (!document.filePath) return { success: false, notFound: true, error: 'PDF-ul facturii nu a fost găsit.' };
+      if (process.platform !== 'win32') return { success: false, unsupported: true, error: 'Trimiterea este disponibilă doar în aplicația Windows.' };
+      const opened = await openWindowsShareSheet(document.filePath);
+      return opened
+        ? { success: true, filePath: document.filePath }
+        : { success: false, error: 'Windows Share nu a putut fi deschis.' };
+    } catch (error) {
+      console.error('Invoice share failed:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Factura nu a putut fi trimisă.' };
+    }
+  });
+
+  handleTrustedIpc('print-invoice-pdf', async (event, invoiceId: number) => {
+    try {
+      const document = resolveInvoicePdfFile(invoiceId);
+      if (!document.filePath) return { success: false, notFound: true, error: 'PDF-ul facturii nu a fost găsit.' };
+      return await printInvoicePdf(document.filePath, BrowserWindow.fromWebContents(event.sender));
+    } catch (error) {
+      console.error('Invoice print failed:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Factura nu a putut fi printată.' };
     }
   });
 
