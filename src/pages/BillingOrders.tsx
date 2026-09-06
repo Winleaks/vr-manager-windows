@@ -7,6 +7,7 @@ import { format, startOfWeek, endOfWeek } from 'date-fns';
 import { ro } from 'date-fns/locale';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
 import { TextConfirmationModal } from '../components/TextConfirmationModal';
+import { assignEstimatedInvoiceReferences } from '../utils/invoicePreviewNumbering';
 
 const UNASSIGNED_ZONE_KEY = 'unassigned';
 
@@ -127,9 +128,9 @@ export function BillingOrders() {
 
         setSyncResult((prev: any) => ({
           ...prev,
-          ordersByStore: prev.ordersByStore.map((o: any) => 
+          ordersByStore: assignEstimatedInvoiceReferences(prev.ordersByStore.map((o: any) =>
             o.store.id === currentOrder.store.id ? currentOrder : o
-          )
+          ))
         }));
       }
 

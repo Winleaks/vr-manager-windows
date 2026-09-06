@@ -698,6 +698,8 @@ export function getIssuerPreviewByStoreExternalId(storeExternalId: string) {
     issuerCode: row.code,
     issuerColor: row.color,
     issuerReady: Boolean(row.is_active && row.address && row.company_number && row.invoice_series && row.bank_name_1 && row.account_number_1 && row.sort_code_1 && (!row.vat_registered || row.vat_number)),
+    issuerInvoiceSeries: row.invoice_series,
+    issuerNextInvoiceNumber: row.next_invoice_number,
     estimatedInvoiceReference: row.invoice_series ? `${row.invoice_series}-${row.next_invoice_number}` : null,
   };
 }

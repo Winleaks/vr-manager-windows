@@ -25,6 +25,7 @@ import {
   loadProtectedRoutingPolicy,
   withRegistryRoutingLock,
 } from '../protectedRegistry/service';
+import { assignEstimatedInvoiceReferences } from '../../src/utils/invoicePreviewNumbering';
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : 'Operațiunea a eșuat.';
@@ -43,11 +44,11 @@ async function prepareWeeklyPreview(startDate: string, endDate: string) {
   const companies = [...new Map(stores.flatMap((store) => store.company ? [[store.company.id, store.company] as const] : [])).values()];
   billingRepo.syncEntitiesFromVrBaker(companies, stores);
   const visibleGroups = await filterNormalWeeklyGroups(aggregateWeeklyOrders(orders));
-  const ordersByStore = visibleGroups.map((group) => ({
+  const ordersByStore = assignEstimatedInvoiceReferences(visibleGroups.map((group) => ({
     ...group,
     ...billingRepo.getIssuerPreviewByStoreExternalId(group.store.id),
     ...billingRepo.getWeeklyImportState(group.store.id, startDate, endDate, group.sourceFingerprint),
-  }));
+  })));
   return { ordersByStore, zones };
 }
 
@@ -100,6 +101,12 @@ async function issueWeeklyGroups(
     issuerName: byStore.get(group.store.id)?.issuerSettings.issuerName,
     issuerCode: byStore.get(group.store.id)?.issuerSettings.code,
     issuerColor: byStore.get(group.store.id)?.issuerSettings.invoiceColor,
+    issuerInvoiceSeries: byStore.get(group.store.id)?.issuerSettings.invoiceSeries,
+    issuerNextInvoiceNumber: (() => {
+      const reference = byStore.get(group.store.id)?.invoiceNumber || '';
+      const sequence = Number(reference.match(/(\d+)$/)?.[1]);
+      return Number.isSafeInteger(sequence) ? sequence + 1 : group.issuerNextInvoiceNumber;
+    })(),
   }));
 }
 
