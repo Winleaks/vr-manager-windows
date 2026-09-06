@@ -157,11 +157,11 @@ export function BillingOrders() {
       };
 
       const buffer = generateInvoicePDF(settings, pdfData);
-      const filename = `Factura_${currentOrder.assignedInvoiceNumber}.pdf`;
-
-      const localSave = await api.system.savePdfAuto({ buffer, filename, issuerCode: settings.code });
+      const invoiceId = Number(currentOrder.assignedInvoiceId);
+      if (!Number.isInteger(invoiceId) || invoiceId <= 0) throw new Error('Identificatorul facturii lipsește.');
+      const localSave = await api.system.savePdfAuto({ buffer, invoiceId });
       if (!localSave.success) throw new Error(localSave.error || 'PDF-ul nu a putut fi salvat local.');
-      const cloudSave = await api.system.uploadPdfToCloud(filename, buffer);
+      const cloudSave = await api.system.uploadPdfToCloud(invoiceId, buffer);
       if (!cloudSave.success && !isRegenerate) {
         alert(`Factura #${currentOrder.assignedInvoiceNumber} a fost emisă și salvată local, dar nu a fost confirmată în Google Drive: ${cloudSave.error || 'Eroare necunoscută'}`);
       }
@@ -264,12 +264,12 @@ export function BillingOrders() {
   const handleOpenPdf = async (order: any) => {
     setGeneratingOrderId(order.store.id);
     try {
-      const filename = `Factura_${order.assignedInvoiceNumber}.pdf`;
-
-      const res = await api.system.openPdfFile(filename, order.issuerCode || order.issuerSettings?.code);
+      const invoiceId = Number(order.assignedInvoiceId);
+      if (!Number.isInteger(invoiceId) || invoiceId <= 0) throw new Error('Identificatorul facturii lipsește.');
+      const res = await api.system.openPdfFile(invoiceId);
       if (res.notFound) {
         await generatePdfForOrder(order, true);
-        await api.system.openPdfFile(filename, order.issuerCode || order.issuerSettings?.code);
+        await api.system.openPdfFile(invoiceId);
       }
     } catch (e: any) {
       alert('Eroare la deschiderea PDF: ' + e.message);

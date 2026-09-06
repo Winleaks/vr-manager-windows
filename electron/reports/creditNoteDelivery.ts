@@ -2,15 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { toValidatedPdfBuffer } from '../security/fileValidation.ts';
+import { localClientDocumentDirectory } from './clientDocumentStorage.ts';
 
 export function creditNoteFilename(reference: string) {
   if (typeof reference !== 'string' || !/^[A-Z0-9-]{1,60}$/i.test(reference)) throw new Error('Referința Credit Note nu este validă.');
   return `Credit_Note_${reference}.pdf`;
 }
 
-export function saveCreditNotePdf(documentsPath: string, issuerCode: string, reference: string, pdfInput: unknown) {
-  if (!/^[a-z0-9-]{1,40}$/i.test(issuerCode)) throw new Error('Codul emitentului nu este valid.');
-  const directory = path.join(documentsPath, 'VR - Hub Management', 'Credit Notes', issuerCode.toLowerCase());
+export function saveCreditNotePdf(documentsPath: string, companyName: string, reference: string, pdfInput: unknown) {
+  const directory = localClientDocumentDirectory(documentsPath, companyName, 'Credit Notes');
   fs.mkdirSync(directory, { recursive: true });
   const filename = creditNoteFilename(reference);
   const destination = path.join(directory, filename);

@@ -14,6 +14,8 @@ import {
   validatePdfFilename,
 } from '../security/fileValidation';
 import { checkForUpdates, downloadUpdate, getUpdateState, installUpdate } from '../updater/updateCoordinator';
+import * as billingRepo from '../database/repositories/billingRepo';
+import { localClientDocumentDirectory } from '../reports/clientDocumentStorage';
 
 async function createAndSaveCloudSnapshot(isAutomatic = false) {
   const snapshotPath = path.join(app.getPath('temp'), `vr-hub-management-cloud-${randomUUID()}.db`);
@@ -52,24 +54,50 @@ export function registerSystemHandlers() {
     }
   });
 
-  const invoiceDirectory = (issuerCode?: string) => {
-    const code = typeof issuerCode === 'string' && /^[a-z0-9-]{1,40}$/i.test(issuerCode) ? issuerCode.toLowerCase() : 'goodness';
-    return path.join(app.getPath('documents'), 'VR - Hub Management', 'Invoices', code);
+  const invoiceDocumentIdentity = (invoiceId: number) => {
+    const invoice = billingRepo.getInvoiceById(invoiceId) as any;
+    return {
+      filename: validatePdfFilename(`Factura_${invoice.invoice_number}.pdf`),
+      companyName: invoice.company_name,
+      issuerCode: typeof invoice.issuer_code === 'string' && /^[a-z0-9-]{1,40}$/i.test(invoice.issuer_code)
+        ? invoice.issuer_code.toLowerCase()
+        : 'goodness',
+    };
   };
 
-  handleTrustedIpc('save-pdf-auto', async (_event, options: { buffer: Uint8Array, filename: string, issuerCode?: string }) => {
+  handleTrustedIpc('save-pdf-auto', async (_event, options: { buffer: Uint8Array, invoiceId: number }) => {
     try {
-      const facturiDir = invoiceDirectory(options.issuerCode);
+      const identity = invoiceDocumentIdentity(options.invoiceId);
+      const facturiDir = localClientDocumentDirectory(app.getPath('documents'), identity.companyName, 'Facturi');
       if (!fs.existsSync(facturiDir)) {
         fs.mkdirSync(facturiDir, { recursive: true });
       }
-      const filePath = resolvePdfPath(facturiDir, options.filename);
+      const filePath = resolvePdfPath(facturiDir, identity.filename);
       const temporaryPath = path.join(facturiDir, `.invoice-${randomUUID()}.tmp`);
+      const previousPath = path.join(facturiDir, `.invoice-${randomUUID()}.previous`);
+      let previousMoved = false;
       try {
         fs.writeFileSync(temporaryPath, toValidatedPdfBuffer(options.buffer));
+        if (fs.existsSync(filePath)) {
+          fs.renameSync(filePath, previousPath);
+          previousMoved = true;
+        }
         fs.renameSync(temporaryPath, filePath);
+        if (previousMoved) fs.unlinkSync(previousPath);
+        previousMoved = false;
+      } catch (error) {
+        if (!fs.existsSync(filePath) && previousMoved && fs.existsSync(previousPath)) fs.renameSync(previousPath, filePath);
+        throw error;
       } finally {
         try { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); } catch {}
+        try { if (fs.existsSync(previousPath)) fs.unlinkSync(previousPath); } catch {}
+      }
+      const legacyPath = resolvePdfPath(
+        path.join(app.getPath('documents'), 'VR - Hub Management', 'Invoices', identity.issuerCode),
+        identity.filename,
+      );
+      if (legacyPath !== filePath && fs.existsSync(legacyPath)) {
+        try { fs.unlinkSync(legacyPath); } catch (error) { console.error('Legacy invoice PDF cleanup failed:', error); }
       }
       return { success: true, filePath };
     } catch (err: any) {
@@ -78,20 +106,27 @@ export function registerSystemHandlers() {
     }
   });
 
-  handleTrustedIpc('open-pdf-file', async (_event, filename: string, issuerCode?: string) => {
+  handleTrustedIpc('open-pdf-file', async (_event, invoiceId: number) => {
     try {
       const documentsPath = app.getPath('documents');
-      const facturiDir = invoiceDirectory(issuerCode);
-      const filePath = resolvePdfPath(facturiDir, filename);
+      const identity = invoiceDocumentIdentity(invoiceId);
+      const facturiDir = localClientDocumentDirectory(documentsPath, identity.companyName, 'Facturi');
+      const filePath = resolvePdfPath(facturiDir, identity.filename);
 
       if (fs.existsSync(filePath)) {
         await shell.openPath(filePath);
         return { success: true, filePath };
       }
-      const legacyPath = resolvePdfPath(path.join(documentsPath, 'Facturi Vatra Romaneasca'), filename);
-      if (fs.existsSync(legacyPath)) {
-        await shell.openPath(legacyPath);
-        return { success: true, filePath: legacyPath, legacy: true };
+      const legacyDirectories = [
+        path.join(documentsPath, 'VR - Hub Management', 'Invoices', identity.issuerCode),
+        path.join(documentsPath, 'Facturi Vatra Romaneasca'),
+      ];
+      for (const directory of legacyDirectories) {
+        const legacyPath = resolvePdfPath(directory, identity.filename);
+        if (fs.existsSync(legacyPath)) {
+          await shell.openPath(legacyPath);
+          return { success: true, filePath: legacyPath, legacy: true };
+        }
       }
       return { success: false, notFound: true, filePath };
     } catch (err: any) {
@@ -194,9 +229,10 @@ export function registerSystemHandlers() {
     return await disconnectCloud();
   });
 
-  handleTrustedIpc('upload-pdf-to-cloud', async (_event, filename: string, buffer: Uint8Array) => {
+  handleTrustedIpc('upload-pdf-to-cloud', async (_event, invoiceId: number, buffer: Uint8Array) => {
     const { uploadPdfToCloud } = require('../database/cloudSync');
-    return await uploadPdfToCloud(validatePdfFilename(filename), toValidatedPdfBuffer(buffer));
+    const identity = invoiceDocumentIdentity(invoiceId);
+    return await uploadPdfToCloud(identity.filename, identity.companyName, toValidatedPdfBuffer(buffer));
   });
 
   handleTrustedIpc('get-device-role', () => {

@@ -30,16 +30,17 @@ test('Credit Note product description excludes the variant label', () => {
   assert.equal(creditNoteProductDescription(item), 'Cheese Pie\nPlăcintă cu brânză');
 });
 
-test('saves Credit Note PDF to a constrained issuer directory and overwrites atomically', () => {
+test('saves Credit Note PDF to its client directory and overwrites atomically', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vr-credit-note-'));
   try {
     const pdf = generateCreditNotePdf(note(true));
-    const first = saveCreditNotePdf(root, 'goodness', 'CN-TGB-1', pdf);
-    const second = saveCreditNotePdf(root, 'goodness', 'CN-TGB-1', pdf);
+    const first = saveCreditNotePdf(root, 'CLIENT ROMÂNESC LTD', 'CN-TGB-1', pdf);
+    const second = saveCreditNotePdf(root, 'CLIENT ROMÂNESC LTD', 'CN-TGB-1', pdf);
     assert.equal(first.filePath, second.filePath);
     assert.equal(path.basename(first.filePath), creditNoteFilename('CN-TGB-1'));
     assert.equal(Buffer.from(fs.readFileSync(first.filePath)).subarray(0, 4).toString(), '%PDF');
-    assert.throws(() => saveCreditNotePdf(root, '../bad', 'CN-TGB-1', pdf), /Codul/);
+    assert.match(first.filePath, /Clienti[/\\]CLIENT ROMÂNESC LTD[/\\]Credit Notes/);
+    assert.throws(() => saveCreditNotePdf(root, '///', 'CN-TGB-1', pdf), /clientului/);
     assert.throws(() => creditNoteFilename('../bad.pdf'), /Referința/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

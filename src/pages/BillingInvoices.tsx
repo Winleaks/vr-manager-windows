@@ -273,11 +273,9 @@ export function BillingInvoices() {
       };
 
       const buffer = generateInvoicePDF(settings, pdfData);
-      const filename = `Factura_${inv.invoice_number}.pdf`;
-
-      const localSave = await api.system.savePdfAuto({ buffer, filename, issuerCode: inv.issuer_code || settings.code });
+      const localSave = await api.system.savePdfAuto({ buffer, invoiceId: inv.id });
       if (!localSave.success) throw new Error(localSave.error || 'PDF-ul nu a putut fi salvat local.');
-      const cloudSave = await api.system.uploadPdfToCloud(filename, buffer);
+      const cloudSave = await api.system.uploadPdfToCloud(inv.id, buffer);
       if (!cloudSave.success) {
         throw new Error(`PDF-ul a fost salvat local, dar nu a fost confirmat în Google Drive: ${cloudSave.error || 'Eroare necunoscută'}`);
       }
@@ -296,15 +294,13 @@ export function BillingInvoices() {
   const handleOpenPdf = async (inv: Invoice) => {
     setGeneratingPdfId(inv.id);
     try {
-      const filename = `Factura_${inv.invoice_number}.pdf`;
-
       // Încercăm deschiderea directă a fișierului
-      const res = await api.system.openPdfFile(filename, inv.issuer_code || inv.issuer_settings?.code);
+      const res = await api.system.openPdfFile(inv.id);
 
       // Dacă fișierul nu există local, îl re-creăm și îl deschidem
       if (res.notFound) {
         await handlePrintPdf(inv, true);
-        await api.system.openPdfFile(filename, inv.issuer_code || inv.issuer_settings?.code);
+        await api.system.openPdfFile(inv.id);
       }
     } catch (e: any) {
       alert('Eroare la deschiderea PDF: ' + e.message);

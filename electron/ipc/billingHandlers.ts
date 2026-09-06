@@ -6,9 +6,16 @@ import { hasVrBakerApiToken, removeLegacySupabaseCredential, setVrBakerApiToken 
 import { validateWeeklyPeriod, VR_BAKER_API_ENDPOINT, type VrBakerZone } from '../integrations/vrBakerApiClient';
 import { app, shell } from 'electron';
 import fs from 'node:fs';
+import path from 'node:path';
 import { generateCreditNotePdf } from '../reports/creditNotePdf';
 import { creditNoteFilename, saveCreditNotePdf } from '../reports/creditNoteDelivery';
-import { downloadCreditNotePdfFromCloud, uploadCreditNotePdfToCloud } from '../database/cloudSync';
+import { localClientDocumentDirectory } from '../reports/clientDocumentStorage';
+import { validatePdfFilename } from '../security/fileValidation';
+import {
+  deleteClientFinancialDocumentFromCloud,
+  downloadCreditNotePdfFromCloud,
+  uploadCreditNotePdfToCloud,
+} from '../database/cloudSync';
 import { backupDb } from '../database/db';
 import { selectReadyGroupsForZone } from '../integrations/weeklyZoneBilling';
 import {
@@ -137,7 +144,53 @@ export function registerBillingHandlers() {
     if (!backup.success) {
       throw new Error('Copia de siguranță nu a putut fi creată. Scenariul de test nu a fost șters.');
     }
+    const invoice = billingRepo.getInvoiceById(data.invoiceId) as any;
+    if (!billingRepo.getBillingTestMode().enabled) {
+      throw new Error('Ștergerea definitivă este disponibilă numai când Modul test facturare este activ.');
+    }
+    const confirmation = String(data.confirmation || '').trim().toLocaleUpperCase('ro-RO');
+    const acceptedConfirmations = new Set([
+      `STERGE ${invoice.invoice_number}`.toLocaleUpperCase('ro-RO'),
+      `STERGE ${invoice.invoice_reference || invoice.invoice_number}`.toLocaleUpperCase('ro-RO'),
+    ]);
+    if (!acceptedConfirmations.has(confirmation)) {
+      throw new Error(`Pentru confirmare scrie exact: STERGE ${invoice.invoice_number}`);
+    }
+    const relatedCreditNotes = billingRepo.listCreditNotes({ companyId: invoice.company_id })
+      .filter((note: any) => String(note.invoice_references || '').split(', ').includes(invoice.invoice_number));
+    const documents = [
+      { kind: 'Facturi' as const, filename: `Factura_${invoice.invoice_number}.pdf`, issuerCode: invoice.issuer_code, localPath: invoice.pdf_path },
+      ...relatedCreditNotes.map((note: any) => ({
+        kind: 'Credit Notes' as const,
+        filename: creditNoteFilename(note.reference),
+        issuerCode: note.issuer_code,
+        localPath: note.pdf_path,
+      })),
+    ];
+    for (const document of documents) {
+      const cloudDelete = await deleteClientFinancialDocumentFromCloud(
+        invoice.company_name,
+        document.kind,
+        document.filename,
+        document.issuerCode,
+      );
+      if (!cloudDelete.success) throw new Error(cloudDelete.error || 'Documentele facturii nu au putut fi șterse din Google Drive.');
+    }
     const result = billingRepo.deleteInvoiceForTesting(data.invoiceId, data.confirmation);
+    for (const document of documents) {
+      const filename = validatePdfFilename(document.filename);
+      const localCandidates = new Set<string>([
+        document.localPath || '',
+        path.join(localClientDocumentDirectory(app.getPath('documents'), invoice.company_name, document.kind), filename),
+        document.kind === 'Facturi'
+          ? path.join(app.getPath('documents'), 'VR - Hub Management', 'Invoices', String(document.issuerCode || 'goodness').toLowerCase(), filename)
+          : path.join(app.getPath('documents'), 'VR - Hub Management', 'Credit Notes', String(document.issuerCode || 'goodness').toLowerCase(), filename),
+      ].filter(Boolean));
+      for (const localPath of localCandidates) {
+        if (!fs.existsSync(localPath)) continue;
+        try { fs.unlinkSync(localPath); } catch (error) { console.error('Local billing PDF cleanup failed:', error); }
+      }
+    }
     void backupDb();
     return result;
   });
@@ -166,9 +219,19 @@ export function registerBillingHandlers() {
     const note = billingRepo.readCreditNote(id);
     try {
       const pdf = generateCreditNotePdf(note);
-      const saved = saveCreditNotePdf(app.getPath('documents'), note.issuer_code, note.reference, pdf);
+      const saved = saveCreditNotePdf(app.getPath('documents'), note.company_name, note.reference, pdf);
+      const legacyLocalPath = path.join(
+        app.getPath('documents'),
+        'VR - Hub Management',
+        'Credit Notes',
+        String(note.issuer_code).toLowerCase(),
+        saved.filename,
+      );
+      if (legacyLocalPath !== saved.filePath && fs.existsSync(legacyLocalPath)) {
+        try { fs.unlinkSync(legacyLocalPath); } catch (error) { console.error('Legacy Credit Note PDF cleanup failed:', error); }
+      }
       billingRepo.setCreditNotePdfState(id, saved.filePath, 'ready', 'pending');
-      const cloud = await uploadCreditNotePdfToCloud(saved.filename, note.issuer_code, pdf);
+      const cloud = await uploadCreditNotePdfToCloud(saved.filename, note.company_name, note.issuer_code, pdf);
       billingRepo.setCreditNotePdfState(id, saved.filePath, 'ready', cloud.success ? 'ready' : 'error');
       return { success: true, ...saved, cloud };
     } catch (error) {
@@ -180,8 +243,8 @@ export function registerBillingHandlers() {
     const note = billingRepo.readCreditNote(id);
     let filePath = note.pdf_path && fs.existsSync(note.pdf_path) ? note.pdf_path : null;
     if (!filePath) {
-      const cloud = await downloadCreditNotePdfFromCloud(creditNoteFilename(note.reference), note.issuer_code);
-      if (cloud.success && cloud.buffer) filePath = saveCreditNotePdf(app.getPath('documents'), note.issuer_code, note.reference, cloud.buffer).filePath;
+      const cloud = await downloadCreditNotePdfFromCloud(creditNoteFilename(note.reference), note.company_name, note.issuer_code);
+      if (cloud.success && cloud.buffer) filePath = saveCreditNotePdf(app.getPath('documents'), note.company_name, note.reference, cloud.buffer).filePath;
       else return { success: false, notFound: true, message: cloud.error };
     }
     const error = await shell.openPath(filePath);

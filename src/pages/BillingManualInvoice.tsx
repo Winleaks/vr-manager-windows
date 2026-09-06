@@ -143,10 +143,9 @@ export function BillingManualInvoice() {
           totalAmount: invoice.total_amount,
         },
       );
-      const filename = `Factura_${created.invoiceNumber}.pdf`;
-      const localSave = await api.system.savePdfAuto({ buffer, filename, issuerCode: invoice.issuer_code || invoice.issuer_settings.code });
+      const localSave = await api.system.savePdfAuto({ buffer, invoiceId: created.invoiceId });
       if (!localSave.success) throw new Error(localSave.error || 'PDF-ul nu a putut fi salvat local.');
-      const cloudSave = await api.system.uploadPdfToCloud(filename, buffer);
+      const cloudSave = await api.system.uploadPdfToCloud(created.invoiceId, buffer);
       window.alert(cloudSave.success
         ? `Factura #${created.invoiceNumber} a fost emisă, salvată local și verificată în Google Drive.`
         : `Factura #${created.invoiceNumber} a fost emisă și salvată local, dar nu a fost confirmată în Google Drive: ${cloudSave.error || 'Eroare necunoscută'}`);

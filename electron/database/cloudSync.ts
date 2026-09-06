@@ -33,6 +33,10 @@ import {
   type CloudSyncHealth,
   type UploadedFileMetadata,
 } from './cloudSyncPolicy';
+import {
+  normalCloudDocumentFolders,
+  type ClientFinancialDocumentKind,
+} from '../reports/clientDocumentStorage';
 
 const isDev = !app.isPackaged;
 const baseDir = isDev ? process.cwd() : app.getPath('userData');
@@ -584,7 +588,15 @@ function validatePrivateCloudPath(folderNames: string[], filename: string) {
     throw new Error('Calea Google Drive este invalidă.');
   }
   for (const segment of folderNames) {
-    if (typeof segment !== 'string' || !/^[A-Za-z0-9 ĂÂÎȘȚăâîșț_-]{1,60}$/.test(segment) || segment === '.' || segment === '..') {
+    if (
+      typeof segment !== 'string'
+      || segment.length < 1
+      || segment.length > 60
+      || segment !== segment.normalize('NFC').trim()
+      || /[<>:"/\\|?*\p{Cc}]/u.test(segment)
+      || segment === '.'
+      || segment === '..'
+    ) {
       throw new Error('Calea Google Drive conține un folder invalid.');
     }
   }
@@ -910,7 +922,7 @@ export function syncViewerFromCloud() {
   return viewerSyncInFlight;
 }
 
-export async function uploadPdfToCloud(filename: string, buffer: Uint8Array): Promise<{ success: boolean; error?: string }> {
+export async function uploadPdfToCloud(filename: string, companyName: string, buffer: Uint8Array): Promise<{ success: boolean; error?: string }> {
   if (getDeviceRole() !== 'writer') {
     return { success: false, error: 'Calculatorul Viewer nu poate publica documente.' };
   }
@@ -919,15 +931,17 @@ export async function uploadPdfToCloud(filename: string, buffer: Uint8Array): Pr
   }
   try {
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
-    const { facturiFolderId } = await getDriveStructure(drive);
-    await uploadVerifiedBuffer(drive, { filename, parentId: facturiFolderId, mimeType: 'application/pdf', buffer });
+    const parentId = await resolvePrivateCloudFolder(drive, normalCloudDocumentFolders(companyName, 'Facturi'), true);
+    if (!parentId) throw new Error('Folderul clientului nu a putut fi creat în Google Drive.');
+    await uploadVerifiedBuffer(drive, { filename, parentId, mimeType: 'application/pdf', buffer, strictParent: true });
+    await deleteExactCloudFile(drive, ['Facturi'], filename);
     return { success: true };
   } catch (error) {
     return { success: false, error: publicGoogleDriveError(error, 'Factura nu a putut fi salvată și verificată în Google Drive.') };
   }
 }
 
-export async function uploadCreditNotePdfToCloud(filename: string, issuerCode: string, buffer: Uint8Array): Promise<{ success: boolean; error?: string }> {
+export async function uploadCreditNotePdfToCloud(filename: string, companyName: string, issuerCode: string, buffer: Uint8Array): Promise<{ success: boolean; error?: string }> {
   if (getDeviceRole() !== 'writer') return { success: false, error: 'Calculatorul Viewer nu poate publica documente.' };
   if (!loadTokens()) return { success: false, error: 'Nu ești conectat la Google Drive.' };
   if (!/^Credit_Note_[A-Z0-9-]{1,60}\.pdf$/i.test(filename) || !/^[a-z0-9-]{1,40}$/i.test(issuerCode)) {
@@ -935,28 +949,31 @@ export async function uploadCreditNotePdfToCloud(filename: string, issuerCode: s
   }
   try {
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
-    const { rootFolderId } = await getDriveStructure(drive);
-    const creditNotesFolderId = await getOrCreateFolder(drive, 'Credit Notes', rootFolderId);
-    const issuerFolderId = await getOrCreateFolder(drive, issuerCode.toLowerCase(), creditNotesFolderId);
-    await uploadVerifiedBuffer(drive, { filename, parentId: issuerFolderId, mimeType: 'application/pdf', buffer });
+    const parentId = await resolvePrivateCloudFolder(drive, normalCloudDocumentFolders(companyName, 'Credit Notes'), true);
+    if (!parentId) throw new Error('Folderul clientului nu a putut fi creat în Google Drive.');
+    await uploadVerifiedBuffer(drive, { filename, parentId, mimeType: 'application/pdf', buffer, strictParent: true });
+    await deleteExactCloudFile(drive, ['Credit Notes', issuerCode.toLowerCase()], filename);
     return { success: true };
   } catch (error) {
     return { success: false, error: publicGoogleDriveError(error, 'Credit Note-ul nu a putut fi salvat și verificat în Google Drive.') };
   }
 }
 
-export async function downloadCreditNotePdfFromCloud(filename: string, issuerCode: string): Promise<{ success: boolean; buffer?: Uint8Array; error?: string }> {
+export async function downloadCreditNotePdfFromCloud(filename: string, companyName: string, issuerCode: string): Promise<{ success: boolean; buffer?: Uint8Array; error?: string }> {
   if (!loadTokens()) return { success: false, error: 'Google Drive nu este conectat pe acest calculator.' };
   if (!/^Credit_Note_[A-Z0-9-]{1,60}\.pdf$/i.test(filename) || !/^[a-z0-9-]{1,40}$/i.test(issuerCode)) return { success: false, error: 'Identitatea documentului Credit Note nu este validă.' };
   try {
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
-    const rootFolderId = await findFolder(drive, CLOUD_ROOT_FOLDER_NAME);
-    const creditNotesFolderId = rootFolderId ? await findFolder(drive, 'Credit Notes', rootFolderId) : null;
-    const issuerFolderId = creditNotesFolderId ? await findFolder(drive, issuerCode.toLowerCase(), creditNotesFolderId) : null;
-    if (!issuerFolderId) return { success: false, error: 'Folderul Credit Notes al emitentului nu a fost găsit în Google Drive.' };
+    let parentId = await resolvePrivateCloudFolder(drive, normalCloudDocumentFolders(companyName, 'Credit Notes'), false);
+    if (!parentId) {
+      const rootFolderId = await findFolder(drive, CLOUD_ROOT_FOLDER_NAME);
+      const creditNotesFolderId = rootFolderId ? await findFolder(drive, 'Credit Notes', rootFolderId) : null;
+      parentId = creditNotesFolderId ? await findFolder(drive, issuerCode.toLowerCase(), creditNotesFolderId) : null;
+    }
+    if (!parentId) return { success: false, error: 'Folderul Credit Note al clientului nu a fost găsit în Google Drive.' };
     const escapedFilename = filename.replace(/'/g, "\\'");
     const search = await drive.files.list({
-      q: `name='${escapedFilename}' and mimeType='application/pdf' and '${issuerFolderId}' in parents and trashed=false`,
+      q: `name='${escapedFilename}' and mimeType='application/pdf' and '${parentId}' in parents and trashed=false`,
       fields: 'files(id,size,modifiedTime)',
       orderBy: 'modifiedTime desc',
       pageSize: 2,
@@ -968,6 +985,38 @@ export async function downloadCreditNotePdfFromCloud(filename: string, issuerCod
     return { success: true, buffer: new Uint8Array(response.data as ArrayBuffer) };
   } catch (error) {
     return { success: false, error: publicGoogleDriveError(error, 'Descărcarea Credit Note-ului a eșuat.') };
+  }
+}
+
+async function deleteExactCloudFile(drive: any, folderNames: string[], filename: string) {
+  const parentId = await resolvePrivateCloudFolder(drive, folderNames, false);
+  if (!parentId) return false;
+  const file = await findExactCloudFile(drive, parentId, filename);
+  if (!file?.id) return false;
+  await drive.files.delete({ fileId: file.id });
+  return true;
+}
+
+export async function deleteClientFinancialDocumentFromCloud(
+  companyName: string,
+  kind: ClientFinancialDocumentKind,
+  filename: string,
+  legacyIssuerCode?: string,
+): Promise<{ success: boolean; deleted: boolean; error?: string }> {
+  if (getDeviceRole() !== 'writer') return { success: false, deleted: false, error: 'Calculatorul Viewer nu poate șterge documente.' };
+  if (!loadTokens()) return { success: false, deleted: false, error: 'Nu ești conectat la Google Drive.' };
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    let deleted = await deleteExactCloudFile(drive, normalCloudDocumentFolders(companyName, kind), filename);
+    if (kind === 'Facturi') {
+      // Compatibility with PDFs written directly in the old Facturi root.
+      deleted = await deleteExactCloudFile(drive, ['Facturi'], filename) || deleted;
+    } else if (legacyIssuerCode && /^[a-z0-9-]{1,40}$/i.test(legacyIssuerCode)) {
+      deleted = await deleteExactCloudFile(drive, ['Credit Notes', legacyIssuerCode.toLowerCase()], filename) || deleted;
+    }
+    return { success: true, deleted };
+  } catch (error) {
+    return { success: false, deleted: false, error: publicGoogleDriveError(error, 'Documentul nu a putut fi șters și verificat în Google Drive.') };
   }
 }
 

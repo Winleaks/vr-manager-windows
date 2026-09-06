@@ -20,6 +20,7 @@ import { requirePositiveInteger, requireText } from '../database/businessValidat
 import { aggregateWeeklyOrders } from '../integrations/weeklyInvoiceImport.ts';
 import { createVrBakerClient } from '../integrations/vrBakerIntegration.ts';
 import * as billingRepo from '../database/repositories/billingRepo.ts';
+import { protectedCloudDocumentFolders } from '../reports/clientDocumentStorage.ts';
 import {
   createPinVerifier,
   decryptVault,
@@ -779,8 +780,32 @@ async function uploadProtectedInvoicePdf(invoice: ProtectedInvoice) {
     },
   );
   const filename = `Factura_${invoice.reference}.pdf`;
-  await writeVerifiedPrivateCloudFile({ folderNames: ['Duplicat', 'Facturi', invoice.series], filename, mimeType: 'application/pdf', buffer });
-  return { filename, folder: `Duplicat/Facturi/${invoice.series}` };
+  const folderNames = protectedCloudDocumentFolders(invoice.companyName, 'Facturi');
+  await writeVerifiedPrivateCloudFile({ folderNames, filename, mimeType: 'application/pdf', buffer });
+  return { filename, folder: folderNames.join('/') };
+}
+
+function protectedDocumentFolders(type: 'invoice' | 'credit-note', record: ProtectedInvoice | ProtectedCreditNote) {
+  return type === 'invoice'
+    ? protectedCloudDocumentFolders(record.companyName, 'Facturi')
+    : protectedCloudDocumentFolders(record.companyName, 'Credit Notes');
+}
+
+function legacyProtectedDocumentFolders(type: 'invoice' | 'credit-note', record: ProtectedInvoice | ProtectedCreditNote) {
+  return type === 'invoice'
+    ? ['Duplicat', 'Facturi', record.series]
+    : ['Duplicat', 'Credit Notes', record.series];
+}
+
+async function readProtectedDocumentPdf(type: 'invoice' | 'credit-note', record: ProtectedInvoice | ProtectedCreditNote, filename: string) {
+  return await readVerifiedPrivateCloudFile(protectedDocumentFolders(type, record), filename)
+    || await readVerifiedPrivateCloudFile(legacyProtectedDocumentFolders(type, record), filename);
+}
+
+async function deleteProtectedDocumentPdf(type: 'invoice' | 'credit-note', record: ProtectedInvoice | ProtectedCreditNote, filename: string) {
+  const deletedCurrent = await deletePrivateCloudFile(protectedDocumentFolders(type, record), filename);
+  const deletedLegacy = await deletePrivateCloudFile(legacyProtectedDocumentFolders(type, record), filename);
+  return deletedCurrent || deletedLegacy;
 }
 
 export async function createProtectedWeeklyInvoices(
@@ -1019,7 +1044,7 @@ export async function deleteProtectedTestInvoice(webContentsId: number, invoiceI
     next.invoices.splice(index, 1);
     next.counters[invoice.series] = nextProtectedInvoiceCounter(next, invoice.series);
   });
-  if (deleted) await deletePrivateCloudFile(['Duplicat', 'Facturi', deleted.series], `Factura_${deleted.reference}.pdf`).catch(() => false);
+  if (deleted) await deleteProtectedDocumentPdf('invoice', deleted, `Factura_${deleted.reference}.pdf`);
   return { success: true };
 }
 
@@ -1146,8 +1171,9 @@ async function uploadProtectedCreditNotePdf(note: ProtectedCreditNote, vault: Pr
     testDocument: note.testDocument,
   });
   const filename = `Credit_Note_${note.reference}.pdf`;
-  await writeVerifiedPrivateCloudFile({ folderNames: ['Duplicat', 'Credit Notes', note.series], filename, mimeType: 'application/pdf', buffer });
-  return { filename, folder: `Duplicat/Credit Notes/${note.series}` };
+  const folderNames = protectedCloudDocumentFolders(note.companyName, 'Credit Notes');
+  await writeVerifiedPrivateCloudFile({ folderNames, filename, mimeType: 'application/pdf', buffer });
+  return { filename, folder: folderNames.join('/') };
 }
 
 function applyProtectedStockReturns(note: ProtectedCreditNote, reverse = false) {
@@ -1320,7 +1346,7 @@ export async function deleteProtectedTestCreditNote(webContentsId: number, idInp
     next.creditNotes.splice(index, 1);
     next.counters[note.series] = nextProtectedCreditNoteCounter(next, note.series);
   });
-  if (deleted) await deletePrivateCloudFile(['Duplicat', 'Credit Notes', deleted.series], `Credit_Note_${deleted.reference}.pdf`).catch(() => false);
+  if (deleted) await deleteProtectedDocumentPdf('credit-note', deleted, `Credit_Note_${deleted.reference}.pdf`);
   return { success: true };
 }
 
@@ -1435,13 +1461,12 @@ async function protectedPdfToTemporaryFile(webContentsId: number, type: 'invoice
   const session = await freshSession(webContentsId);
   const record = type === 'invoice' ? session.vault.invoices.find((row) => row.id === id) : session.vault.creditNotes.find((row) => row.id === id);
   if (!record) throw new Error('Documentul nu există.');
-  const folderNames = type === 'invoice' ? ['Duplicat', 'Facturi', record.series] : ['Duplicat', 'Credit Notes', record.series];
   const filename = type === 'invoice' ? `Factura_${record.reference}.pdf` : `Credit_Note_${record.reference}.pdf`;
-  let file = await readVerifiedPrivateCloudFile(folderNames, filename);
+  let file = await readProtectedDocumentPdf(type, record, filename);
   if (!file) {
     if (type === 'invoice') await uploadProtectedInvoicePdf(record as ProtectedInvoice);
     else await uploadProtectedCreditNotePdf(record as ProtectedCreditNote, session.vault);
-    file = await readVerifiedPrivateCloudFile(folderNames, filename);
+    file = await readProtectedDocumentPdf(type, record, filename);
   }
   if (!file) throw new Error('PDF-ul nu a putut fi recitit din Google Drive.');
   const tempPath = path.join(app.getPath('temp'), `vr-hub-protected-${randomUUID()}.pdf`);
@@ -1502,19 +1527,19 @@ export async function exportProtectedRegistryMonth(webContentsId: number, monthI
   let pdfCount = 0;
   for (const invoice of invoices) {
     const filename = `Factura_${invoice.reference}.pdf`;
-    let source = await readVerifiedPrivateCloudFile(['Duplicat', 'Facturi', invoice.series], filename);
+    let source = await readProtectedDocumentPdf('invoice', invoice, filename);
     if (!source) {
       await uploadProtectedInvoicePdf(invoice);
-      source = await readVerifiedPrivateCloudFile(['Duplicat', 'Facturi', invoice.series], filename);
+      source = await readProtectedDocumentPdf('invoice', invoice, filename);
     }
     if (source) { await writeVerifiedPrivateCloudFile({ folderNames: [...folder, 'PDF'], filename, mimeType: 'application/pdf', buffer: source.buffer }); pdfCount += 1; }
   }
   for (const note of creditNotes) {
     const filename = `Credit_Note_${note.reference}.pdf`;
-    let source = await readVerifiedPrivateCloudFile(['Duplicat', 'Credit Notes', note.series], filename);
+    let source = await readProtectedDocumentPdf('credit-note', note, filename);
     if (!source) {
       await uploadProtectedCreditNotePdf(note, session.vault);
-      source = await readVerifiedPrivateCloudFile(['Duplicat', 'Credit Notes', note.series], filename);
+      source = await readProtectedDocumentPdf('credit-note', note, filename);
     }
     if (source) { await writeVerifiedPrivateCloudFile({ folderNames: [...folder, 'PDF'], filename, mimeType: 'application/pdf', buffer: source.buffer }); pdfCount += 1; }
   }

@@ -44,9 +44,9 @@ export const desktopApi = {
     getAppVersion: () => ipcRenderer.invoke('system:getAppVersion'),
     saveFile: (options: { buffer: Uint8Array; defaultPath: string; filters: any[] }) =>
       ipcRenderer.invoke('save-file', options),
-    savePdfAuto: (options: { buffer: Uint8Array; filename: string; issuerCode?: string }) =>
+    savePdfAuto: (options: { buffer: Uint8Array; invoiceId: number }) =>
       ipcRenderer.invoke('save-pdf-auto', options),
-    openPdfFile: (filename: string, issuerCode?: string) => ipcRenderer.invoke('open-pdf-file', filename, issuerCode),
+    openPdfFile: (invoiceId: number) => ipcRenderer.invoke('open-pdf-file', invoiceId),
     manualBackup: () => ipcRenderer.invoke('manual-backup'),
     restoreBackup: () => ipcRenderer.invoke('restore-backup'),
     getLastBackupTime: () => ipcRenderer.invoke('get-last-backup-time'),
@@ -66,8 +66,8 @@ export const desktopApi = {
     saveToCloud: () => ipcRenderer.invoke('save-to-cloud'),
     restoreFromCloud: (fileId?: string) => ipcRenderer.invoke('restore-from-cloud', fileId),
     disconnectCloud: () => ipcRenderer.invoke('disconnect-cloud'),
-    uploadPdfToCloud: (filename: string, buffer: Uint8Array) =>
-      ipcRenderer.invoke('upload-pdf-to-cloud', filename, buffer),
+    uploadPdfToCloud: (invoiceId: number, buffer: Uint8Array) =>
+      ipcRenderer.invoke('upload-pdf-to-cloud', invoiceId, buffer),
     getSyncStatus: () => ipcRenderer.invoke('get-sync-status'),
     getDeviceRole: () => ipcRenderer.invoke('get-device-role'),
     setDeviceRole: (role: 'writer' | 'viewer') => ipcRenderer.invoke('set-device-role', role),

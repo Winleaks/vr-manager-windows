@@ -430,7 +430,7 @@ const invoiceSelect = `
            bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color,
            EXISTS(SELECT 1 FROM invoice_import_batches ib WHERE ib.invoice_id = i.id) AS is_imported,
            s.name as store_name, s.address as store_address, s.postcode as store_postcode, s.phone as store_phone,
-           c.name as company_name, c.cui as company_cui, c.reg_com as company_reg_com, c.address as company_address, c.phone as company_phone, c.bank_account as company_bank_account, c.bank_name as company_bank_name,
+           c.id as company_id, c.name as company_name, c.cui as company_cui, c.reg_com as company_reg_com, c.address as company_address, c.phone as company_phone, c.bank_account as company_bank_account, c.bank_name as company_bank_name,
            cl.name as client_name
     FROM invoices i
     JOIN stores s ON i.store_id = s.id
