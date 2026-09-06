@@ -5,6 +5,7 @@ import { app, shell } from 'electron';
 import ExcelJS from 'exceljs';
 import {
   deletePrivateCloudFile,
+  getCloudStatus,
   readVerifiedPrivateCloudFile,
   writeVerifiedPrivateCloudFile,
 } from '../database/cloudSync.ts';
@@ -352,6 +353,10 @@ export async function configureProtectedRegistry(webContentsId: number, pin: unk
   if (!isCredentialStorageAvailable()) throw new Error('Windows nu oferă stocarea securizată necesară registrului.');
   if (isProtectedRegistryEnabled()) throw new Error('Registrul separat este deja configurat.');
   if (pin !== pinConfirmation) throw new Error('Cele două PIN-uri nu coincid.');
+  const cloud = await getCloudStatus();
+  if (!cloud.connectionHealthy) {
+    throw new Error(cloud.lastError || 'Conexiunea Google Drive nu este validă. Reconectează contul din Setări înainte de configurarea registrului.');
+  }
   const verifier = createPinVerifier(String(pin));
   const existing = await readVerifiedPrivateCloudFile(FOLDER, VAULT_FILE);
   if (existing) throw new Error('În Google Drive există deja un registru. Folosește cheia de recuperare, nu inițializarea.');

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 import {
   assertUploadedFileMatches,
@@ -8,6 +10,19 @@ import {
 
 test('keeps the existing business Drive folder as the canonical cloud destination', () => {
   assert.equal(CLOUD_ROOT_FOLDER_NAME, 'VR - Management');
+});
+
+test('cloud settings expose only the configured root folder, not database or invoice paths', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'src/pages/SettingsSystem.tsx'), 'utf8');
+  assert.match(source, /Folder principal: My Drive \/ \{cloudStatus\.rootFolderName\}/);
+  assert.doesNotMatch(source, /Bază: My Drive/);
+  assert.doesNotMatch(source, /Facturi: My Drive/);
+});
+
+test('desktop OAuth listens on an available loopback port instead of a fixed port', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'electron/database/cloudSync.ts'), 'utf8');
+  assert.match(source, /listen\(0, '127\.0\.0\.1'/);
+  assert.doesNotMatch(source, /listen\(3456/);
 });
 
 test('accepts an uploaded file only after identity, parent, checksum and size verification', () => {

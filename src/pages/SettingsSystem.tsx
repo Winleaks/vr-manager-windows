@@ -333,23 +333,31 @@ export function SettingsSystem() {
                   <div className="overflow-hidden">
                     <span className="text-xs text-indigo-300 block font-medium">Cont Google Conectat:</span>
                     <span className="text-sm font-bold text-white truncate block">
-                      {cloudStatus.userEmail || 'Conectat — verificarea contului a eșuat'}
+                      {cloudStatus.userEmail || (cloudStatus.connectionHealthy ? 'Google Drive conectat' : 'Conexiunea necesită reconectare')}
                     </span>
                     <span className="text-xs text-indigo-200/80 block mt-1">
-                      Bază: My Drive / {cloudStatus.rootFolderName} / Baza de date
-                    </span>
-                    <span className="text-xs text-indigo-200/80 block">
-                      Facturi: My Drive / {cloudStatus.rootFolderName} / Facturi
+                      Folder principal: My Drive / {cloudStatus.rootFolderName}
                     </span>
                   </div>
                 </div>
-                <button 
-                  onClick={handleDisconnectCloud}
-                  className="text-xs text-rose-300 hover:text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 flex-shrink-0 cursor-pointer"
-                >
-                  <Trash2 size={14} />
-                  Deconectează
-                </button>
+                <div className="flex items-center gap-2">
+                  {!cloudStatus.connectionHealthy && (
+                    <button
+                      onClick={handleConnectGoogleDrive}
+                      className="text-xs text-blue-200 hover:text-white bg-blue-500/20 hover:bg-blue-500/30 border border-blue-400/30 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 flex-shrink-0 cursor-pointer"
+                    >
+                      <RefreshCw size={14} />
+                      Reconectează
+                    </button>
+                  )}
+                  <button
+                    onClick={handleDisconnectCloud}
+                    className="text-xs text-rose-300 hover:text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 flex-shrink-0 cursor-pointer"
+                  >
+                    <Trash2 size={14} />
+                    Deconectează
+                  </button>
+                </div>
               </div>
 
               {cloudStatus.syncHealth !== 'healthy' && (

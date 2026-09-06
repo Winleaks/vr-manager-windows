@@ -42,16 +42,12 @@ const GOOGLE_TOKENS_KEY = 'google-drive-oauth-tokens';
 declare const __VR_HUB_GOOGLE_CLIENT_ID__: string;
 
 const CLIENT_ID = __VR_HUB_GOOGLE_CLIENT_ID__;
-const REDIRECT_URI = 'http://127.0.0.1:3456/oauth2callback';
-
 function hasGoogleOAuthBuildConfig() {
   return Boolean(CLIENT_ID);
 }
 
 const oauth2Client = new google.auth.OAuth2(
-  CLIENT_ID,
-  undefined,
-  REDIRECT_URI
+  CLIENT_ID
 );
 
 export interface CloudSyncStatus {
@@ -122,16 +118,46 @@ const cloudRuntimeState: {
 };
 
 function publicGoogleDriveError(error: unknown, fallback: string) {
-  const candidate = error as { code?: unknown; response?: { status?: unknown }; errors?: Array<{ reason?: unknown }> } | null;
+  const candidate = error as {
+    code?: unknown;
+    response?: { status?: unknown; data?: { error?: unknown; error_description?: unknown } };
+    errors?: Array<{ reason?: unknown }>;
+  } | null;
   const status = Number(candidate?.response?.status || candidate?.code || 0);
   const reason = typeof candidate?.errors?.[0]?.reason === 'string' ? candidate.errors[0].reason : '';
   const message = error instanceof Error ? error.message : '';
+  const oauthError = typeof candidate?.response?.data?.error === 'string' ? candidate.response.data.error : '';
   console.error('[GOOGLE DRIVE] Operație eșuată.', { status: status || null, reason: reason || null });
-  if (status === 401 || reason === 'authError') return 'Autorizarea Google Drive a expirat. Reconectează contul din Setări.';
+  if (status === 401 || reason === 'authError' || oauthError === 'invalid_grant' || oauthError === 'invalid_token' || /invalid_grant|invalid_token|no refresh token/i.test(message)) {
+    return 'Autorizarea Google Drive a expirat sau a fost revocată. Reconectează contul din Setări.';
+  }
   if (status === 403) return 'Contul Google nu permite accesul aplicației la folderul configurat. Reconectează contul corect.';
   if (status === 429) return 'Google Drive a limitat temporar sincronizarea. Aplicația va reîncerca automat.';
+  if (/ENOTFOUND|ECONNRESET|ETIMEDOUT|network|socket hang up/i.test(message)) return 'Google Drive nu poate fi contactat. Verifică internetul și încearcă din nou.';
   if (/^Google Drive nu a confirmat|^Fișierul încărcat nu se află|^Checksum-ul|^Dimensiunea fișierului/.test(message)) return message;
   return fallback;
+}
+
+function publicGoogleOAuthError(error: unknown) {
+  const candidate = error as {
+    code?: unknown;
+    response?: { status?: unknown; data?: { error?: unknown; error_description?: unknown } };
+  } | null;
+  const oauthError = typeof candidate?.response?.data?.error === 'string' ? candidate.response.data.error : '';
+  const description = typeof candidate?.response?.data?.error_description === 'string' ? candidate.response.data.error_description : '';
+  const message = error instanceof Error ? error.message : '';
+  const details = `${oauthError} ${description} ${message}`;
+  console.error('[GOOGLE DRIVE] Autentificarea OAuth a eșuat.', {
+    status: Number(candidate?.response?.status || candidate?.code || 0) || null,
+    oauthError: oauthError || null,
+  });
+  if (/client_secret|unauthorized_client|invalid_client/i.test(details)) {
+    return 'Configurația Google Drive trebuie înlocuită cu un OAuth Client ID de tip Desktop app. Clientul web vechi nu poate fi folosit în siguranță de aplicația Windows.';
+  }
+  if (/redirect_uri_mismatch/i.test(details)) return 'Adresa locală de revenire Google Drive nu este acceptată de configurația OAuth.';
+  if (/access_denied/i.test(details)) return 'Autorizarea Google Drive a fost anulată sau refuzată.';
+  if (/ENOTFOUND|ECONNRESET|ETIMEDOUT|network|socket hang up/i.test(details)) return 'Google nu poate fi contactat. Verifică internetul și încearcă din nou.';
+  return 'Autentificarea Google Drive nu a putut fi finalizată. Verifică configurația OAuth și încearcă din nou.';
 }
 
 function recordUploadFailure(error: string) {
@@ -188,7 +214,14 @@ oauth2Client.on('tokens', (tokens) => {
 });
 
 let authServer: http.Server | null = null;
-let expectedOAuthState: string | null = null;
+let authAttemptInProgress = false;
+
+async function closeAuthServer() {
+  const server = authServer;
+  authServer = null;
+  if (!server?.listening) return;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
 
 export async function connectGoogleDrive(): Promise<{ success: boolean; message?: string }> {
   if (!hasGoogleOAuthBuildConfig()) {
@@ -203,111 +236,129 @@ export async function connectGoogleDrive(): Promise<{ success: boolean; message?
       message: 'Stocarea securizată a credentialelor nu este disponibilă pe acest sistem.',
     };
   }
+  if (authAttemptInProgress) {
+    return { success: false, message: 'O conectare Google Drive este deja în curs. Finalizeaz-o în fereastra deschisă.' };
+  }
 
-  const { codeVerifier, codeChallenge } = await oauth2Client.generateCodeVerifierAsync();
+  authAttemptInProgress = true;
+  try {
+    await closeAuthServer();
+    oauth2Client.setCredentials({});
 
-  return new Promise((resolve) => {
-    // If a server is already running, close it
-    if (authServer) {
-      authServer.close();
-      authServer = null;
-    }
+    return await new Promise((resolve) => {
+      const scopes = [
+        'https://www.googleapis.com/auth/drive.file',
+        'https://www.googleapis.com/auth/userinfo.email'
+      ];
+      const oauthState = randomBytes(32).toString('base64url');
+      let authorizationClient: InstanceType<typeof google.auth.OAuth2> | null = null;
+      let codeVerifier = '';
+      let callbackBaseUrl = '';
+      let settled = false;
+      let timeout: ReturnType<typeof setTimeout> | null = null;
 
-    const scopes = [
-      'https://www.googleapis.com/auth/drive.file',
-      'https://www.googleapis.com/auth/userinfo.email'
-    ];
+      const finish = (result: { success: boolean; message?: string }) => {
+        if (settled) return;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        const server = authServer;
+        authServer = null;
+        if (server?.listening) server.close();
+        resolve(result);
+      };
 
-    expectedOAuthState = randomBytes(32).toString('base64url');
+      authServer = http.createServer(async (req, res) => {
+        try {
+          if (!callbackBaseUrl || !authorizationClient || !codeVerifier) throw new Error('Fluxul OAuth local nu este inițializat.');
+          const callbackUrl = new URL(req.url || '/', callbackBaseUrl);
+          if (callbackUrl.pathname === '/oauth2callback') {
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            if (callbackUrl.searchParams.get('state') !== oauthState) {
+              res.statusCode = 400;
+              res.end('Cererea de autentificare nu este validă. Reîncearcă din aplicație.');
+              finish({ success: false, message: 'Validarea autentificării a eșuat. Pornește o singură reconectare și finalizeaz-o în aceeași fereastră.' });
+              return;
+            }
 
-    const url = oauth2Client.generateAuthUrl({
-      access_type: 'offline',
-      scope: scopes,
-      prompt: 'consent',
-      state: expectedOAuthState,
-      code_challenge: codeChallenge,
-      code_challenge_method: CodeChallengeMethod.S256,
-    });
-
-    authServer = http.createServer(async (req, res) => {
-      try {
-        const callbackUrl = new URL(req.url || '/', REDIRECT_URI);
-        if (callbackUrl.pathname === '/oauth2callback') {
-          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-          if (!expectedOAuthState || callbackUrl.searchParams.get('state') !== expectedOAuthState) {
-            res.statusCode = 400;
-            res.end('Cererea de autentificare nu este validă. Reîncearcă din aplicație.');
-            if (authServer) authServer.close();
-            authServer = null;
-            expectedOAuthState = null;
-            resolve({ success: false, message: 'Validarea autentificării a eșuat.' });
-            return;
-          }
-
-          const qs = callbackUrl.searchParams;
-          const code = qs.get('code');
-          if (code) {
-            const { tokens } = await oauth2Client.getToken({ code, codeVerifier });
-            oauth2Client.setCredentials(tokens);
-            saveTokens(tokens);
-            cloudRuntimeState.lastError = null;
-            res.end('Autentificare cu succes! Poți închide această fereastră și reveni în aplicație.');
-            if (authServer) authServer.close();
-            authServer = null;
-            expectedOAuthState = null;
-            resolve({ success: true });
+            const qs = callbackUrl.searchParams;
+            const providerError = qs.get('error');
+            if (providerError) {
+              res.statusCode = 400;
+              res.end('Autorizarea Google Drive a fost anulată sau refuzată. Poți închide această fereastră.');
+              finish({ success: false, message: providerError === 'access_denied' ? 'Autorizarea Google Drive a fost anulată sau refuzată.' : 'Google nu a aprobat autentificarea.' });
+              return;
+            }
+            const code = qs.get('code');
+            if (code) {
+              const { tokens } = await authorizationClient.getToken({ code, codeVerifier });
+              oauth2Client.setCredentials(tokens);
+              await google.drive({ version: 'v3', auth: oauth2Client }).files.list({ pageSize: 1, fields: 'files(id)' });
+              saveTokens(tokens);
+              cloudRuntimeState.lastError = null;
+              res.end('Autentificare cu succes! Poți închide această fereastră și reveni în aplicație.');
+              finish({ success: true });
+            } else {
+              res.statusCode = 400;
+              res.end('Eroare: Nu s-a primit codul de autorizare. Poți închide această fereastră.');
+              finish({ success: false, message: 'Google nu a transmis codul de autorizare.' });
+            }
           } else {
-            res.end('Eroare: Nu s-a primit codul de autorizare.');
-            if (authServer) authServer.close();
-            authServer = null;
-            expectedOAuthState = null;
-            resolve({ success: false, message: 'Nu s-a primit codul.' });
+            res.statusCode = 404;
+            res.end('Not found');
           }
-        } else {
-          res.statusCode = 404;
-          res.end('Not found');
+        } catch (error) {
+          oauth2Client.setCredentials({});
+          res.statusCode = 500;
+          res.end('Autentificarea Google Drive nu a putut fi finalizată. Revino în aplicație pentru detalii.');
+          finish({ success: false, message: publicGoogleOAuthError(error) });
         }
-      } catch {
-        res.statusCode = 500;
-        res.end('Autentificarea nu a putut fi finalizată.');
-        if (authServer) authServer.close();
-        authServer = null;
-        expectedOAuthState = null;
-        resolve({ success: false, message: 'Autentificarea Google Drive a eșuat.' });
-      }
-    });
+      });
 
-    authServer.once('error', () => {
-      if (authServer) authServer.close();
-      authServer = null;
-      expectedOAuthState = null;
-      resolve({ success: false, message: 'Serverul local de autentificare nu a putut porni.' });
-    });
+      authServer.once('error', (error) => {
+        console.error('[GOOGLE DRIVE] Serverul OAuth local nu a putut porni.', { code: (error as NodeJS.ErrnoException).code || null });
+        finish({ success: false, message: 'Serverul local de autentificare nu a putut porni.' });
+      });
 
-    authServer.listen(3456, '127.0.0.1', () => {
-      shell.openExternal(url);
-      try {
-        const { BrowserWindow } = require('electron');
-        const windows = BrowserWindow.getAllWindows();
-        if (windows.length > 0) {
-          windows[0].webContents.send('google-auth-url', url);
+      authServer.listen(0, '127.0.0.1', async () => {
+        try {
+          const address = authServer?.address();
+          if (!address || typeof address === 'string') throw new Error('Portul local OAuth nu a putut fi rezervat.');
+          callbackBaseUrl = `http://127.0.0.1:${address.port}`;
+          const redirectUri = `${callbackBaseUrl}/oauth2callback`;
+          authorizationClient = new google.auth.OAuth2(CLIENT_ID, undefined, redirectUri);
+          const challenge = await authorizationClient.generateCodeVerifierAsync();
+          codeVerifier = challenge.codeVerifier;
+          const url = authorizationClient.generateAuthUrl({
+            access_type: 'offline',
+            scope: scopes,
+            prompt: 'consent',
+            state: oauthState,
+            code_challenge: challenge.codeChallenge,
+            code_challenge_method: CodeChallengeMethod.S256,
+          });
+          await shell.openExternal(url);
+          try {
+            const { BrowserWindow } = require('electron');
+            const windows = BrowserWindow.getAllWindows();
+            if (windows.length > 0) windows[0].webContents.send('google-auth-url', url);
+          } catch {}
+        } catch (error) {
+          console.error('[GOOGLE DRIVE] Browserul pentru OAuth nu a putut fi deschis.', { message: error instanceof Error ? error.message : null });
+          finish({ success: false, message: 'Pagina Google Drive nu a putut fi deschisă în browser.' });
         }
-      } catch {}
-    });
+      });
 
-    // Timeout after 3 minutes just in case
-    setTimeout(() => {
-      if (authServer) {
-        authServer.close();
-        authServer = null;
-        expectedOAuthState = null;
-        resolve({ success: false, message: 'Timpul de conectare a expirat. Te rog să încerci din nou.' });
-      }
-    }, 3 * 60 * 1000);
-  });
+      timeout = setTimeout(() => {
+        finish({ success: false, message: 'Timpul de conectare a expirat. Te rog să încerci din nou.' });
+      }, 3 * 60 * 1000);
+    });
+  } finally {
+    authAttemptInProgress = false;
+  }
 }
 
 export async function disconnectCloud() {
+  await closeAuthServer();
   if (fs.existsSync(legacyConfigFilePath)) {
     fs.unlinkSync(legacyConfigFilePath);
   }
@@ -396,10 +447,6 @@ export async function getCloudStatus(): Promise<CloudSyncStatus> {
   try {
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
     
-    // Get user email
-    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
-    const userInfo = await oauth2.userinfo.get();
-    
     const rootFolderId = await findFolder(drive, CLOUD_ROOT_FOLDER_NAME);
     const dbFolderId = rootFolderId ? await findFolder(drive, CLOUD_DATABASE_FOLDER_NAME, rootFolderId) : null;
     const files = dbFolderId ? await listCloudDatabaseFiles(drive, dbFolderId) : [];
@@ -421,11 +468,20 @@ export async function getCloudStatus(): Promise<CloudSyncStatus> {
       lastModifiedTime: lastCloudBackupIso,
       lastUploadError: cloudRuntimeState.lastError,
     });
+    let userEmail: string | null = null;
+    try {
+      const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+      const userInfo = await oauth2.userinfo.get();
+      userEmail = userInfo.data.email || null;
+    } catch {
+      // File access is the authoritative health check. Email is only decorative.
+    }
+
     return {
       isConnected: true,
       connectionHealthy: true,
       syncHealth,
-      userEmail: userInfo.data.email || 'Conectat',
+      userEmail,
       lastCloudBackup: lastCloudBackupIso ? new Date(lastCloudBackupIso).toLocaleString('ro-RO') : null,
       lastCloudBackupIso,
       lastUploadAttempt: cloudRuntimeState.lastUploadAttempt,
