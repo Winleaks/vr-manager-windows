@@ -1,5 +1,7 @@
 ### În lucru
 
+### VR - Hub Management v0.1.91
+
 - Societatea emitentă se configurează acum direct în profilul fiecărui client din `Clienți & Entități`, cu alegeri distincte pentru emitentul implicit, `VATRA ROMANEASCA LTD` și `THE GOODNESS BAKER LTD`.
 - Alegerea se aplică tuturor magazinelor clientului și numai facturilor viitoare; istoricul, plățile și creditele existente rămân legate de emitentul original.
 - Migrarea SQLite v16 păstrează atribuirile Vatra existente ca explicite și tratează clienții Goodness existenți drept utilizatori ai emitentului implicit.
