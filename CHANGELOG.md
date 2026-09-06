@@ -1,5 +1,13 @@
 ### În lucru
 
+### VR - Hub Management v0.1.95
+
+- Previzualizarea comenzilor afișează numere consecutive pentru fiecare factură pregătită, cu secvențe independente pentru `THE GOODNESS BAKER LTD` și `VATRA ROMANEASCA LTD`; contoarele reale continuă să avanseze numai la emitere.
+- Facturile și Credit Notes noi sau regenerate sunt organizate local și în Google Drive în foldere distincte pentru fiecare client, păstrând compatibilitatea de citire cu locațiile vechi.
+- Regenerarea unei facturi înlocuiește copia verificată din folderul clientului, iar ștergerea definitivă din Modul test elimină și PDF-urile asociate din Google Drive și de pe calculator.
+- Data unei facturi importate din VR Baker poate fi corectată manual fără modificarea pozițiilor, cantităților sau prețurilor provenite din comandă.
+- Câmpurile PIN ale registrului separat acceptă din nou introducerea normală de la tastatură pe Windows și păstrează mascarea celor șase cifre.
+
 ### VR - Hub Management v0.1.94
 
 - Repară reconectarea Google Drive din v0.1.93: buildul Windows include din nou perechea completă de credentiale a clientului OAuth Desktop la schimbul codului de autorizare, păstrând portul local dinamic, PKCE și validarea stării.
