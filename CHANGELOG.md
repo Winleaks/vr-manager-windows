@@ -1,6 +1,15 @@
 ### În lucru
 
-- În Modul test, facturile deja anulate afișează acum acțiunea de ștergere definitivă; butonul de reemitere rămâne disponibil numai în operarea live.
+### VR - Hub Management v0.1.92
+
+- Adaugă registrul oficial separat, disponibil numai pe Writer prin gestul ascuns și un PIN de 6 cifre, cu blocare temporară după încercări greșite, expirarea sesiunii și cheie de recuperare.
+- Starea autoritară este criptată AES-256-GCM în `My Drive / VR - Management / Duplicat`; facturarea normală verifică manifestul opac din Drive și exclude automat companiile și comenzile atribuite registrului separat.
+- Registrul folosește seriile independente `TGBL`, `VRL`, `CN-TGBL` și `CN-VRL` și permite facturi individuale, manuale, pe zonă sau pentru toate magazinele eligibile.
+- Include anulare și reemitere auditabilă, Credit Notes integrale sau parțiale, încasări separate pe emitent, credit FIFO, reversări și retur generic în stoc.
+- PDF-urile protejate pot fi deschise sau partajate temporar prin Windows Share, iar exportul lunar creează un registru Excel și copii ale documentelor pentru contabilitate în folderul `Duplicat`.
+- Modul test marchează documentele `TEST – NOT A TAX INVOICE`, creează backupuri criptate înaintea ștergerilor și blochează trecerea live până la eliminarea documentelor și a datelor financiare de test și revenirea contoarelor la valorile inițiale.
+- Viewer-ele nu primesc niciun API al registrului, iar fișierele temporare sunt curățate la blocare, expirare, închidere și următoarea pornire.
+- În Modul test normal, facturile deja anulate pot fi șterse definitiv împreună cu dependențele lor financiare pentru pregătirea bazei live.
 
 ### VR - Hub Management v0.1.91
 
