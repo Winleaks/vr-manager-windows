@@ -1,8 +1,13 @@
+import { app, shell } from 'electron';
 import { driverRepo } from '../database/repositories/driverRepo';
 import { employeeRepo } from '../database/repositories/employeeRepo';
 import { cashRepo } from '../database/repositories/cashRepo';
 import { handleTrustedIpc } from './trustedHandler';
 import { getDeviceRole } from '../device/deviceRole';
+import { generateDailyCashPdf } from '../reports/dailyCashPdf';
+import { saveDailyCashReportPdf } from '../reports/dailyCashDelivery';
+import { buildWhatsAppLaunchTargets } from '../security/whatsapp';
+import { openWindowsShareSheet } from '../reports/windowsShare';
 
 export function registerDailyCashHandlers() {
   // Drivers
@@ -43,8 +48,11 @@ export function registerDailyCashHandlers() {
   handleTrustedIpc('add-cash-transaction', (_e, data) => {
     return cashRepo.addTransaction(data);
   });
-  handleTrustedIpc('close-cash-day', (_e, dayId, finalBalance) => {
-    return cashRepo.closeDay(dayId, finalBalance);
+  handleTrustedIpc('close-cash-day', (_e, dayId) => {
+    return cashRepo.closeDay(dayId);
+  });
+  handleTrustedIpc('reopen-cash-day', (_e, dayId) => {
+    return cashRepo.reopenDay(dayId);
   });
   handleTrustedIpc('initialize-cash-balance', (_e, dayId, actualBalance) => {
     return cashRepo.initializeBalance(dayId, actualBalance);
@@ -57,6 +65,32 @@ export function registerDailyCashHandlers() {
   });
   handleTrustedIpc('get-historical-z-reports', (_e, startDate, endDate) => {
     return cashRepo.getHistoricalZReports(startDate, endDate);
+  });
+  handleTrustedIpc('get-daily-cash-report', (_e, date) => {
+    return cashRepo.getDailyReport(date);
+  });
+  handleTrustedIpc('prepare-daily-cash-whatsapp', async (_e, date) => {
+    const report = cashRepo.getDailyReport(date);
+    if (!report) throw new Error('Nu există o zi de casă pentru data selectată.');
+    const targets = buildWhatsAppLaunchTargets();
+    const pdf = generateDailyCashPdf(report);
+    const filePath = saveDailyCashReportPdf(app.getPath('documents'), report.date, pdf);
+    cashRepo.recordReportPrepared(report.dayId, report.balance);
+
+    const sharedWithAttachment = await openWindowsShareSheet(filePath);
+    if (sharedWithAttachment) {
+      return { success: true, filePath, deliveryMethod: 'windows-share' };
+    }
+
+    shell.showItemInFolder(filePath);
+    let usedWebFallback = false;
+    try {
+      await shell.openExternal(targets.appUrl);
+    } catch {
+      usedWebFallback = true;
+      await shell.openExternal(targets.webUrl);
+    }
+    return { success: true, filePath, deliveryMethod: 'explorer-fallback', usedWebFallback };
   });
   handleTrustedIpc('delete-cash-transaction', (_e, transactionId) => {
     return cashRepo.deleteTransaction(transactionId);

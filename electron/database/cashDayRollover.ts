@@ -35,8 +35,28 @@ export function rolloverCashDay(connection: SqliteDatabase, todayInput = localIs
     }
 
     const activeDay = openDays[0];
-    if (!activeDay || activeDay.date === today) {
-      return { rolledOver: false, currentDayId: activeDay?.id || null, movedTransactions: 0 };
+    if (!activeDay) {
+      const existingToday = connection.prepare(
+        'SELECT id, date, opening_balance, is_closed FROM cash_days WHERE date = ?',
+      ).get(today) as CashDayRow | undefined;
+      if (existingToday) {
+        return { rolledOver: false, currentDayId: existingToday.id, movedTransactions: 0 };
+      }
+      const lastClosedDay = connection.prepare(`
+        SELECT closing_balance
+        FROM cash_days
+        WHERE is_closed = 1 AND date < ?
+        ORDER BY date DESC
+        LIMIT 1
+      `).get(today) as { closing_balance: number | null } | undefined;
+      const openingBalance = Number(lastClosedDay?.closing_balance || 0);
+      const currentDayId = Number(connection.prepare(`
+        INSERT INTO cash_days (date, opening_balance) VALUES (?, ?)
+      `).run(today, openingBalance).lastInsertRowid);
+      return { rolledOver: true, currentDayId, movedTransactions: 0 };
+    }
+    if (activeDay.date === today) {
+      return { rolledOver: false, currentDayId: activeDay.id, movedTransactions: 0 };
     }
     if (activeDay.date > today) {
       throw new Error('Data zilei de casă deschise este în viitor. Verifică data și ora calculatorului.');
@@ -66,6 +86,10 @@ export function rolloverCashDay(connection: SqliteDatabase, todayInput = localIs
       SET is_closed = 1, closing_balance = ?, closed_at = CURRENT_TIMESTAMP
       WHERE id = ? AND is_closed = 0
     `).run(closingBalance, activeDay.id);
+    connection.prepare(`
+      INSERT INTO cash_day_events (cash_day_id, event_type, balance)
+      VALUES (?, 'automatic_close', ?)
+    `).run(activeDay.id, closingBalance);
 
     let currentDayId = existingToday?.id;
     if (!currentDayId) {

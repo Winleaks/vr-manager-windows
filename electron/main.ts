@@ -1,4 +1,4 @@
-import { startBillingPublisher } from './integrations/billingPublisher'
+import {startBillingPublisher} from './integrations/billingPublisher';
 import { app, BrowserWindow, dialog, session } from 'electron'
 import { execFileSync } from 'child_process'
 import path from 'path'
@@ -12,6 +12,7 @@ import { registerStockMovementHandlers } from './ipc/stockMovementHandlers'
 import { registerSystemHandlers } from './ipc/systemHandlers'
 import { registerDailyCashHandlers } from './ipc/dailyCashHandlers'
 import { registerBillingHandlers } from './ipc/billingHandlers'
+import { registerProtectedRegistryHandlers } from './ipc/protectedRegistryHandlers'
 import { trustIpcSender } from './ipc/trustedHandler'
 import { getDeviceRole } from './device/deviceRole'
 import { syncViewerFromCloud } from './database/cloudSync'
@@ -19,6 +20,8 @@ import { containsLegacyApplicationProcess } from './migration/legacyProcessPolic
 import { checkForUpdates, initializeUpdater } from './updater/updateCoordinator'
 import { cashRepo } from './database/repositories/cashRepo'
 import { millisecondsUntilNextLocalMidnight } from './database/cashDayRollover'
+import { runStartupCashReconciliation } from './startupCashReconciliation'
+import { cleanupStaleProtectedRegistryTemporaryFiles, lockAllProtectedRegistrySessions } from './protectedRegistry/service'
 
 const DIST_PATH = path.join(__dirname, '../dist')
 process.env.DIST = DIST_PATH
@@ -26,6 +29,8 @@ process.env.PUBLIC = app.isPackaged ? DIST_PATH : path.join(DIST_PATH, '../publi
 
 let win: BrowserWindow | null
 let cashDayRolloverTimer: ReturnType<typeof setTimeout> | null = null
+const CASH_RECONCILIATION_TARGET = 241.74
+const CASH_RECONCILIATION_MARKER = 'daily_cash_reconciliation_v0_1_83_241_74'
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
@@ -98,10 +103,12 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   if (cashDayRolloverTimer) clearTimeout(cashDayRolloverTimer)
   closeDb();
+  lockAllProtectedRegistrySessions();
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   app.setAppUserModelId('com.winleaks.vrhubmanagement')
+  cleanupStaleProtectedRegistryTemporaryFiles()
   if (process.platform === 'win32' && getDeviceRole() === 'writer') {
     try {
       const processes = execFileSync('tasklist.exe', ['/FO', 'CSV', '/NH'], {
@@ -131,11 +138,31 @@ app.whenReady().then(() => {
   })
   initDb()
   startBillingPublisher()
+  if (getDeviceRole() === 'writer') {
+    try {
+      const reconciliation = await runStartupCashReconciliation({
+        markerKey: CASH_RECONCILIATION_MARKER,
+        targetBalance: CASH_RECONCILIATION_TARGET,
+        hasBalanceReconciliation: (markerKey) => cashRepo.hasBalanceReconciliation(markerKey),
+        getActiveDay: () => cashRepo.getActiveDay(true),
+        backupDatabase: () => backupDb(),
+        reconcileBalanceOnce: (dayId, targetBalance, markerKey) => (
+          cashRepo.reconcileBalanceOnce(dayId, targetBalance, markerKey)
+        ),
+      })
+      if (reconciliation.applied) {
+        console.log('[DAILY CASH] Soldul Writer a fost reconciliat o singură dată la £241.74.')
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Operația nu a putut fi finalizată.'
+      dialog.showErrorBox('Reconcilierea Daily Cash a eșuat', message)
+    }
+  }
   // Writer publică snapshot-uri; Viewer descarcă doar versiuni Drive mai noi.
   const runAutomaticBackup = async () => {
     if (getDeviceRole() !== 'writer') return
     const result = await backupDb()
-    if (result.success && win) win.webContents.send('backup-completed')
+    if (win && !win.isDestroyed()) win.webContents.send('backup-completed', result)
   }
   const runViewerSync = async () => {
     if (getDeviceRole() !== 'viewer') return
@@ -183,6 +210,7 @@ app.whenReady().then(() => {
   registerSystemHandlers()
   registerDailyCashHandlers()
   registerBillingHandlers()
+  registerProtectedRegistryHandlers()
   initializeUpdater()
   createWindow()
   setTimeout(() => {
@@ -194,4 +222,12 @@ app.whenReady().then(() => {
       createWindow()
     }
   })
+}).catch((error) => {
+  console.error('[STARTUP ERROR] Inițializarea aplicației a eșuat:', error)
+  const message = error instanceof Error ? error.message : 'Operația nu a putut fi finalizată.'
+  dialog.showErrorBox(
+    'VR - Hub Management nu a putut porni',
+    `Datele locale nu au fost modificate. Detalii: ${message}`,
+  )
+  app.quit()
 })

@@ -1,8 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { api } from '../shared/api';
-import { Plus, Edit, Trash2, X, Folder } from 'lucide-react';
+import { Plus, Edit, X, Folder } from 'lucide-react';
 import { CategoryModal } from '../shared/CategoryModal';
 import { NumericInput } from '../components/NumericInput';
+import { BilingualProductName } from '../components/BilingualProductName';
+
+interface RawMaterialForm {
+  name: string;
+  name_ro: string;
+  category_id: string;
+  unit: string;
+  current_stock: number | string;
+  minimum_stock: number | string;
+  notes: string;
+}
 
 export default function RawMaterials() {
   const [items, setItems] = useState<any[]>([]);
@@ -10,9 +21,11 @@ export default function RawMaterials() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
+  const [deviceRole, setDeviceRole] = useState<'writer' | 'viewer'>('viewer');
 
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<RawMaterialForm>({
     name: '',
+    name_ro: '',
     category_id: '',
     unit: 'kg',
     current_stock: 0,
@@ -20,22 +33,26 @@ export default function RawMaterials() {
     notes: ''
   });
 
-  useEffect(() => {
-    loadData();
+  const loadData = useCallback(async () => {
+    const [data, cats] = await Promise.all([
+      api.rawMaterials.getAll(),
+      api.categories.get('raw_material'),
+    ]);
+    setItems(data);
+    setCategories(cats);
   }, []);
 
-  const loadData = async () => {
-    const data = await api.rawMaterials.getAll();
-    setItems(data);
-    const cats = await api.categories.get('raw_material');
-    setCategories(cats);
-  };
+  useEffect(() => {
+    void loadData();
+    void api.system.getDeviceRole().then((role) => setDeviceRole(role.role));
+  }, [loadData]);
 
   const handleOpenModal = (item?: any) => {
     if (item) {
       setEditingItem(item);
       setFormData({
         name: item.name,
+        name_ro: item.name_ro || item.name,
         category_id: item.category_id?.toString() || '',
         unit: item.unit,
         current_stock: item.current_stock,
@@ -46,6 +63,7 @@ export default function RawMaterials() {
       setEditingItem(null);
       setFormData({
         name: '',
+        name_ro: '',
         category_id: '',
         unit: 'kg',
         current_stock: 0,
@@ -72,21 +90,22 @@ export default function RawMaterials() {
         await api.rawMaterials.add(payload);
       }
       setIsModalOpen(false);
-      loadData();
+      await loadData();
     } catch (err) {
-      alert("Eroare la salvare! Posibil nume duplicat.");
+      alert(err instanceof Error ? err.message : 'Materia primă nu a putut fi salvată.');
       console.error(err);
     }
   };
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex flex-wrap justify-between items-center gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-bold text-slate-800">Materii Prime</h1>
-          <p className="text-slate-500 mt-1">Gestionare stoc și ingrediente de bază</p>
+          <p className="text-slate-500 mt-1">Catalog bilingv și stoc gestionate local în programul Windows</p>
         </div>
         <div className="flex gap-3">
+          {deviceRole === 'writer' && <>
           <button
             onClick={() => setIsCategoryModalOpen(true)}
             className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors shadow-sm"
@@ -101,6 +120,7 @@ export default function RawMaterials() {
             <Plus size={20} />
             Adaugă Materie Primă
           </button>
+          </>}
         </div>
       </div>
 
@@ -117,9 +137,11 @@ export default function RawMaterials() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {items.map((item, i) => (
-              <tr key={i} className="hover:bg-slate-50 transition-colors">
-                <td className="p-4 font-medium text-slate-800">{item.name}</td>
+            {items.map((item) => (
+              <tr key={item.id} className="hover:bg-slate-50 transition-colors">
+                <td className="p-4">
+                  <BilingualProductName name={item.name} nameRo={item.name_ro} />
+                </td>
                 <td className="p-4 text-slate-600">
                   <span className="bg-slate-100 text-slate-700 px-2 py-1 rounded-md text-xs font-medium">
                     {item.category_name || '-'}
@@ -133,12 +155,13 @@ export default function RawMaterials() {
                 <td className="p-4 text-slate-500">{item.unit}</td>
                 <td className="p-4 text-right text-slate-500">{item.minimum_stock}</td>
                 <td className="p-4 text-center">
-                  <button
+                  {deviceRole === 'writer' && <button
                     onClick={() => handleOpenModal(item)}
                     className="p-2 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
+                    title="Editează materia primă"
                   >
                     <Edit size={18} />
-                  </button>
+                  </button>}
                 </td>
               </tr>
             ))}
@@ -166,12 +189,22 @@ export default function RawMaterials() {
             </div>
             <form onSubmit={handleSave} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Nume Materie Primă</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Nume în engleză</label>
                 <input
                   type="text" required
                   value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}
                   className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Nume în română</label>
+                <input
+                  type="text" required
+                  value={formData.name_ro} onChange={e => setFormData({...formData, name_ro: e.target.value})}
+                  placeholder="Exemplu: Făină integrală"
+                  className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                />
+                <p className="mt-1 text-xs text-slate-500">Diacriticele sunt păstrate exact așa cum sunt introduse.</p>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

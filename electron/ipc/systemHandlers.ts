@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { createVerifiedSnapshot, restoreDb, lastBackupTime } from '../database/db';
-import { getCloudStatus, connectGoogleDrive, saveToCloud, restoreFromCloud, disconnectCloud, deletePdfFromCloud, syncViewerFromCloud } from '../database/cloudSync';
+import { getCloudStatus, connectGoogleDrive, saveToCloud, restoreFromCloud, disconnectCloud, syncViewerFromCloud } from '../database/cloudSync';
 import { handleTrustedIpc } from './trustedHandler';
 import { getDeviceRole, getDeviceState, setDeviceRole, type DeviceRole } from '../device/deviceRole';
 import {
@@ -14,6 +14,21 @@ import {
   validatePdfFilename,
 } from '../security/fileValidation';
 import { checkForUpdates, downloadUpdate, getUpdateState, installUpdate } from '../updater/updateCoordinator';
+import * as billingRepo from '../database/repositories/billingRepo';
+import { localClientDocumentDirectory } from '../reports/clientDocumentStorage';
+import { openWindowsDocument } from '../reports/windowsDocuments';
+
+async function createAndSaveCloudSnapshot(isAutomatic = false) {
+  const snapshotPath = path.join(app.getPath('temp'), `vr-hub-management-cloud-${randomUUID()}.db`);
+  try {
+    await createVerifiedSnapshot(snapshotPath);
+    return await saveToCloud(isAutomatic, snapshotPath);
+  } catch {
+    return { success: false, error: 'Snapshotul pentru cloud nu a putut fi creat sau verificat.' };
+  } finally {
+    try { if (fs.existsSync(snapshotPath)) fs.unlinkSync(snapshotPath); } catch {}
+  }
+}
 
 export function registerSystemHandlers() {
   handleTrustedIpc('system:getAppVersion', () => {
@@ -40,15 +55,67 @@ export function registerSystemHandlers() {
     }
   });
 
-  handleTrustedIpc('save-pdf-auto', async (event, options: { buffer: Uint8Array, filename: string }) => {
+  const invoiceDocumentIdentity = (invoiceId: number) => {
+    const invoice = billingRepo.getInvoiceById(invoiceId) as any;
+    return {
+      filename: validatePdfFilename(`Factura_${invoice.invoice_number}.pdf`),
+      companyName: invoice.company_name,
+      status: invoice.status,
+      issuerCode: typeof invoice.issuer_code === 'string' && /^[a-z0-9-]{1,40}$/i.test(invoice.issuer_code)
+        ? invoice.issuer_code.toLowerCase()
+        : 'goodness',
+    };
+  };
+
+  const resolveInvoicePdfFile = (invoiceId: number) => {
+    const documentsPath = app.getPath('documents');
+    const identity = invoiceDocumentIdentity(invoiceId);
+    if (identity.status === 'cancelled') throw new Error('O factură anulată nu poate fi trimisă sau printată.');
+    const facturiDir = localClientDocumentDirectory(documentsPath, identity.companyName, 'Facturi');
+    const primaryPath = resolvePdfPath(facturiDir, identity.filename);
+    const candidates = [
+      primaryPath,
+      resolvePdfPath(path.join(documentsPath, 'VR - Hub Management', 'Invoices', identity.issuerCode), identity.filename),
+      resolvePdfPath(path.join(documentsPath, 'Facturi Vatra Romaneasca'), identity.filename),
+    ];
+    const filePath = candidates.find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+    return { identity, filePath, primaryPath };
+  };
+
+  handleTrustedIpc('save-pdf-auto', async (_event, options: { buffer: Uint8Array, invoiceId: number }) => {
     try {
-      const documentsPath = app.getPath('documents');
-      const facturiDir = path.join(documentsPath, 'Facturi Vatra Romaneasca');
+      const identity = invoiceDocumentIdentity(options.invoiceId);
+      const facturiDir = localClientDocumentDirectory(app.getPath('documents'), identity.companyName, 'Facturi');
       if (!fs.existsSync(facturiDir)) {
         fs.mkdirSync(facturiDir, { recursive: true });
       }
-      const filePath = resolvePdfPath(facturiDir, options.filename);
-      fs.writeFileSync(filePath, toValidatedPdfBuffer(options.buffer));
+      const filePath = resolvePdfPath(facturiDir, identity.filename);
+      const temporaryPath = path.join(facturiDir, `.invoice-${randomUUID()}.tmp`);
+      const previousPath = path.join(facturiDir, `.invoice-${randomUUID()}.previous`);
+      let previousMoved = false;
+      try {
+        fs.writeFileSync(temporaryPath, toValidatedPdfBuffer(options.buffer));
+        if (fs.existsSync(filePath)) {
+          fs.renameSync(filePath, previousPath);
+          previousMoved = true;
+        }
+        fs.renameSync(temporaryPath, filePath);
+        if (previousMoved) fs.unlinkSync(previousPath);
+        previousMoved = false;
+      } catch (error) {
+        if (!fs.existsSync(filePath) && previousMoved && fs.existsSync(previousPath)) fs.renameSync(previousPath, filePath);
+        throw error;
+      } finally {
+        try { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); } catch {}
+        try { if (fs.existsSync(previousPath)) fs.unlinkSync(previousPath); } catch {}
+      }
+      const legacyPath = resolvePdfPath(
+        path.join(app.getPath('documents'), 'VR - Hub Management', 'Invoices', identity.issuerCode),
+        identity.filename,
+      );
+      if (legacyPath !== filePath && fs.existsSync(legacyPath)) {
+        try { fs.unlinkSync(legacyPath); } catch (error) { console.error('Legacy invoice PDF cleanup failed:', error); }
+      }
       return { success: true, filePath };
     } catch (err: any) {
       console.error('Eroare salvare auto:', err);
@@ -56,15 +123,27 @@ export function registerSystemHandlers() {
     }
   });
 
-  handleTrustedIpc('open-pdf-file', async (_event, filename: string) => {
+  handleTrustedIpc('open-pdf-file', async (_event, invoiceId: number) => {
     try {
       const documentsPath = app.getPath('documents');
-      const facturiDir = path.join(documentsPath, 'Facturi Vatra Romaneasca');
-      const filePath = resolvePdfPath(facturiDir, filename);
+      const identity = invoiceDocumentIdentity(invoiceId);
+      const facturiDir = localClientDocumentDirectory(documentsPath, identity.companyName, 'Facturi');
+      const filePath = resolvePdfPath(facturiDir, identity.filename);
 
       if (fs.existsSync(filePath)) {
         await shell.openPath(filePath);
         return { success: true, filePath };
+      }
+      const legacyDirectories = [
+        path.join(documentsPath, 'VR - Hub Management', 'Invoices', identity.issuerCode),
+        path.join(documentsPath, 'Facturi Vatra Romaneasca'),
+      ];
+      for (const directory of legacyDirectories) {
+        const legacyPath = resolvePdfPath(directory, identity.filename);
+        if (fs.existsSync(legacyPath)) {
+          await shell.openPath(legacyPath);
+          return { success: true, filePath: legacyPath, legacy: true };
+        }
       }
       return { success: false, notFound: true, filePath };
     } catch (err: any) {
@@ -73,25 +152,26 @@ export function registerSystemHandlers() {
     }
   });
 
-  handleTrustedIpc('delete-pdf-auto', async (_event, filename: string) => {
+  handleTrustedIpc('share-invoice-pdf', async (_event, invoiceId: number) => {
     try {
-      const documentsPath = app.getPath('documents');
-      const facturiDir = path.join(documentsPath, 'Facturi Vatra Romaneasca');
-      const safeFilename = validatePdfFilename(filename);
-      const filePath = resolvePdfPath(facturiDir, safeFilename);
+      const document = resolveInvoicePdfFile(invoiceId);
+      if (!document.filePath) return { success: false, notFound: true, error: 'PDF-ul facturii nu a fost găsit.' };
+      if (process.platform !== 'win32') return { success: false, unsupported: true, error: 'Trimiterea este disponibilă doar în aplicația Windows.' };
+      return await openWindowsDocument('share', document.filePath);
+    } catch (error) {
+      console.error('Invoice share failed:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Factura nu a putut fi trimisă.' };
+    }
+  });
 
-      // 1. Ștergere de pe disk local
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-
-      // 2. Ștergere de pe Google Drive
-      await deletePdfFromCloud(safeFilename);
-
-      return { success: true };
-    } catch (err: any) {
-      console.error('Eroare la ștergerea fișierului PDF:', err);
-      return { success: false, error: err.message };
+  handleTrustedIpc('print-invoice-pdf', async (_event, invoiceId: number) => {
+    try {
+      const document = resolveInvoicePdfFile(invoiceId);
+      if (!document.filePath) return { success: false, notFound: true, error: 'PDF-ul facturii nu a fost găsit.' };
+      return await openWindowsDocument('print', document.filePath);
+    } catch (error) {
+      console.error('Invoice print failed:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Factura nu a putut fi printată.' };
     }
   });
 
@@ -164,24 +244,21 @@ export function registerSystemHandlers() {
 
   handleTrustedIpc('connect-google-drive', async (event) => {
     const result = await connectGoogleDrive();
-    if (result.success && getDeviceRole() === 'viewer') {
+    if (!result.success) return result;
+    if (getDeviceRole() === 'writer') {
+      const initialSync = await createAndSaveCloudSnapshot(false);
+      return { ...result, initialSync };
+    }
+    if (getDeviceRole() === 'viewer') {
       const syncResult = await syncViewerFromCloud();
       if (syncResult.updated) event.sender.send('database-replica-updated', syncResult);
+      return { ...result, viewerSync: syncResult };
     }
     return result;
   });
 
   handleTrustedIpc('save-to-cloud', async () => {
-    const snapshotPath = path.join(app.getPath('temp'), `vr-hub-management-cloud-${randomUUID()}.db`);
-    try {
-      await createVerifiedSnapshot(snapshotPath);
-      return await saveToCloud(false, snapshotPath);
-    } catch (error) {
-      console.error('Manual cloud snapshot failed:', error);
-      return { success: false, error: 'Snapshotul pentru cloud nu a putut fi creat sau verificat.' };
-    } finally {
-      try { if (fs.existsSync(snapshotPath)) fs.unlinkSync(snapshotPath); } catch {}
-    }
+    return await createAndSaveCloudSnapshot(false);
   });
 
   handleTrustedIpc('restore-from-cloud', async (_event, fileId?: string) => {
@@ -193,11 +270,12 @@ export function registerSystemHandlers() {
   });
 
   handleTrustedIpc('upload-pdf-to-cloud', async (_event, invoiceId: number) => {
-    const { uploadInvoicePdf } = await import('../database/cloudSync');
+    invoiceDocumentIdentity(invoiceId);
+    const {uploadInvoicePdf}=await import('../database/cloudSync');
     return uploadInvoicePdf(invoiceId);
   });
   handleTrustedIpc('billing:reconcilePdfs', async () => {
-    const {reconcileInvoicePdfs} = await import('../database/cloudSync');
+    const {reconcileInvoicePdfs}=await import('../database/cloudSync');
     return reconcileInvoicePdfs();
   });
 
@@ -219,12 +297,17 @@ export function registerSystemHandlers() {
     const state = getDeviceState();
     const cloud = await getCloudStatus();
     return {
-      active: cloud.isConnected,
+      active: cloud.syncHealth === 'healthy',
+      connected: cloud.isConnected,
+      connectionHealthy: cloud.connectionHealthy,
+      syncHealth: cloud.syncHealth,
+      lastError: cloud.lastError,
+      rootFolderName: cloud.rootFolderName,
       role: state.role,
       lastSync: state.role === 'viewer' ? state.lastRemoteModifiedTime || null : cloud.lastCloudBackup,
-      message: cloud.isConnected
-        ? state.role === 'viewer' ? 'Viewer conectat la Google Drive' : 'Writer conectat la Google Drive'
-        : 'Google Drive neconectat',
+      message: cloud.syncHealth === 'healthy'
+        ? state.role === 'viewer' ? 'Viewer actualizat din Google Drive' : 'Writer sincronizat cu Google Drive'
+        : cloud.lastError || (cloud.isConnected ? 'Copia Google Drive nu este la zi' : 'Google Drive neconectat'),
     };
   });
 }

@@ -7,13 +7,14 @@ import path from 'path'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
-    react(),
+    react({}),
     electron([
       {
         entry: 'electron/main.ts',
         vite: {
           define: {
             __VR_HUB_GOOGLE_CLIENT_ID__: JSON.stringify(process.env.VR_HUB_GOOGLE_CLIENT_ID || ''),
+            __VR_HUB_GOOGLE_CLIENT_SECRET__: JSON.stringify(process.env.VR_HUB_GOOGLE_CLIENT_SECRET || ''),
           },
           build: {
             rollupOptions: {

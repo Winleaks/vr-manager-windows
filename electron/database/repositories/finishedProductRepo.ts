@@ -1,18 +1,38 @@
 import { db } from '../db';
+import type { VrBakerProduct } from '../../integrations/vrBakerApiClient';
+import { syncFinishedProductCatalog } from '../finishedProductCatalog';
 
 export const finishedProductRepo = {
   getAll: () => {
-    return db.prepare(`
-      SELECT fp.*, c.name as category_name 
+    const rows = db.prepare(`
+      SELECT fp.*, COALESCE(c.name, fp.source_category) as category_name,
+             cp.name AS catalog_name, cp.name_ro AS catalog_name_ro,
+             COALESCE(cp.display_order, fp.display_order) AS effective_display_order
       FROM finished_products fp
       LEFT JOIN categories c ON fp.category_id = c.id
+      LEFT JOIN cloud_products cp ON cp.supabase_product_id = fp.external_product_id
       WHERE fp.is_active = 1
-      ORDER BY fp.name ASC
-    `).all();
+      ORDER BY CASE WHEN COALESCE(cp.display_order, fp.display_order) IS NULL THEN 1 ELSE 0 END,
+               COALESCE(cp.display_order, fp.display_order), COALESCE(cp.name, fp.name) COLLATE NOCASE, fp.id
+    `).all() as any[];
+    return rows.map(({ catalog_name, catalog_name_ro, effective_display_order, ...row }) => ({
+      ...row,
+      display_order: effective_display_order,
+      name: catalog_name || row.name,
+      name_ro: catalog_name_ro || row.name_ro || catalog_name || row.name,
+    }));
   },
   
   getById: (id: number) => {
-    return db.prepare('SELECT * FROM finished_products WHERE id = ?').get(id);
+    const result = db.prepare(`
+      SELECT fp.*, cp.name AS catalog_name, cp.name_ro AS catalog_name_ro,
+             COALESCE(cp.display_order, fp.display_order) AS effective_display_order
+      FROM finished_products fp LEFT JOIN cloud_products cp ON cp.supabase_product_id = fp.external_product_id
+      WHERE fp.id = ?
+    `).get(id) as any;
+    if (!result) return result;
+    const { catalog_name, catalog_name_ro, effective_display_order, ...row } = result;
+    return { ...row, display_order: effective_display_order, name: catalog_name || row.name, name_ro: catalog_name_ro || row.name_ro || catalog_name || row.name };
   },
   
   create: (data: any) => {
@@ -50,5 +70,7 @@ export const finishedProductRepo = {
     // Soft delete
     db.prepare('UPDATE finished_products SET is_active = 0 WHERE id = ?').run(id);
     return true;
-  }
+  },
+
+  syncFromVrBaker: (products: VrBakerProduct[]) => syncFinishedProductCatalog(db, products),
 };

@@ -1,5 +1,5 @@
+import {installBillingPublication} from './billingPublication';
 import Database from 'better-sqlite3'
-import { installBillingPublication } from './billingPublication'
 import path from 'path'
 import { app } from 'electron'
 import fs from 'fs'
@@ -8,6 +8,14 @@ import { initialSchema, seedData } from './schema'
 import { createBackupFilename, selectBackupFilesToDelete } from './backupPolicy'
 import { verifyDatabaseFile } from './databaseValidation'
 import { migrateLegacyIdentity } from '../migration/identityMigration'
+import { repairInvalidFinishedProductStocks } from './stockDataRepair'
+import { ensureFinishedProductCatalogSchema } from './finishedProductCatalog'
+import { ensureRawMaterialLocalizationSchema } from './rawMaterialLocalization'
+import { ensureInvoiceItemLocalizationSchema } from './invoiceItemLocalization'
+import { ensureBillingIssuerSchema } from './billingIssuers'
+import { ensureCreditNoteSchema } from './creditNotes'
+import { ensureBillingPostcodeSchema } from './billingPostcodes'
+import { ensureProductOrderingSchema } from './productOrdering'
 
 export { verifyDatabaseFile } from './databaseValidation'
 
@@ -38,6 +46,7 @@ if (!fs.existsSync(dbFolder)) {
 }
 
 export const dbPath = path.join(dbFolder, 'bazadedate.db')
+let databaseExistedAtStartup = fs.existsSync(dbPath)
 
 export function evaluateDb(filePath: string) {
   try {
@@ -132,6 +141,7 @@ if (!fs.existsSync(dbPath)) {
     }
   }
 }
+databaseExistedAtStartup = fs.existsSync(dbPath)
 
 function openDatabase() {
   const connection = new Database(dbPath, { verbose: isDev ? console.log : undefined })
@@ -152,6 +162,10 @@ export let lastVerifiedBackupTime: string | null = null;
 export function initDb() {
   // 1. Execuția schemei și a indecșilor B-Tree
   db.exec(initialSchema)
+
+  // Credit Notes changes the authoritative financial balance. Keep a verified,
+  // pre-migration copy so the Writer can be recovered without touching Drive.
+  createPreMigrationSnapshotIfNeeded(13)
   
   // 2. Rularea migrărilor de schemă
   runMigrations()
@@ -166,6 +180,22 @@ export function initDb() {
   if (count.count === 0) {
     db.exec(seedData)
   }
+}
+
+function createPreMigrationSnapshotIfNeeded(targetVersion: number) {
+  if (!databaseExistedAtStartup) return
+  const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get()
+  const version = table
+    ? Number((db.prepare('SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations').get() as { version: number }).version)
+    : 0
+  if (version >= targetVersion) return
+  const backupDir = path.join(dbFolder, 'backups')
+  fs.mkdirSync(backupDir, { recursive: true })
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const snapshotPath = path.join(backupDir, `pre-migration-v${targetVersion}-${stamp}.db`)
+  db.prepare('VACUUM INTO ?').run(snapshotPath)
+  verifyDatabaseFile(snapshotPath)
+  console.log(`[MIGRATION] Snapshot verificat creat înainte de v${targetVersion}: ${snapshotPath}`)
 }
 
 function runMigrations() {
@@ -267,7 +297,92 @@ function runMigrations() {
           `);
         }
       },
-      { version: 7, description: "Publicare financiară VR Baker", up: () => installBillingPublication(db) }
+      {
+        version: 7,
+        description: "Adăugare jurnal pentru închideri și rapoarte Daily Cash",
+        up: () => {
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS cash_day_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              cash_day_id INTEGER NOT NULL,
+              event_type TEXT NOT NULL CHECK(event_type IN ('manual_close', 'automatic_close', 'reopen', 'report_prepared')),
+              balance REAL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY(cash_day_id) REFERENCES cash_days(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_cash_day_events_day ON cash_day_events(cash_day_id, created_at);
+          `);
+        }
+      },
+      {
+        version: 8,
+        description: "Reparare stocuri invalide pentru produse finite din bazele vechi",
+        up: () => {
+          const repairs = repairInvalidFinishedProductStocks(db);
+          if (repairs.length > 0) {
+            console.log(`[MIGRATION] Au fost normalizate ${repairs.length} stocuri de produse finite.`);
+          }
+        }
+      },
+      {
+        version: 9,
+        description: "Conectare produse finite la catalogul VR Baker Platform",
+        up: () => {
+          ensureFinishedProductCatalogSchema(db);
+        }
+      },
+      {
+        version: 10,
+        description: "Adăugare denumiri bilingve pentru materiile prime locale",
+        up: () => {
+          ensureRawMaterialLocalizationSchema(db);
+        }
+      },
+      {
+        version: 11,
+        description: "Păstrare denumiri bilingve în pozițiile facturilor",
+        up: () => {
+          ensureFinishedProductCatalogSchema(db);
+          ensureInvoiceItemLocalizationSchema(db);
+        }
+      },
+      {
+        version: 12,
+        description: "Facturare cu societăți emitente, serii și credite separate",
+        up: () => {
+          ensureBillingIssuerSchema(db);
+        }
+      },
+      {
+        version: 13,
+        description: "Credit Notes, registru de credit și legături sigure cu stocul",
+        up: () => {
+          ensureBillingIssuerSchema(db);
+          ensureCreditNoteSchema(db);
+        }
+      },
+      {
+        version: 14,
+        description: "Păstrare postcode separat pentru magazinele VR Baker",
+        up: () => {
+          ensureBillingPostcodeSchema(db);
+        }
+      },
+      {
+        version: 15,
+        description: "Ordinea produselor sincronizată din VR Baker Platform",
+        up: () => {
+          ensureProductOrderingSchema(db);
+        }
+      },
+      {
+        version: 16,
+        description: "Alegere implicită sau explicită a emitentului per client",
+        up: () => {
+          ensureBillingIssuerSchema(db);
+        }
+      }
+      ,{version:17,description:'Publicare financiară VR Baker',up:()=>installBillingPublication(db)}
     ];
 
     for (const migration of migrations) {
@@ -283,6 +398,7 @@ function runMigrations() {
     }
   } catch (e) {
     console.error('[MIGRATION ERROR] Eroare la rularea migrărilor:', e);
+    throw e;
   }
 }
 
@@ -293,6 +409,13 @@ export interface BackupResult {
   success: boolean;
   path?: string;
   error?: string;
+  cloud?: {
+    success: boolean;
+    uploaded?: boolean;
+    skipped?: boolean;
+    error?: string;
+    modifiedTime?: string | null;
+  };
 }
 
 function withDatabaseMaintenance<T>(operation: () => Promise<T>): Promise<T> {
@@ -394,11 +517,12 @@ export function backupDb(): Promise<BackupResult> {
     try {
       const { saveToCloud } = require('./cloudSync')
       const cloudResult = await saveToCloud(true, result.path)
-      if (!cloudResult.success) console.warn('Silent cloud sync skipped or failed.')
-    } catch (error) {
-      console.warn('Silent cloud sync failed:', error)
+      if (!cloudResult.success) console.warn('[CLOUD SYNC] Backupul local a reușit, dar publicarea în Drive nu a fost confirmată.')
+      return { ...result, cloud: cloudResult }
+    } catch {
+      console.warn('[CLOUD SYNC] Backupul local a reușit, dar sincronizarea Drive a eșuat neașteptat.')
+      return { ...result, cloud: { success: false, error: 'Sincronizarea Google Drive a eșuat.' } }
     }
-    return result
   }).catch((error: unknown) => {
     console.error('Backup failed:', error)
     return { success: false, error: 'Backupul local nu a putut fi creat sau verificat.' }

@@ -1,6 +1,12 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { registerFonts, fixRomanianDiacritics } from "./fonts/arialFonts";
+import { registerFonts, fixRomanianDiacritics } from "./fonts/arialFonts.ts";
+import {
+  drawPdfFooters,
+  formatAddressWithPostcode,
+  formatPdfDate,
+  preparePdfFooter,
+} from './pdfDocumentHelpers.ts';
 
 // Helper pentru conversie Hex în RGB
 function hexToRgb(hex: string): [number, number, number] {
@@ -9,6 +15,16 @@ function hexToRgb(hex: string): [number, number, number] {
     ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)]
     : [79, 70, 229]; // Indigo-600 implicit
 }
+
+export function invoiceProductDescription(item: { productName?: string; name_ro?: string }) {
+  const english = fixRomanianDiacritics(item.productName || 'Product').toLocaleUpperCase('en-GB');
+  return item.name_ro
+    ? `${english}\n${fixRomanianDiacritics(item.name_ro).toLocaleUpperCase('ro-RO')}`
+    : english;
+}
+
+export const INVOICE_VAT_COLUMN_WIDTHS = [8, 95, 13, 12, 24, 12, 18] as const;
+export const INVOICE_NON_VAT_COLUMN_WIDTHS = [8, 107, 13, 12, 24, 18] as const;
 
 export function generateInvoicePDF(
   settings: any,
@@ -20,6 +36,7 @@ export function generateInvoicePDF(
       cui?: string; // VAT Number client
       regCom?: string; // CRN client
       address?: string;
+      postcode?: string;
       county?: string;
       city?: string;
       phone?: string;
@@ -27,6 +44,7 @@ export function generateInvoicePDF(
     store?: {
       name: string;
       address?: string;
+      postcode?: string;
       phone?: string;
     };
     items: Array<{
@@ -78,8 +96,21 @@ export function generateInvoicePDF(
   doc.setFont("Arial", "normal");
   doc.setTextColor(100, 116, 139); // Slate-500
   const series = settings.invoiceSeries || 'INV';
-  doc.text(`Ref: ${series} - #${invoiceData.invoiceNumber}`, 196, currentY + 8.5, { align: "right" });
-  doc.text(`Date: ${invoiceData.invoiceDate}`, 196, currentY + 12.5, { align: "right" });
+  const invoiceReference = invoiceData.invoiceNumber.startsWith(`${series}-`)
+    ? invoiceData.invoiceNumber
+    : `${series}-${invoiceData.invoiceNumber}`;
+  const referenceLabel = 'Ref: ';
+  const referenceValue = `#${invoiceReference}`;
+  const referenceLabelWidth = doc.getTextWidth(referenceLabel);
+  doc.setFont('Arial', 'bold');
+  const referenceValueWidth = doc.getTextWidth(referenceValue);
+  const referenceX = 196 - referenceLabelWidth - referenceValueWidth;
+  doc.setFont('Arial', 'normal');
+  doc.text(referenceLabel, referenceX, currentY + 8.5);
+  doc.setFont('Arial', 'bold');
+  doc.text(referenceValue, referenceX + referenceLabelWidth, currentY + 8.5);
+  doc.setFont('Arial', 'normal');
+  doc.text(`Date: ${formatPdfDate(invoiceData.invoiceDate)}`, 196, currentY + 12.5, { align: "right" });
 
   currentY += 18;
 
@@ -131,8 +162,11 @@ export function generateInvoicePDF(
     doc.text(`CRN: ${settings.issuerCrn}`, leftX, issuerY);
     issuerY += 3.6;
   }
-  if (settings.issuerVat) {
+  if (settings.vatRegistered !== false && settings.issuerVat) {
     doc.text(`VAT No: ${settings.issuerVat}`, leftX, issuerY);
+    issuerY += 3.6;
+  } else if (settings.vatRegistered === false) {
+    doc.text('Not VAT registered', leftX, issuerY);
     issuerY += 3.6;
   }
 
@@ -179,8 +213,9 @@ export function generateInvoicePDF(
     doc.text(`CRN: ${invoiceData.client.regCom}`, rightX, clientY);
     clientY += 3.6;
   }
-  if (invoiceData.client.address) {
-    const addressStr = fixRomanianDiacritics(`${invoiceData.client.address}${invoiceData.client.city ? ', ' + invoiceData.client.city : ''}`);
+  if (invoiceData.client.address || invoiceData.client.postcode) {
+    const addressWithCity = `${invoiceData.client.address}${invoiceData.client.city ? `, ${invoiceData.client.city}` : ''}`;
+    const addressStr = fixRomanianDiacritics(formatAddressWithPostcode(addressWithCity, invoiceData.client.postcode));
     const lines = doc.splitTextToSize(`Address: ${addressStr}`, cardWidth);
     doc.text(lines, rightX, clientY);
     clientY += (lines.length * 3.6);
@@ -198,9 +233,13 @@ export function generateInvoicePDF(
     doc.setTextColor(71, 85, 105);
     clientY += 3.6;
     if (invoiceData.store.address) {
-      const locLines = doc.splitTextToSize(fixRomanianDiacritics(`Location: ${invoiceData.store.address}`), cardWidth);
+      const storeAddress = formatAddressWithPostcode(invoiceData.store.address, invoiceData.store.postcode);
+      const locLines = doc.splitTextToSize(fixRomanianDiacritics(`Location: ${storeAddress}`), cardWidth);
       doc.text(locLines, rightX, clientY);
       clientY += (locLines.length * 3.6);
+    } else if (invoiceData.store.postcode) {
+      doc.text(fixRomanianDiacritics(`Location: ${formatAddressWithPostcode('', invoiceData.store.postcode)}`), rightX, clientY);
+      clientY += 3.6;
     }
     if (invoiceData.store.phone) {
       doc.text(fixRomanianDiacritics(`Store Phone: ${invoiceData.store.phone}`), rightX, clientY);
@@ -211,29 +250,25 @@ export function generateInvoicePDF(
   currentY = Math.max(issuerY, clientY) + 3;
 
   // --- TABEL PRODUSE COMPACT ---
-  const tableColumn = ["#", "Description", "Unit", "Qty", "Unit Price (£)", "VAT", "Total (£)"];
+  const includesVat = settings.vatRegistered !== false;
+  const tableColumn = includesVat
+    ? ["#", "Description", "Unit", "Qty", "Unit Price (£)", "VAT", "Total (£)"]
+    : ["#", "Description", "Unit", "Qty", "Unit Price (£)", "Total (£)"];
   const tableRows: any[] = [];
 
   invoiceData.items.forEach((item, index) => {
-    let mainTitle = fixRomanianDiacritics(item.productName || 'Produs');
-    if (item.variant_label) {
-      mainTitle += ` [${fixRomanianDiacritics(item.variant_label)}]`;
-    }
-    
-    let descriptionText = mainTitle;
-    if (item.name_ro) {
-      descriptionText += ` / ${fixRomanianDiacritics(item.name_ro)}`;
-    }
+    const descriptionText = invoiceProductDescription(item);
 
-    tableRows.push([
+    const row = [
       (index + 1).toString(),
       descriptionText,
       fixRomanianDiacritics(item.unit || "buc"),
       item.quantity.toString(),
       item.unitPrice.toFixed(2),
-      "0%",
-      item.totalPrice.toFixed(2)
-    ]);
+    ];
+    if (includesVat) row.push('0%');
+    row.push(item.totalPrice.toFixed(2));
+    tableRows.push(row);
   });
 
   // Calcul nuanță rânduri alternate bazat pe culoare și opacitate din setări
@@ -247,6 +282,10 @@ export function generateInvoicePDF(
   const altG = Math.round(255 * (1 - alpha) + tg * alpha);
   const altB = Math.round(255 * (1 - alpha) + tb * alpha);
 
+  const footerLayout = preparePdfFooter(doc, settings.invoiceFooter || 'Thank you for your business!');
+  const summaryHeight = 18;
+  const summaryGap = 4;
+
   autoTable(doc, {
     startY: currentY,
     head: [tableColumn],
@@ -255,7 +294,9 @@ export function generateInvoicePDF(
     styles: {
       font: 'Arial',
       fontSize: 7.5,
-      cellPadding: 1.5
+      cellPadding: 1.5,
+      valign: 'middle',
+      lineWidth: 0,
     },
     headStyles: {
       font: 'Arial',
@@ -263,32 +304,50 @@ export function generateInvoicePDF(
       fillColor: [r, g, b],
       textColor: [255, 255, 255],
       fontSize: 7.5,
-      cellPadding: 2
+      cellPadding: { top: 2, right: 1.2, bottom: 2, left: 1.2 },
+      valign: 'middle',
     },
     bodyStyles: {
       font: 'Arial',
       fontStyle: 'normal',
       textColor: [30, 41, 59], // Slate-800
       fontSize: 7.5,
-      cellPadding: 1.5
+      cellPadding: 1.5,
+      valign: 'middle',
     },
     alternateRowStyles: {
       fillColor: [altR, altG, altB]
     },
-    columnStyles: {
-      0: { halign: 'center', cellWidth: 9 },
-      1: { cellWidth: 77 },
-      2: { halign: 'center', cellWidth: 14 },
-      3: { halign: 'right', cellWidth: 16 },
-      4: { halign: 'right', cellWidth: 22 },
-      5: { halign: 'center', cellWidth: 16 },
-      6: { halign: 'right', cellWidth: 28 }
+    columnStyles: includesVat ? {
+      0: { halign: 'center', cellWidth: INVOICE_VAT_COLUMN_WIDTHS[0] },
+      1: { halign: 'left', cellWidth: INVOICE_VAT_COLUMN_WIDTHS[1] },
+      2: { halign: 'center', cellWidth: INVOICE_VAT_COLUMN_WIDTHS[2] },
+      3: { halign: 'center', cellWidth: INVOICE_VAT_COLUMN_WIDTHS[3] },
+      4: { halign: 'center', cellWidth: INVOICE_VAT_COLUMN_WIDTHS[4] },
+      5: { halign: 'center', cellWidth: INVOICE_VAT_COLUMN_WIDTHS[5] },
+      6: { halign: 'center', cellWidth: INVOICE_VAT_COLUMN_WIDTHS[6] }
+    } : {
+      0: { halign: 'center', cellWidth: INVOICE_NON_VAT_COLUMN_WIDTHS[0] },
+      1: { halign: 'left', cellWidth: INVOICE_NON_VAT_COLUMN_WIDTHS[1] },
+      2: { halign: 'center', cellWidth: INVOICE_NON_VAT_COLUMN_WIDTHS[2] },
+      3: { halign: 'center', cellWidth: INVOICE_NON_VAT_COLUMN_WIDTHS[3] },
+      4: { halign: 'center', cellWidth: INVOICE_NON_VAT_COLUMN_WIDTHS[4] },
+      5: { halign: 'center', cellWidth: INVOICE_NON_VAT_COLUMN_WIDTHS[5] }
     },
-    margin: { left: 14, right: 14 }
+    margin: { left: 14, right: 14, bottom: footerLayout.reservedBottom + summaryHeight + summaryGap },
+    rowPageBreak: 'avoid',
+    showHead: 'everyPage',
+    tableLineWidth: 0,
   });
 
   // --- SUMMARY CARD (TOTAL DE PLATĂ) ---
-  const finalTableY = ((doc as any).lastAutoTable?.finalY || currentY + 30) + 4;
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const footerTop = pageHeight - footerLayout.reservedBottom;
+  let finalTableY = ((doc as any).lastAutoTable?.finalY || currentY + 30) + summaryGap;
+  if (finalTableY + summaryHeight > footerTop - 2) {
+    doc.addPage();
+    finalTableY = 14;
+  }
   
   const summaryBoxWidth = 68;
   const summaryBoxX = 196 - summaryBoxWidth;
@@ -304,9 +363,9 @@ export function generateInvoicePDF(
   doc.text(`£${invoiceData.totalAmount.toFixed(2)}`, 191, finalTableY + 4.5, { align: "right" });
 
   doc.setTextColor(100, 116, 139);
-  doc.text("VAT (0%):", summaryBoxX + 5, finalTableY + 9);
+  doc.text(includesVat ? "VAT (0%):" : "VAT:", summaryBoxX + 5, finalTableY + 9);
   doc.setTextColor(15, 23, 42);
-  doc.text("£0.00", 191, finalTableY + 9, { align: "right" });
+  doc.text(includesVat ? "£0.00" : "Not charged", 191, finalTableY + 9, { align: "right" });
 
   doc.setFontSize(9);
   doc.setFont("Arial", "bold");
@@ -314,34 +373,21 @@ export function generateInvoicePDF(
   doc.text("Total Due:", summaryBoxX + 5, finalTableY + 14.5);
   doc.text(`£${invoiceData.totalAmount.toFixed(2)}`, 191, finalTableY + 14.5, { align: "right" });
 
-  // --- FOOTER & PAYMENT TERMS ---
-  const pageHeight = doc.internal.pageSize.height;
-  const footerY = pageHeight - 12;
+  // Footerul este desenat după ce numărul total de pagini este cunoscut.
+  drawPdfFooters(doc, footerLayout);
 
-  doc.setDrawColor(226, 232, 240);
-  doc.line(14, footerY - 4, 196, footerY - 4);
-
-  if (settings.invoiceFooter) {
-    doc.setFontSize(7.5);
-    doc.setFont("Arial", "normal");
-    doc.setTextColor(100, 116, 139);
-    const lines = doc.splitTextToSize(fixRomanianDiacritics(settings.invoiceFooter), 150);
-    doc.text(lines, 14, footerY);
-  } else {
-    doc.setFontSize(7.5);
-    doc.setFont("Arial", "normal");
-    doc.setTextColor(148, 163, 184); // Slate-400
-    doc.text("Thank you for your business!", 14, footerY);
+  if (settings.testDocument === true) {
+    const pages = doc.getNumberOfPages();
+    for (let page = 1; page <= pages; page += 1) {
+      doc.setPage(page);
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(28);
+      doc.setTextColor(220, 38, 38);
+      doc.text('TEST - NOT A TAX INVOICE', 105, 148, { align: 'center', angle: 35 });
+    }
   }
-
-  // Număr Pagină
-  doc.setFontSize(7.5);
-  doc.setFont("Arial", "normal");
-  doc.setTextColor(148, 163, 184);
-  doc.text("Page 1 of 1", 196, footerY, { align: "right" });
 
   // Returnare Uint8Array
   const arrayBuffer = doc.output('arraybuffer');
   return new Uint8Array(arrayBuffer);
 }
-

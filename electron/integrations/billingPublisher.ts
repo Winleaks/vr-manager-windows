@@ -14,9 +14,15 @@ export async function publishBilling() {
     if (getDeviceRole() !== "writer") return;
     const connection = db;
     const client = createVrBakerClient();
-    const control = await client.request<{ sync_enabled: boolean }>(
+    const control = await client.request<{ sync_enabled: boolean; protocol_version?: number; drive_folder_id?: string }>(
       "billing.status",
     );
+    if(control.drive_folder_id && /^[A-Za-z0-9_-]{10,200}$/.test(control.drive_folder_id)) {
+      const setting=db.prepare("SELECT value FROM app_settings WHERE key='invoice_drive_folder_id'").get() as {value:string}|undefined;
+      if(setting?.value && setting.value!==control.drive_folder_id) throw new Error('Folderul facturilor diferă de platformă.');
+      db.prepare("INSERT INTO app_settings(key,value) VALUES('invoice_drive_folder_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(control.drive_folder_id);
+    }
+    if(control.sync_enabled && control.protocol_version !== 2) throw new Error('Platforma necesită actualizarea protocolului financiar.');
     if (!control.sync_enabled || getDeviceRole() !== "writer") return;
     const queue = db.prepare(
       "SELECT company_id FROM billing_publication_queue WHERE revision>published_revision AND retry_at<=? ORDER BY company_id",
@@ -59,7 +65,7 @@ export async function publishBilling() {
       }
     }
   } catch {
-    /* Endpoint/token unavailable: retain the persistent queue for the next attempt. */
+    if(getDeviceRole()==='writer') db.prepare("UPDATE billing_publication_queue SET last_error=?,retry_at=? WHERE revision>published_revision").run('Publicarea este indisponibilă. Verifică protocolul platformei și permisiunea billing:write.',Date.now()+300000);
   } finally {
     running = false;
   }

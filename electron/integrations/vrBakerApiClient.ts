@@ -10,11 +10,26 @@ export interface VrBakerCompany {
   registrationNumber: string;
 }
 
+export interface VrBakerDriver {
+  id: string;
+  name: string;
+}
+
+export interface VrBakerZone {
+  id: string;
+  name: string;
+  color: string;
+  driver: VrBakerDriver | null;
+}
+
 export interface VrBakerStore {
   id: string;
   name: string;
   address: string;
+  postcode?: string;
   phone: string;
+  routeOrder: number | null;
+  zone: VrBakerZone | null;
   company: VrBakerCompany | null;
 }
 
@@ -27,6 +42,7 @@ export interface VrBakerOrderItem {
   unit: string;
   category: string;
   priceStandard: number;
+  displayOrder: number | null;
   unitPrice: number;
   quantity: number;
   available: boolean;
@@ -49,6 +65,7 @@ export interface VrBakerProduct {
   unit: string;
   category: string;
   priceStandard: number;
+  displayOrder: number | null;
   available: boolean;
 }
 
@@ -60,7 +77,11 @@ interface RequestOptions {
   wait?: (milliseconds: number) => Promise<void>;
 }
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// PostgreSQL's uuid type accepts the canonical 8-4-4-4-12 hexadecimal shape
+// without requiring RFC version/variant marker bits. VR Baker contains legacy
+// UUID rows with those otherwise-valid marker nibbles, so validate exactly the
+// database representation instead of rejecting valid database identifiers.
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
 
@@ -96,6 +117,24 @@ function finiteNonNegative(value: unknown, label: string) {
   return parsed;
 }
 
+function optionalDisplayOrder(value: unknown) {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 1_000_000) {
+    throw new Error('Ordinea produsului este invalidă.');
+  }
+  return parsed;
+}
+
+function optionalRouteOrder(value: unknown) {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 1_000_000) {
+    throw new Error('Ordinea magazinului în rută este invalidă.');
+  }
+  return parsed;
+}
+
 export function validateWeeklyPeriod(startDate: string, endDate: string) {
   if (!ISO_DATE_PATTERN.test(startDate) || !ISO_DATE_PATTERN.test(endDate)) {
     throw new Error('Perioada trebuie să folosească formatul YYYY-MM-DD.');
@@ -122,13 +161,36 @@ function parseCompany(value: unknown): VrBakerCompany | null {
   };
 }
 
+function parseDriver(value: unknown): VrBakerDriver | null {
+  if (value === null || value === undefined) return null;
+  const driver = requireRecord(value, 'Șoferul zonei VR Baker');
+  return {
+    id: requireUuid(driver.id, 'ID șofer'),
+    name: requireString(driver.name, 'Numele șoferului', 300),
+  };
+}
+
+function parseZone(value: unknown): VrBakerZone | null {
+  if (value === null || value === undefined) return null;
+  const zone = requireRecord(value, 'Zona VR Baker');
+  return {
+    id: requireUuid(zone.id, 'ID zonă'),
+    name: requireString(zone.name, 'Numele zonei', 300),
+    color: optionalString(zone.color, 32) || '#64748B',
+    driver: parseDriver(zone.driver),
+  };
+}
+
 function parseStore(value: unknown): VrBakerStore {
   const store = requireRecord(value, 'Magazinul VR Baker');
   return {
     id: requireUuid(store.id, 'ID magazin'),
     name: requireString(store.name, 'Numele magazinului', 300),
     address: optionalString(store.address),
+    postcode: optionalString(store.postcode, 20),
     phone: optionalString(store.phone, 100),
+    routeOrder: optionalRouteOrder(store.route_order),
+    zone: parseZone(store.zone),
     company: parseCompany(store.client_company),
   };
 }
@@ -143,6 +205,7 @@ function parseProduct(value: unknown): VrBakerProduct {
     unit: optionalString(product.unit, 50) || 'buc',
     category: optionalString(product.category, 100) || 'patisserie',
     priceStandard: finiteNonNegative(product.price_standard ?? 0, 'Prețul standard'),
+    displayOrder: optionalDisplayOrder(product.display_order),
     available: product.available !== false,
   };
 }
@@ -243,11 +306,16 @@ export class VrBakerApiClient {
   }
 
   async fetchWeeklyOrders(startDate: string, endDate: string) {
+    return (await this.fetchWeeklyBillingSnapshot(startDate, endDate)).orders;
+  }
+
+  async fetchWeeklyBillingSnapshot(startDate: string, endDate: string) {
     validateWeeklyPeriod(startDate, endDate);
     const collected: VrBakerOrder[] = [];
+    const zones = new Map<string, VrBakerZone>();
     let cursor: string | null = null;
     for (let page = 0; page < 100; page += 1) {
-      const data = await this.request<{ orders: unknown[]; next_cursor?: string | null }>('orders.weekly_export', {
+      const data = await this.request<{ orders: unknown[]; zones?: unknown[]; next_cursor?: string | null }>('orders.weekly_export', {
         week_start: startDate,
         week_end: endDate,
         cursor,
@@ -256,8 +324,24 @@ export class VrBakerApiClient {
       if (!data || !Array.isArray(data.orders)) throw new Error('Exportul săptămânal VR Baker este invalid.');
       const parsed = data.orders.map(parseOrder);
       collected.push(...parsed);
+      if (data.zones !== undefined) {
+        if (!Array.isArray(data.zones) || data.zones.length > 5_000) throw new Error('Lista zonelor VR Baker este invalidă.');
+        for (const rawZone of data.zones) {
+          const zone = parseZone(rawZone);
+          if (!zone) throw new Error('Zona VR Baker este invalidă.');
+          zones.set(zone.id, zone);
+        }
+      }
+      for (const order of parsed) {
+        if (order.store.zone) zones.set(order.store.zone.id, order.store.zone);
+      }
       const next = data.next_cursor || null;
-      if (!next) return collected;
+      if (!next) {
+        return {
+          orders: collected,
+          zones: [...zones.values()].sort((a, b) => a.name.localeCompare(b.name, 'ro')),
+        };
+      }
       if (!UUID_PATTERN.test(next) || next === cursor) throw new Error('Paginarea VR Baker este invalidă.');
       cursor = next;
     }
@@ -267,6 +351,8 @@ export class VrBakerApiClient {
   async fetchProducts() {
     const data = await this.request<unknown[]>('products.list', { available: true, limit: 1000 });
     if (!Array.isArray(data)) throw new Error('Catalogul VR Baker este invalid.');
+    if (data.length === 0) throw new Error('Catalogul VR Baker este gol; produsele locale nu au fost modificate.');
+    if (data.length >= 1000) throw new Error('Catalogul VR Baker a atins limita API; sincronizarea a fost oprită pentru a evita un import incomplet.');
     return data.map(parseProduct);
   }
 

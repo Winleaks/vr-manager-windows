@@ -208,7 +208,7 @@ const actions: Record<string, ActionDefinition> = {
     methods: new Set(["POST"]), scope: "billing:write", mutates: false,
     handler: async () => {
       const {data,error}=await supabaseAdmin.from("billing_control").select("sync_enabled").single();
-      ensureDatabaseSuccess(error); return data;
+      ensureDatabaseSuccess(error); return {...data,protocol_version:2,drive_folder_id:Deno.env.get("BILLING_DRIVE_FOLDER_ID")||null};
     },
   },
   "billing.stage": {

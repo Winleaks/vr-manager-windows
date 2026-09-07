@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { normalizeNumericInput } from '../../src/utils/numericInput.ts';
+import { normalizeNumericInput, normalizePinInput } from '../../src/utils/numericInput.ts';
 
 test('keyboard numeric input accepts whole amounts, decimals and comma separator', () => {
   assert.equal(normalizeNumericInput('1'), '1');
@@ -22,6 +22,21 @@ test('keyboard numeric input rejects letters and invalid precision', () => {
   assert.equal(normalizeNumericInput(',5'), '0.5');
 });
 
+test('PIN keyboard input accepts exactly six digits and rejects other characters', () => {
+  assert.equal(normalizePinInput('12 34a56'), '123456');
+  assert.equal(normalizePinInput('123456789'), '123456');
+  assert.equal(normalizePinInput('abcdef'), '');
+});
+
+test('protected registry uses a masked text input that remains keyboard-editable on Windows', () => {
+  const component = readFileSync(fileURLToPath(new URL('../../src/components/PinInput.tsx', import.meta.url)), 'utf8');
+  const registry = readFileSync(fileURLToPath(new URL('../../src/pages/ProtectedRegistry.tsx', import.meta.url)), 'utf8');
+  assert.match(component, /type="text"/);
+  assert.match(component, /inputMode="numeric"/);
+  assert.match(component, /secure-pin-input/);
+  assert.match(registry, /<PinInput/);
+});
+
 test('renderer never uses native number inputs that can block Windows keyboard entry', () => {
   const sourceRoot = fileURLToPath(new URL('../../src/', import.meta.url));
   const visit = (directoryPath: string): string[] => readdirSync(directoryPath, { withFileTypes: true }).flatMap((entry) => {
@@ -30,6 +45,6 @@ test('renderer never uses native number inputs that can block Windows keyboard e
     return extname(path) === '.tsx' ? [path] : [];
   });
   for (const path of visit(sourceRoot)) {
-    assert.doesNotMatch(readFileSync(path, 'utf8'), /type=[#']number["']/i, path);
+    assert.doesNotMatch(readFileSync(path, 'utf8'), /type=["']number["']/i, path);
   }
 });

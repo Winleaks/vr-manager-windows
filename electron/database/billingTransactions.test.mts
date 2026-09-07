@@ -5,7 +5,6 @@ import { initialSchema } from './schema.ts';
 import {
   createInvoiceBatchTransaction,
   createWeeklyInvoiceBatchTransaction,
-  deleteUnpaidInvoiceTransaction,
   recordCompanyPaymentTransaction,
   updateInvoiceTransaction,
 } from './repositories/billingTransactions.ts';
@@ -52,12 +51,36 @@ test('weekly VR Baker invoices are unique per store/week and source order', () =
       periodEnd: '2026-08-16',
       sourceFingerprint: 'a'.repeat(64),
       sourceOrders: [{ id: '22222222-2222-4222-8222-222222222222', updatedAt: '2026-08-11T12:00:00Z' }],
-      items: [{ productName: 'Produs', quantity: 2, unitPrice: 3 }],
+      items: [{
+        productName: 'Cheese Pie',
+        name_ro: 'Plăcintă cu brânză',
+        variant_label: 'Large',
+        unit: 'buc',
+        quantity: 2,
+        unitPrice: 3,
+      }],
     };
     const [created] = createWeeklyInvoiceBatchTransaction(connection, [input], '2026-08-11');
     assert.equal(created.totalAmount, 6);
+    assert.deepEqual(connection.prepare(`
+      SELECT product_name, product_name_ro, variant_label, unit
+      FROM invoice_items WHERE invoice_id = ?
+    `).get(created.invoiceId), {
+      product_name: 'Cheese Pie',
+      product_name_ro: 'Plăcintă cu brânză',
+      variant_label: 'Large',
+      unit: 'buc',
+    });
     assert.throws(() => createWeeklyInvoiceBatchTransaction(connection, [input], '2026-08-12'), /deja o factură/);
-    assert.throws(() => updateInvoiceTransaction(connection, created.invoiceId, created.invoiceNumber, '2026-08-12', input.items), /nu poate fi modificată automat/);
+    const itemId = (connection.prepare('SELECT id FROM invoice_items WHERE invoice_id = ?').get(created.invoiceId) as any).id;
+    const updated = updateInvoiceTransaction(connection, created.invoiceId, created.invoiceNumber, '2026-08-12', [
+      { ...input.items[0], id: itemId, productName: 'Încercare de modificare', quantity: 3.5, unitPrice: 4 },
+    ]);
+    assert.deepEqual(updated, { invoiceId: created.invoiceId, totalAmount: 14, paidAmount: 0, status: 'unpaid' });
+    assert.equal((connection.prepare('SELECT invoice_date FROM invoices WHERE id = ?').get(created.invoiceId) as any).invoice_date, '2026-08-12');
+    assert.deepEqual(connection.prepare('SELECT product_name, quantity, unit_price FROM invoice_items WHERE invoice_id = ?').get(created.invoiceId), {
+      product_name: 'Cheese Pie', quantity: 3.5, unit_price: 4,
+    });
     assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoice_import_batches').get() as any).value, 1);
     assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoice_source_orders').get() as any).value, 1);
   } finally {
@@ -156,7 +179,7 @@ test('rejects cross-company payment without changing balances or payment history
   }
 });
 
-test('invoice editing preserves payment state and paid invoices cannot be deleted', () => {
+test('invoice editing preserves payment state', () => {
   const { connection, companyId, storeId } = createBillingFixture();
   try {
     const [invoice] = createInvoiceBatchTransaction(connection, [
@@ -193,13 +216,6 @@ test('invoice editing preserves payment state and paid invoices cannot be delete
       paidAmount: 6,
       status: 'partial',
     });
-    assert.throws(() => deleteUnpaidInvoiceTransaction(connection, invoice.invoiceId), /plăți înregistrate/);
-
-    const [unpaid] = createInvoiceBatchTransaction(connection, [
-      { storeId, items: [{ productName: 'Neachitat', quantity: 1, unitPrice: 2 }] },
-    ], '2026-08-13');
-    assert.equal(deleteUnpaidInvoiceTransaction(connection, unpaid.invoiceId), true);
-    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM invoices WHERE id = ?').get(unpaid.invoiceId) as any).value, 0);
   } finally {
     connection.close();
   }

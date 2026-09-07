@@ -1,11 +1,15 @@
 import { db } from '../db';
 import { getCashTransactionsByDateRange } from '../cashHistory.ts';
-import { localIsoDate, rolloverCashDay } from '../cashDayRollover.ts';
+import { rolloverCashDay } from '../cashDayRollover.ts';
+import { getDailyCashReportSnapshot, recordDailyCashReportPrepared } from '../dailyCashReport.ts';
 import {
   addCashTransaction,
   closeCashDayTransaction,
   deleteCashTransaction,
+  hasCashBalanceReconciliation,
   initializeCashBalanceOnce,
+  reconcileCashBalanceOnce,
+  reopenCashDayTransaction,
   updateCashReceiptTransaction,
   type CashReceiptUpdateInput,
   type CashTransactionInput,
@@ -15,33 +19,8 @@ export const cashRepo = {
   // Ia ziua curenta deschisa sau creează una nouă (dacă ultima e închisă)
   getActiveDay: (createIfMissing = true) => {
     if (createIfMissing) rolloverCashDay(db);
-    let activeDay = db.prepare('SELECT * FROM cash_days WHERE is_closed = 0 ORDER BY date DESC LIMIT 1').get() as any;
-    
-    if (!activeDay) {
-      if (!createIfMissing) return null;
-      // Trebuie să deschidem o zi nouă (azi)
-      const dateStr = localIsoDate();
-      
-      // Vedem dacă s-a deschis deja azi și s-a închis (preventiv, ca să nu avem erori la unique date, deși în mod normal se face doar una pe zi)
-      // Dacă s-a închis deja azi, ar trebui tratată altfel, dar pt simplitate, creăm una nouă (dacă e altă zi).
-      // Aflăm ultimul sold de închidere
-      const lastClosedDay = db.prepare('SELECT closing_balance FROM cash_days WHERE is_closed = 1 ORDER BY date DESC LIMIT 1').get() as any;
-      const openingBalance = lastClosedDay ? lastClosedDay.closing_balance : 0;
-
-      try {
-        const stmt = db.prepare(`
-          INSERT INTO cash_days (date, opening_balance)
-          VALUES (?, ?)
-        `);
-        const info = stmt.run(dateStr, openingBalance);
-        activeDay = db.prepare('SELECT * FROM cash_days WHERE id = ?').get(info.lastInsertRowid);
-      } catch (e: any) {
-        const existingDay = db.prepare('SELECT * FROM cash_days WHERE date = ?').get(dateStr) as any;
-        if (existingDay?.is_closed) throw new Error('Ziua de casă pentru astăzi este deja închisă.');
-        if (!existingDay) throw e;
-        activeDay = existingDay;
-      }
-    }
+    const activeDay = db.prepare('SELECT * FROM cash_days WHERE is_closed = 0 ORDER BY date DESC LIMIT 1').get() as any;
+    if (!activeDay) return null;
 
     // Calculăm soldul live din tranzacțiile zilei
     const transactions = cashRepo.getTransactions(activeDay.id);
@@ -58,12 +37,24 @@ export const cashRepo = {
     return { ...activeDay, current_balance: currentBalance, balance_initialized: Boolean(balanceInitialization) };
   },
 
-  closeDay: (dayId: number, closingBalance: number) => {
-    return closeCashDayTransaction(db, dayId, closingBalance);
+  closeDay: (dayId: number) => {
+    return closeCashDayTransaction(db, dayId);
+  },
+
+  reopenDay: (dayId: number) => {
+    return reopenCashDayTransaction(db, dayId);
   },
 
   initializeBalance: (dayId: number, actualBalance: number) => {
     return initializeCashBalanceOnce(db, dayId, actualBalance);
+  },
+
+  reconcileBalanceOnce: (dayId: number, actualBalance: number, markerKey: string) => {
+    return reconcileCashBalanceOnce(db, dayId, actualBalance, markerKey);
+  },
+
+  hasBalanceReconciliation: (markerKey: string) => {
+    return hasCashBalanceReconciliation(db, markerKey);
   },
 
   updateReceipt: (data: CashReceiptUpdateInput) => {
@@ -95,8 +86,17 @@ export const cashRepo = {
     `).all(startDate, endDate) as any[];
   },
 
+  getDailyReport: (date: string) => {
+    return getDailyCashReportSnapshot(db, date);
+  },
+
+  recordReportPrepared: (dayId: number, balance: number) => {
+    return recordDailyCashReportPrepared(db, dayId, balance);
+  },
+
   addTransaction: (data: CashTransactionInput) => {
     const currentDay = cashRepo.getActiveDay(true);
+    if (!currentDay) throw new Error('Ziua de casă pentru astăzi este închisă. Redeschide ziua înainte de a adăuga tranzacții.');
     return addCashTransaction(db, { ...data, cash_day_id: currentDay.id });
   },
 

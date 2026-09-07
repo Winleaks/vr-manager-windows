@@ -6,6 +6,7 @@ on:
       - 'v*'
     branches:
       - 'release/v*'
+      - 'razvancristofor/release-v*'
 
 jobs:
   release:
@@ -13,6 +14,7 @@ jobs:
 
     env:
       VR_HUB_GOOGLE_CLIENT_ID: ${{ secrets.VR_HUB_GOOGLE_CLIENT_ID }}
+      VR_HUB_GOOGLE_CLIENT_SECRET: ${{ secrets.VR_HUB_GOOGLE_CLIENT_SECRET }}
 
     permissions:
       contents: write
@@ -35,11 +37,28 @@ jobs:
       - name: Run Lint
         run: npm run lint
 
+      - name: Run Type Check
+        run: npm run typecheck
+
+      - name: Install .NET SDK for native document dialogs
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build native Windows document component
+        run: npm run build:windows-documents
+
+      - name: Verify native PDF loading and rendering
+        run: npm run test:windows-documents
+
       - name: Validate Build Secrets
         shell: pwsh
         run: |
           if ([string]::IsNullOrWhiteSpace($env:VR_HUB_GOOGLE_CLIENT_ID)) {
             throw "Google Drive build configuration is missing."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:VR_HUB_GOOGLE_CLIENT_SECRET)) {
+            throw "Google Drive OAuth client secret is missing."
           }
 
       - name: Build App Assets

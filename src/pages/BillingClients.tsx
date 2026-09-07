@@ -2,11 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { 
   Building2, Store, RefreshCw, AlertCircle, FileText, ArrowLeft, 
-  DollarSign, CheckCircle2, Clock, PlusCircle, CreditCard, Banknote, 
-  ChevronRight, Printer, AlertTriangle, ShieldCheck, Info, Loader2, Search, X
+  DollarSign, CheckCircle2, PlusCircle, CreditCard, Banknote,
+  ChevronRight, ShieldCheck, Loader2, Search, X, FileMinus2, Edit3
 } from 'lucide-react';
-import { generateInvoicePDF } from '../utils/pdfGenerator';
+import { prepareInvoiceDocument } from '../utils/prepareInvoiceDocument';
+import { InvoiceEditorModal } from '../components/InvoiceEditorModal';
 import { NumericInput } from '../components/NumericInput';
+import { TextConfirmationModal } from '../components/TextConfirmationModal';
+import { InvoiceDocumentActions } from '../components/InvoiceDocumentActions';
 
 interface Company {
   id: number;
@@ -31,8 +34,12 @@ export function BillingClients() {
   // Profil companie selectat
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [profileData, setProfileData] = useState<any | null>(null);
-  const [loadingProfile, setLoadingProfile] = useState(false);
-  const [activeTab, setActiveTab] = useState<'unpaid' | 'all' | 'payments' | 'stores'>('unpaid');
+  const [, setLoadingProfile] = useState(false);
+  const [activeTab, setActiveTab] = useState<'unpaid' | 'all' | 'payments' | 'credits' | 'stores'>('unpaid');
+  const [profileIssuerFilter, setProfileIssuerFilter] = useState('all');
+
+  const [editingInvoiceId, setEditingInvoiceId] = useState<number | null>(null);
+  const [invoiceNotice, setInvoiceNotice] = useState('');
 
   // Modal Încasare
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -43,22 +50,36 @@ export function BillingClients() {
     bankName: 'Barclays' | 'Virgin';
     paymentDate: string;
     notes: string;
+    issuerId: string;
   }>({
     amount: '',
     method: 'cash',
     bankName: 'Barclays',
     paymentDate: new Date().toISOString().split('T')[0],
     notes: ''
+    ,issuerId: ''
   });
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
-  const [generatingPdfId, setGeneratingPdfId] = useState<number | null>(null);
+  const [creditInvoice, setCreditInvoice] = useState<any | null>(null);
+  const [creditAmount, setCreditAmount] = useState('');
+  const [creditReason, setCreditReason] = useState('');
+  const [isWriter, setIsWriter] = useState(false);
+  const [isAssigningIssuer, setIsAssigningIssuer] = useState(false);
+  const [issuerAssignmentNotice, setIssuerAssignmentNotice] = useState('');
+  const [editingPayment, setEditingPayment] = useState<any | null>(null);
+  const [paymentEditForm, setPaymentEditForm] = useState({ amount: '', method: 'cash' as 'cash' | 'transfer', bankName: 'Barclays' as 'Barclays' | 'Virgin', reason: '' });
+  const [isUpdatingPayment, setIsUpdatingPayment] = useState(false);
+  const [pendingCreditReversal, setPendingCreditReversal] = useState<any | null>(null);
 
   useEffect(() => {
-    fetchCompanies();
+    void fetchCompanies();
+    api.system.getDeviceRole().then((device) => setIsWriter(device.role === 'writer')).catch(console.error);
   }, []);
 
   useEffect(() => {
     if (selectedCompanyId) {
+      setIssuerAssignmentNotice('');
+      setInvoiceNotice('');
       loadCompanyProfile(selectedCompanyId);
     } else {
       setProfileData(null);
@@ -104,17 +125,94 @@ export function BillingClients() {
     }
   };
 
+  const assignProfileIssuer = async (selection: string) => {
+    if (!profileData?.company?.id || !isWriter) return;
+    const issuerId = selection === 'default' ? null : Number(selection);
+    if (issuerId !== null && (!Number.isSafeInteger(issuerId) || issuerId <= 0)) return;
+    setIsAssigningIssuer(true);
+    setIssuerAssignmentNotice('');
+    try {
+      await api.billing.assignCompanyIssuer(profileData.company.id, issuerId);
+      await Promise.all([loadCompanyProfile(profileData.company.id), fetchCompanies()]);
+      setIssuerAssignmentNotice('Societatea emitentă a fost salvată. Alegerea se aplică numai facturilor viitoare.');
+    } catch (error: any) {
+      setIssuerAssignmentNotice(`Setarea nu a putut fi salvată: ${error.message || error}`);
+    } finally {
+      setIsAssigningIssuer(false);
+    }
+  };
+
   const handleOpenPaymentModal = (invoice: any = null) => {
     setSelectedInvoiceForPayment(invoice);
-    const initialAmount = invoice ? (invoice.total_amount - invoice.paid_amount).toFixed(2) : '';
+    const initialAmount = invoice ? Number(invoice.outstanding ?? (invoice.total_amount - invoice.paid_amount)).toFixed(2) : '';
     setPaymentForm({
       amount: initialAmount,
       method: 'cash',
       bankName: 'Barclays',
       paymentDate: new Date().toISOString().split('T')[0],
-      notes: invoice ? `Încasare factura FACT #${invoice.invoice_number}` : ''
+      notes: invoice ? `Încasare factura #${invoice.invoice_number}` : ''
+      ,issuerId: String(invoice?.issuer_id || (profileIssuerFilter !== 'all' ? profileIssuerFilter : profileData?.company?.issuer_id) || '')
     });
     setShowPaymentModal(true);
+  };
+
+  const applyCredit = async () => {
+    if (!creditInvoice || !profileData?.company) return;
+    try {
+      await api.billing.applyCompanyCredit({ companyId: profileData.company.id, issuerId: creditInvoice.issuer_id, invoiceId: creditInvoice.id, amount: Number(creditAmount), reason: creditReason });
+      setCreditInvoice(null); setCreditAmount(''); setCreditReason(''); await loadCompanyProfile(profileData.company.id); await fetchCompanies();
+    } catch (error: any) { alert(error.message || 'Creditul nu a putut fi aplicat.'); }
+  };
+
+  const reverseCredit = async (application: any) => {
+    setPendingCreditReversal(application);
+  };
+
+  const confirmCreditReversal = async (reason: string) => {
+    if (!pendingCreditReversal || !profileData?.company?.id) return;
+    try {
+      await api.billing.reverseCreditApplication(pendingCreditReversal.id, reason);
+      setPendingCreditReversal(null);
+      await Promise.all([loadCompanyProfile(profileData.company.id), fetchCompanies()]);
+    } catch (error: any) {
+      throw new Error(error.message || 'Aplicarea creditului nu a putut fi reversată.');
+    }
+  };
+
+  const openPaymentEdit = (payment: any) => {
+    setEditingPayment(payment);
+    setPaymentEditForm({
+      amount: Number(payment.amount).toFixed(2),
+      method: payment.method === 'transfer' ? 'transfer' : 'cash',
+      bankName: payment.bank_name === 'Virgin' ? 'Virgin' : 'Barclays',
+      reason: '',
+    });
+  };
+
+  const submitPaymentEdit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingPayment || !profileData?.company?.id) return;
+    const amount = Number(paymentEditForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0 || !paymentEditForm.reason.trim()) {
+      alert('Introdu o sumă validă și motivul modificării.');
+      return;
+    }
+    setIsUpdatingPayment(true);
+    try {
+      await api.billing.updatePayment({
+        id: editingPayment.id,
+        amount,
+        method: paymentEditForm.method,
+        bankName: paymentEditForm.method === 'transfer' ? paymentEditForm.bankName : undefined,
+        reason: paymentEditForm.reason.trim(),
+      });
+      setEditingPayment(null);
+      await Promise.all([loadCompanyProfile(profileData.company.id), fetchCompanies()]);
+    } catch (error: any) {
+      alert('Încasarea nu a putut fi modificată: ' + (error.message || error));
+    } finally {
+      setIsUpdatingPayment(false);
+    }
   };
 
   const handleSubmitPayment = async (e: React.FormEvent) => {
@@ -124,6 +222,10 @@ export function BillingClients() {
     const numericAmount = parseFloat(paymentForm.amount);
     if (isNaN(numericAmount) || numericAmount <= 0) {
       alert('Te rugăm să introduci o sumă validă mai mare decât 0!');
+      return;
+    }
+    if (!Number.isSafeInteger(Number(paymentForm.issuerId)) || Number(paymentForm.issuerId) <= 0) {
+      alert('Selectează societatea emitentă pentru această încasare.');
       return;
     }
 
@@ -136,6 +238,7 @@ export function BillingClients() {
     try {
       await api.billing.recordCompanyPayment({
         companyId: profileData.company.id,
+        issuerId: Number(paymentForm.issuerId),
         invoiceId: selectedInvoiceForPayment ? selectedInvoiceForPayment.id : undefined,
         amount: numericAmount,
         paymentDate: paymentForm.paymentDate,
@@ -155,45 +258,16 @@ export function BillingClients() {
     }
   };
 
-  const handlePrintPdf = async (inv: any) => {
-    setGeneratingPdfId(inv.id);
-    try {
-      const settings = await api.billing.getSettings();
-      const pdfData = {
-        invoiceNumber: inv.invoice_number,
-        invoiceDate: inv.invoice_date,
-        client: {
-          name: profileData?.company?.name || inv.store_name || 'Client',
-          cui: profileData?.company?.cui,
-          regCom: profileData?.company?.reg_com,
-          address: profileData?.company?.address,
-          county: '',
-          city: ''
-        },
-        store: {
-          name: inv.store_name || '',
-          address: '',
-        },
-        items: inv.items || [],
-        totalAmount: inv.total_amount
-      };
+  const prepareInvoicePdf = async (inv: any) => { await prepareInvoiceDocument(inv.id); };
 
-      const buffer = generateInvoicePDF(settings, pdfData);
-      const filename = `Factura_${settings.invoiceSeries || 'FACT'}_${inv.invoice_number}.pdf`;
-
-      await api.system.savePdfAuto({ buffer, filename });
-      const device = await api.system.getDeviceRole();
-      if (device.role === 'writer') {
-        const upload = await api.system.uploadPdfToCloud(inv.id);
-        if (!upload.success) throw new Error(upload.error);
-      }
-      alert(`Factura #${inv.invoice_number} a fost salvată pe calculator${device.role === 'writer' ? ' și în Google Drive' : ''}!`);
-    } catch (e: any) {
-      alert('Eroare la generarea PDF: ' + e.message);
-    } finally {
-      setGeneratingPdfId(null);
-    }
-  };
+  const invoiceEditAction = (inv: any) => inv.status !== 'cancelled' && Number(inv.creditedAmount || 0) <= 0.005 && Number(inv.appliedCredit || 0) <= 0.005 && (
+    <button type="button" onClick={() => setEditingInvoiceId(inv.id)} disabled={!isWriter}
+      title={isWriter ? 'Editează factura' : 'Editare disponibilă numai pe Writer'}
+      aria-label="Editează factura"
+      className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors disabled:opacity-40">
+      <Edit3 size={16} />
+    </button>
+  );
 
   const filteredCompanies = companies.filter(c => 
     c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -203,10 +277,40 @@ export function BillingClients() {
 
   // --- VIZUALIZARE 1: PROFIL COMPANIE ---
   if (selectedCompanyId && profileData) {
-    const { company, stores, invoices, unpaidInvoices, payments, stats } = profileData;
+    const { company, stores, invoices: allInvoices, payments: allPayments } = profileData;
+    const defaultIssuer = (profileData.issuers || []).find((issuer: any) => issuer.is_default === 1);
+    const issuerSelectionValue = company.issuer_assignment_mode === 'explicit'
+      ? String(company.issuer_id || '')
+      : 'default';
+    const invoices = profileIssuerFilter === 'all' ? allInvoices : allInvoices.filter((invoice: any) => String(invoice.issuer_id) === profileIssuerFilter);
+    const unpaidInvoices = invoices.filter((invoice: any) => invoice.status !== 'cancelled' && Number(invoice.outstanding || 0) > 0.005);
+    const payments = profileIssuerFilter === 'all' ? allPayments : allPayments.filter((payment: any) => String(payment.issuer_id) === profileIssuerFilter);
+    const selectedCredit = (profileData.issuerCredits || []).filter((credit: any) => profileIssuerFilter === 'all' || String(credit.issuer_id) === profileIssuerFilter).reduce((sum: number, credit: any) => sum + Number(credit.balance || 0), 0);
+    const stats = {
+      totalInvoiced: invoices.filter((invoice: any) => invoice.status !== 'cancelled').reduce((sum: number, invoice: any) => sum + Number(invoice.grossAmount || 0), 0),
+      totalCredited: invoices.filter((invoice: any) => invoice.status !== 'cancelled').reduce((sum: number, invoice: any) => sum + Number(invoice.creditedAmount || 0), 0),
+      totalNet: invoices.filter((invoice: any) => invoice.status !== 'cancelled').reduce((sum: number, invoice: any) => sum + Number(invoice.netAmount || 0), 0),
+      totalPaid: invoices.filter((invoice: any) => invoice.status !== 'cancelled').reduce((sum: number, invoice: any) => sum + Number(invoice.cashPaid || 0), 0),
+      totalCreditApplied: invoices.filter((invoice: any) => invoice.status !== 'cancelled').reduce((sum: number, invoice: any) => sum + Number(invoice.appliedCredit || 0), 0),
+      totalUnpaid: unpaidInvoices.reduce((sum: number, invoice: any) => sum + Number(invoice.outstanding || 0), 0),
+      creditBalance: selectedCredit,
+    };
 
     return (
       <div className="p-8 max-w-7xl mx-auto space-y-8">
+        {invoiceNotice && <p role="status" className="rounded-xl bg-indigo-50 p-4 text-sm text-indigo-800">{invoiceNotice}</p>}
+        {editingInvoiceId !== null && <InvoiceEditorModal
+          key={editingInvoiceId}
+          invoiceId={editingInvoiceId}
+          onClose={() => setEditingInvoiceId(null)}
+          onSaved={(saved, message) => {
+            setProfileData((previous: any) => ({ ...previous, invoices: previous.invoices.map((inv: any) => inv.id === saved.id ? saved : inv) }));
+            setEditingInvoiceId(null);
+            setInvoiceNotice(message);
+            void loadCompanyProfile(selectedCompanyId);
+            void fetchCompanies();
+          }}
+        />}
         {/* Header Profil Companie */}
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
@@ -226,12 +330,14 @@ export function BillingClients() {
                   {company.cui && <span>VAT No: <span className="font-semibold text-slate-800">{company.cui}</span></span>}
                   {company.reg_com && <span>CRN: <span className="font-semibold text-slate-800">{company.reg_com}</span></span>}
                   <span>{stores.length} magazine arondate</span>
+                  <span className="text-white px-2 py-0.5 rounded-full text-xs font-semibold" style={{ backgroundColor: company.issuer_color || '#64748B' }}>{company.issuer_name || 'Emitent implicit'}{company.issuer_assignment_mode === 'default' ? ' · Implicit' : ''}</span>
                 </div>
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
+            <select value={profileIssuerFilter} onChange={(e) => setProfileIssuerFilter(e.target.value)} className="border border-slate-200 bg-white rounded-xl px-3 py-3 text-sm font-semibold"><option value="all">Toate societățile</option>{(profileData.issuers || []).map((issuer: any) => <option key={issuer.id} value={issuer.id}>{issuer.legal_name}</option>)}</select>
             <button
               onClick={() => handleOpenPaymentModal(null)}
               className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-xl font-bold transition-colors shadow-md shadow-emerald-600/20"
@@ -242,18 +348,53 @@ export function BillingClients() {
           </div>
         </div>
 
+        <section className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="rounded-xl bg-indigo-600 p-2.5 text-white"><Building2 size={20} /></div>
+              <div>
+                <h2 className="font-bold text-slate-900">Societatea de pe care facturăm acest client</h2>
+                <p className="mt-1 text-sm text-slate-600">Se aplică automat tuturor magazinelor clientului și numai facturilor viitoare. Facturile, plățile și creditele istorice nu se mută.</p>
+              </div>
+            </div>
+            <div className="w-full lg:w-96">
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-indigo-800">Facturăm de pe</label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={issuerSelectionValue}
+                  onChange={(event) => void assignProfileIssuer(event.target.value)}
+                  disabled={!isWriter || isAssigningIssuer}
+                  className="w-full rounded-xl border border-indigo-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <option value="default">Implicit — {defaultIssuer?.legal_name || 'emitentul implicit'}</option>
+                  {(profileData.issuers || []).map((issuer: any) => (
+                    <option key={issuer.id} value={issuer.id} disabled={!issuer.isReady}>
+                      {issuer.legal_name}{!issuer.isReady ? ' — configurare incompletă' : ''}
+                    </option>
+                  ))}
+                </select>
+                {isAssigningIssuer && <Loader2 className="shrink-0 animate-spin text-indigo-600" size={20} />}
+              </div>
+              {!isWriter && <p className="mt-1 text-xs text-slate-500">Setarea poate fi modificată numai pe calculatorul Writer.</p>}
+              {issuerAssignmentNotice && <p className={`mt-2 text-xs font-medium ${issuerAssignmentNotice.startsWith('Setarea nu') ? 'text-rose-700' : 'text-emerald-700'}`}>{issuerAssignmentNotice}</p>}
+            </div>
+          </div>
+        </section>
+
         {/* Carduri Sumar Financiar Companie */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Facturat</span>
             <div className="text-2xl font-bold text-slate-900 mt-2">£{stats.totalInvoiced.toFixed(2)}</div>
             <span className="text-xs text-slate-400 mt-2">{invoices.length} facturi emise</span>
           </div>
 
+          <div className="bg-white p-6 rounded-2xl border border-amber-200 shadow-sm"><span className="text-xs font-semibold text-slate-500 uppercase">Total Creditat</span><div className="text-2xl font-bold text-amber-700 mt-2">£{stats.totalCredited.toFixed(2)}</div><div className="text-xs text-slate-400 mt-2">Net facturat £{stats.totalNet.toFixed(2)}</div></div>
+
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Încasat</span>
             <div className="text-2xl font-bold text-emerald-600 mt-2">£{stats.totalPaid.toFixed(2)}</div>
-            <span className="text-xs text-slate-400 mt-2">{payments.length} plăti înregistrate</span>
+            <span className="text-xs text-slate-400 mt-2">Credit aplicat £{stats.totalCreditApplied.toFixed(2)}</span>
           </div>
 
           <div className={`p-6 rounded-2xl border shadow-sm flex flex-col justify-between ${
@@ -277,6 +418,7 @@ export function BillingClients() {
             <span className="text-xs text-indigo-600 mt-2 font-medium">
               {stats.creditBalance > 0 ? 'Disponibil pentru facturi viitoare' : 'Niciun avans existent'}
             </span>
+            <div className="mt-2 space-y-1">{(profileData.issuerCredits || []).map((credit: any) => <div key={credit.issuer_id} className="text-[10px] text-slate-500">{credit.issuer_name}: £{Number(credit.balance).toFixed(2)}</div>)}</div>
           </div>
         </div>
 
@@ -330,6 +472,7 @@ export function BillingClients() {
               <Store size={18} />
               Magazine Arondate ({stores.length})
             </button>
+            <button onClick={() => setActiveTab('credits')} className={`py-4 font-semibold text-sm border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'credits' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}><ShieldCheck size={18} />Registru Credit</button>
           </div>
 
           <div className="p-6">
@@ -357,22 +500,27 @@ export function BillingClients() {
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
                         {unpaidInvoices.map((inv: any) => {
-                          const due = inv.total_amount - inv.paid_amount;
+                          const due = Number(inv.outstanding || 0);
+                          const issuerCredit = Number((profileData.issuerCredits || []).find((credit: any) => credit.issuer_id === inv.issuer_id)?.balance || 0);
                           return (
                             <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
-                              <td className="py-3.5 px-4 font-bold text-slate-900">FACT #{inv.invoice_number}</td>
+                              <td className="py-3.5 px-4 font-bold text-slate-900">#{inv.invoice_number}</td>
                               <td className="py-3.5 px-4 text-slate-600">{inv.invoice_date}</td>
                               <td className="py-3.5 px-4 font-semibold text-slate-800">{inv.store_name}</td>
-                              <td className="py-3.5 px-4 font-medium">£{inv.total_amount.toFixed(2)}</td>
-                              <td className="py-3.5 px-4 text-emerald-600 font-semibold">£{inv.paid_amount.toFixed(2)}</td>
+                              <td className="py-3.5 px-4 font-medium">£{Number(inv.netAmount ?? inv.total_amount).toFixed(2)}</td>
+                              <td className="py-3.5 px-4 text-emerald-600 font-semibold">£{Number(inv.cashPaid || 0).toFixed(2)} + £{Number(inv.appliedCredit || 0).toFixed(2)} credit</td>
                               <td className="py-3.5 px-4 font-bold text-rose-600">£{due.toFixed(2)}</td>
                               <td className="py-3.5 px-4 text-right">
+                                <InvoiceDocumentActions invoiceId={inv.id} status={inv.status} size="compact" preparePdf={() => prepareInvoicePdf(inv)} />
+                            {invoiceEditAction(inv)}
                                 <button
                                   onClick={() => handleOpenPaymentModal(inv)}
-                                  className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-3.5 py-1.5 rounded-lg font-semibold text-xs transition-colors"
+                                  className="ml-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-3.5 py-1.5 rounded-lg font-semibold text-xs transition-colors"
                                 >
                                   Încasează această factură
                                 </button>
+                                {issuerCredit > 0.005 && <button onClick={() => { setCreditInvoice(inv); setCreditAmount(Math.min(issuerCredit, due).toFixed(2)); setCreditReason('Aplicare manuală credit client'); }} className="ml-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3.5 py-1.5 rounded-lg font-semibold text-xs">Aplică credit</button>}
+                                <button onClick={() => { window.location.hash = `/facturare/credit-notes?invoice=${inv.id}`; }} className="ml-2 bg-amber-50 hover:bg-amber-100 text-amber-800 px-3.5 py-1.5 rounded-lg font-semibold text-xs">Credit Note</button>
                               </td>
                             </tr>
                           );
@@ -395,36 +543,31 @@ export function BillingClients() {
                       <th className="py-3 px-4">Magazin</th>
                       <th className="py-3 px-4">Valoare Totală</th>
                       <th className="py-3 px-4">Status Plată</th>
-                      <th className="py-3 px-4 text-right">PDF</th>
+                      <th className="py-3 px-4 text-right">Acțiuni</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
                     {invoices.map((inv: any) => {
-                      const isPaid = inv.status === 'paid';
+                      const isPaid = inv.status === 'paid' || inv.status === 'credited';
                       const isPartial = inv.status === 'partial';
 
                       return (
                         <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="py-3.5 px-4 font-bold text-slate-900">FACT #{inv.invoice_number}</td>
+                          <td className="py-3.5 px-4 font-bold text-slate-900">#{inv.invoice_number}</td>
                           <td className="py-3.5 px-4 text-slate-600">{inv.invoice_date}</td>
                           <td className="py-3.5 px-4 font-semibold text-slate-800">{inv.store_name}</td>
-                          <td className="py-3.5 px-4 font-bold">£{inv.total_amount.toFixed(2)}</td>
+                          <td className="py-3.5 px-4 font-bold">£{Number(inv.netAmount ?? inv.total_amount).toFixed(2)}{Number(inv.creditedAmount || 0) > 0 && <div className="text-[10px] font-normal text-amber-700">creditat £{Number(inv.creditedAmount).toFixed(2)}</div>}</td>
                           <td className="py-3.5 px-4">
                             <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${
                               isPaid ? 'bg-emerald-100 text-emerald-800' : isPartial ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
                             }`}>
-                              {isPaid ? 'Achitat' : isPartial ? `Parțial (£${inv.paid_amount.toFixed(2)})` : 'Neachitat'}
+                              {inv.status === 'credited' ? 'Creditată integral' : isPaid ? 'Achitat' : isPartial ? `Parțial (£${Number(inv.cashPaid || inv.paid_amount || 0).toFixed(2)})` : 'Neachitat'}
                             </span>
                           </td>
                           <td className="py-3.5 px-4 text-right">
-                            <button
-                              onClick={() => handlePrintPdf(inv)}
-                              disabled={generatingPdfId === inv.id}
-                              className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
-                              title="Descarcă PDF"
-                            >
-                              {generatingPdfId === inv.id ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
-                            </button>
+                            {inv.status !== 'cancelled' && inv.status !== 'credited' && <button onClick={() => { window.location.hash = `/facturare/credit-notes?invoice=${inv.id}`; }} className="p-1.5 text-amber-700 hover:bg-amber-50 rounded transition-colors" title="Creează Credit Note"><FileMinus2 size={16} /></button>}
+                            <InvoiceDocumentActions invoiceId={inv.id} status={inv.status} size="compact" preparePdf={() => prepareInvoicePdf(inv)} />
+                            {invoiceEditAction(inv)}
                           </td>
                         </tr>
                       );
@@ -450,6 +593,7 @@ export function BillingClients() {
                           <th className="py-3 px-4">Bancă</th>
                           <th className="py-3 px-4">Factură Aferentă</th>
                           <th className="py-3 px-4">Note / Detalii</th>
+                          <th className="py-3 px-4 text-right">Acțiuni</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
@@ -473,9 +617,10 @@ export function BillingClients() {
                               ) : '—'}
                             </td>
                             <td className="py-3.5 px-4 font-medium text-slate-800">
-                              {p.invoice_number ? `FACT #${p.invoice_number}` : <span className="text-indigo-600 font-bold">Avans / Credit Companie</span>}
+                              {p.invoice_number ? `#${p.invoice_number}` : <span className="text-indigo-600 font-bold">Avans / Credit · {p.issuer_name || 'Emitent'}</span>}
                             </td>
                             <td className="py-3.5 px-4 text-xs text-slate-500 italic">{p.notes || '—'}</td>
+                            <td className="py-3.5 px-4 text-right">{isWriter && <button type="button" onClick={() => openPaymentEdit(p)} className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-700" title="Modifică suma sau metoda de plată"><Edit3 size={16} /></button>}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -484,6 +629,8 @@ export function BillingClients() {
                 )}
               </div>
             )}
+
+            {activeTab === 'credits' && <div className="space-y-6"><div><h3 className="font-bold text-slate-900 mb-3">Surse de credit</h3><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="text-left p-3">Sursă</th><th className="text-left p-3">Emitent</th><th className="text-right p-3">Inițial</th><th className="text-right p-3">Disponibil</th><th className="text-left p-3">Status</th></tr></thead><tbody className="divide-y">{(profileData.creditLedger?.entries || []).filter((entry: any) => profileIssuerFilter === 'all' || String(entry.issuer_id) === profileIssuerFilter).map((entry: any) => <tr key={entry.id}><td className="p-3">{entry.source_type === 'credit_note' ? 'Credit Note' : entry.source_type === 'payment_overpayment' ? 'Supraîncasare' : 'Sold istoric'}</td><td className="p-3">{entry.issuer_name}</td><td className="p-3 text-right">£{Number(entry.original_amount).toFixed(2)}</td><td className="p-3 text-right font-bold">£{Number(entry.available_amount).toFixed(2)}</td><td className="p-3">{entry.status === 'active' ? 'Activ' : 'Reversat'}</td></tr>)}</tbody></table></div></div><div><h3 className="font-bold text-slate-900 mb-3">Aplicări pe facturi</h3><div className="divide-y border rounded-xl">{(profileData.creditLedger?.applications || []).filter((application: any) => profileIssuerFilter === 'all' || String(application.issuer_id) === profileIssuerFilter).map((application: any) => <div key={application.id} className="p-3 flex justify-between items-center"><div><strong>#{application.invoice_number}</strong> · £{Number(application.amount).toFixed(2)}<div className="text-xs text-slate-500">{application.reason}</div></div>{application.reversed_at ? <span className="text-xs text-slate-500">Reversat</span> : <button onClick={() => reverseCredit(application)} className="text-xs font-semibold text-rose-700">Reversează</button>}</div>)}</div></div></div>}
 
             {/* TAB 4: MAGAZINE ARONDATE */}
             {activeTab === 'stores' && (
@@ -529,6 +676,14 @@ export function BillingClients() {
                 </div>
 
                 <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Societate emitentă</label>
+                  <select value={paymentForm.issuerId} disabled={Boolean(selectedInvoiceForPayment)} onChange={(e) => { setSelectedInvoiceForPayment(null); setPaymentForm((current) => ({ ...current, issuerId: e.target.value })); }} className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800">
+                    {(profileData.issuers || []).filter((issuer: any) => issuer.is_active === 1).map((issuer: any) => <option key={issuer.id} value={issuer.id}>{issuer.legal_name}</option>)}
+                  </select>
+                  <p className="text-xs text-slate-500 mt-1">Plata și creditul se distribuie numai facturilor acestui emitent.</p>
+                </div>
+
+                <div>
                   <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Factură Vizată (Opțional)</label>
                   <select
                     value={selectedInvoiceForPayment ? selectedInvoiceForPayment.id : ''}
@@ -537,15 +692,15 @@ export function BillingClients() {
                       const inv = unpaidInvoices.find((i: any) => i.id === id) || null;
                       setSelectedInvoiceForPayment(inv);
                       if (inv) {
-                        setPaymentForm(prev => ({ ...prev, amount: (inv.total_amount - inv.paid_amount).toFixed(2) }));
+                        setPaymentForm(prev => ({ ...prev, amount: Number(inv.outstanding || 0).toFixed(2) }));
                       }
                     }}
                     className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800"
                   >
                     <option value="">-- Distribuire automată pe cea mai veche factură neachitată --</option>
-                    {unpaidInvoices.map((inv: any) => (
+                    {unpaidInvoices.filter((inv: any) => String(inv.issuer_id) === paymentForm.issuerId).map((inv: any) => (
                       <option key={inv.id} value={inv.id}>
-                        FACT #{inv.invoice_number} ({inv.store_name}) — Restanță: £{(inv.total_amount - inv.paid_amount).toFixed(2)}
+                        #{inv.invoice_number} ({inv.store_name}) — Restanță: £{Number(inv.outstanding || 0).toFixed(2)}
                       </option>
                     ))}
                   </select>
@@ -668,6 +823,41 @@ export function BillingClients() {
             </div>
           </div>
         )}
+        {editingPayment && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 p-5"><div><h3 className="text-lg font-bold text-slate-900">Modifică încasarea</h3><p className="text-xs text-slate-500">{editingPayment.invoice_number ? `Factura #${editingPayment.invoice_number}` : `Avans / credit · ${editingPayment.issuer_name || 'Emitent'}`}</p></div><button type="button" onClick={() => setEditingPayment(null)} className="p-1 text-slate-400 hover:text-slate-700"><X size={20} /></button></div>
+              <form onSubmit={submitPaymentEdit} className="space-y-4 p-6">
+                <label className="block text-xs font-semibold uppercase text-slate-600">Suma încasată (£)<NumericInput decimalScale={2} required value={paymentEditForm.amount} onValueChange={(amount) => setPaymentEditForm((current) => ({ ...current, amount }))} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 font-mono text-lg font-bold" /></label>
+                <div><div className="mb-1.5 text-xs font-semibold uppercase text-slate-600">Metodă plată</div><div className="grid grid-cols-2 gap-3"><button type="button" onClick={() => setPaymentEditForm((current) => ({ ...current, method: 'cash' }))} className={`rounded-xl border p-3 text-sm font-bold ${paymentEditForm.method === 'cash' ? 'border-amber-500 bg-amber-500 text-white' : 'border-slate-200 bg-slate-50 text-slate-700'}`}><Banknote size={17} className="mr-2 inline" />Cash</button><button type="button" onClick={() => setPaymentEditForm((current) => ({ ...current, method: 'transfer' }))} className={`rounded-xl border p-3 text-sm font-bold ${paymentEditForm.method === 'transfer' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-slate-50 text-slate-700'}`}><CreditCard size={17} className="mr-2 inline" />Transfer</button></div></div>
+                {paymentEditForm.method === 'transfer' && <label className="block text-xs font-semibold uppercase text-slate-600">Banca<select value={paymentEditForm.bankName} onChange={(event) => setPaymentEditForm((current) => ({ ...current, bankName: event.target.value as 'Barclays' | 'Virgin' }))} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><option value="Barclays">Barclays</option><option value="Virgin">Virgin</option></select></label>}
+                <label className="block text-xs font-semibold uppercase text-slate-600">Motivul modificării<input required maxLength={500} value={paymentEditForm.reason} onChange={(event) => setPaymentEditForm((current) => ({ ...current, reason: event.target.value }))} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm" placeholder="Ex.: sumă introdusă greșit" /></label>
+                <p className="text-xs text-slate-500">Modificarea recalculează factura sau creditul companiei și este păstrată în jurnalul de audit.</p>
+                <div className="flex justify-end gap-3 border-t border-slate-100 pt-4"><button type="button" onClick={() => setEditingPayment(null)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold">Renunță</button><button type="submit" disabled={isUpdatingPayment} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50">{isUpdatingPayment ? 'Se salvează...' : 'Salvează modificarea'}</button></div>
+              </form>
+            </div>
+          </div>
+        )}
+        {creditInvoice && (
+          <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+              <div className="flex justify-between gap-3"><div><h3 className="text-lg font-bold">Aplică credit pe factura #{creditInvoice.invoice_number}</h3><p className="text-sm text-slate-500">Numai pentru {creditInvoice.issuer_name}.</p></div><button onClick={() => setCreditInvoice(null)}><X /></button></div>
+              <label className="block text-sm font-semibold">Sumă (£)<NumericInput decimalScale={2} value={creditAmount} onValueChange={setCreditAmount} className="block w-full mt-1 border rounded-xl px-3 py-2.5" /></label>
+              <label className="block text-sm font-semibold">Motiv<input value={creditReason} onChange={(e) => setCreditReason(e.target.value)} className="block w-full mt-1 border rounded-xl px-3 py-2.5" /></label>
+              <div className="text-xs text-slate-500">Rest factură: £{Number(creditInvoice.outstanding || 0).toFixed(2)}. Creditul disponibil este verificat în backend și consumat FIFO.</div>
+              <div className="flex justify-end gap-3"><button onClick={() => setCreditInvoice(null)} className="px-4 py-2 border rounded-xl">Renunță</button><button onClick={applyCredit} disabled={!creditReason.trim() || Number(creditAmount) <= 0} className="px-4 py-2 bg-indigo-600 disabled:opacity-50 text-white rounded-xl font-bold">Aplică credit</button></div>
+            </div>
+          </div>
+        )}
+        {pendingCreditReversal && <TextConfirmationModal
+          title={`Reversează creditul aplicat facturii #${pendingCreditReversal.invoice_number}`}
+          description="Creditul va redeveni disponibil pentru aceeași companie și același emitent, iar restul facturii va fi recalculat."
+          fieldLabel="Motivul reversării"
+          confirmLabel="Reversează creditul"
+          dangerous
+          onCancel={() => setPendingCreditReversal(null)}
+          onConfirm={confirmCreditReversal}
+        />}
       </div>
     );
   }

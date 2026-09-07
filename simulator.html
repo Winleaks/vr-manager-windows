@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="ro">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VR - Hub Management Simulator</title>
+    <script>
+      (() => {
+        const today = new Date().toLocaleDateString('en-CA');
+        const cashDay = {
+          id: 1,
+          date: today,
+          opening_balance: 783.19,
+          current_balance: 783.19,
+          is_closed: 0,
+          balance_initialized: false,
+        };
+        let transactions = [
+          {
+            id: 1,
+            cash_day_id: 1,
+            type: 'IN',
+            category: 'driver_collection',
+            amount: 100,
+            reference_id: 1,
+            driver_name: 'Șofer Demo',
+            notes: 'Încasare demonstrativă',
+            created_at: new Date().toISOString(),
+            cash_day_closed: 0,
+          },
+        ];
+        let billingIssuers = [
+          {
+            id: 1, code: 'goodness', legal_name: 'THE GOODNESS BAKER LTD', address: 'Demo address, London',
+            company_number: '12345678', vat_registered: 1, vat_number: 'GB123456789',
+            bank_name_1: 'Demo Bank', account_number_1: '12345678', sort_code_1: '12-34-56',
+            bank_name_2: '', account_number_2: '', sort_code_2: '', footer: 'Thank you for your business.',
+            invoice_series: 'TGB', next_invoice_number: 101, color: '#4F46E5', alternate_row_color: '#EEF2FF',
+            credit_note_series: 'CN-TGB', next_credit_note_number: 1, credit_note_sequence_confirmed: 1,
+            alternate_row_opacity: 5, is_active: 1, is_default: 1, isReady: true,
+          },
+          {
+            id: 2, code: 'vatra', legal_name: 'VATRA ROMANEASCA LTD', address: '', company_number: '',
+            vat_registered: 0, vat_number: '', bank_name_1: '', account_number_1: '', sort_code_1: '',
+            bank_name_2: '', account_number_2: '', sort_code_2: '', footer: '', invoice_series: 'VR',
+            next_invoice_number: 1, color: '#B45309', alternate_row_color: '#FFF7ED', alternate_row_opacity: 5,
+            credit_note_series: 'CN-VATRA', next_credit_note_number: 1, credit_note_sequence_confirmed: 0,
+            is_active: 0, is_default: 0, isReady: false,
+          },
+        ];
+        let billingCompanies = [
+          { id: 1, name: 'Client Demo LTD', address: '10 Demo Street, London', issuer_id: 1, issuer_assignment_mode: 'default', is_active: 1, stores: [{ id: 1, name: 'Magazin Demo', address: '25 Baker Street, London', postcode: 'NW1 6XE', is_active: 1 }] },
+        ];
+        const billingProducts = [
+          { id: 1, supabase_product_id: 'demo-white-bread', name: 'WHITE BREAD', name_ro: 'PÂINE ALBĂ', unit: 'pcs', price_standard: 2.5, available: 1 },
+          { id: 2, supabase_product_id: 'demo-cheese-pie', name: 'CHEESE PIE', name_ro: 'PLĂCINTĂ CU BRÂNZĂ', unit: 'pcs', price_standard: 3.75, available: 1 },
+        ];
+        const demoInvoiceSettings = {
+          code: 'goodness', issuerName: 'THE GOODNESS BAKER LTD', issuerAddress: 'Demo address, London',
+          issuerCrn: '12345678', issuerVat: 'GB123456789', vatRegistered: true,
+          invoiceBankName1: 'Demo Bank', invoiceAccountNumber: '12345678', invoiceSortCode: '12-34-56',
+          invoiceFooter: 'Thank you for your business.', invoiceColor: '#4F46E5',
+          invoiceAlternateRowColor: '#EEF2FF', invoiceAlternateRowOpacity: 5, invoiceSeries: 'TGB',
+        };
+        const demoZones = [
+          { id: '11111111-1111-4111-8111-111111111111', name: 'NORTH LONDON', color: '#2563EB', driver: { id: '22222222-2222-4222-8222-222222222222', name: 'Șofer Nord' } },
+          { id: '33333333-3333-4333-8333-333333333333', name: 'SOUTH LONDON', color: '#16A34A', driver: { id: '44444444-4444-4444-8444-444444444444', name: 'Șofer Sud' } },
+        ];
+        let billingOrderPreview = [
+          {
+            store: { id: '55555555-5555-4555-8555-555555555555', name: 'Magazin Nord Demo', address: '1 North Road', postcode: 'N1 1AA', routeOrder: 1, zone: demoZones[0], company: { name: 'Client Nord LTD' } },
+            items: [{ productName: 'WHITE BREAD', name_ro: 'PÂINE ALBĂ', unit: 'pcs', quantity: 10, unitPrice: 2.5, totalPrice: 25 }],
+            sourceOrders: [], sourceFingerprint: 'demo-north', billingState: 'ready', issuerId: 1,
+            issuerName: 'THE GOODNESS BAKER LTD', issuerCode: 'goodness', issuerColor: '#4F46E5', estimatedInvoiceReference: 'TGB-101',
+          },
+          {
+            store: { id: '66666666-6666-4666-8666-666666666666', name: 'Magazin Nealocat Demo', address: '2 Demo Road', postcode: 'E1 1AA', routeOrder: null, zone: null, company: { name: 'Client Nealocat LTD' } },
+            items: [{ productName: 'CHEESE PIE', name_ro: 'PLĂCINTĂ CU BRÂNZĂ', unit: 'pcs', quantity: 5, unitPrice: 3.75, totalPrice: 18.75 }],
+            sourceOrders: [], sourceFingerprint: 'demo-unassigned', billingState: 'ready', issuerId: 1,
+            issuerName: 'THE GOODNESS BAKER LTD', issuerCode: 'goodness', issuerColor: '#4F46E5', estimatedInvoiceReference: 'TGB-102',
+          },
+        ];
+        const emitDemoWeeklyOrders = (orders) => {
+          const updatedOrders = orders.map((order) => {
+            const assignedInvoiceNumber = `TGB-${billingIssuers[0].next_invoice_number++}`;
+            return { ...order, billingState: 'invoiced', assignedInvoiceId: Date.now() + Math.random(), assignedInvoiceNumber, assignedInvoiceDate: today, issuerSettings: demoInvoiceSettings };
+          });
+          billingOrderPreview = billingOrderPreview.map((order) => updatedOrders.find((updated) => updated.store.id === order.store.id) || order);
+          return { success: true, updatedOrders };
+        };
+        let billingInvoices = [];
+        let creditNotes = [];
+        let billingTestMode = false;
+        const creditDraft = [{ id: 1, invoice_number: 'TGB-100', invoice_date: today, store_name: 'Magazin Demo', company_id: 1, company_name: 'Client Demo LTD', issuer_id: 1, issuer_name: 'THE GOODNESS BAKER LTD', grossAmount: 50, creditedAmount: 0, netAmount: 50, cashPaid: 0, appliedCredit: 0, outstanding: 50, items: [{ id: 1, productName: 'WHITE BREAD', nameRo: 'PÂINE ALBĂ', unit: 'buc', remainingQuantity: 10, remainingValue: 50, unitPrice: 5, canReturnToStock: true }] }];
+        const cashSnapshot = () => {
+          const totalIn = transactions.filter((item) => item.type === 'IN').reduce((sum, item) => sum + Number(item.amount), 0);
+          const totalOut = transactions.filter((item) => item.type === 'OUT').reduce((sum, item) => sum + Number(item.amount), 0);
+          const balance = Math.round((cashDay.opening_balance + totalIn - totalOut) * 100) / 100;
+          cashDay.current_balance = balance;
+          return {
+            dayId: cashDay.id,
+            date: cashDay.date,
+            status: cashDay.is_closed ? 'FINAL' : 'PROVIZORIU',
+            isClosed: Boolean(cashDay.is_closed),
+            canReopen: Boolean(cashDay.is_closed) && cashDay.date === today,
+            openingBalance: cashDay.opening_balance,
+            totalIn,
+            totalOut,
+            netCashFlow: totalIn - totalOut,
+            balance: cashDay.is_closed ? cashDay.closing_balance : balance,
+            transactionCount: transactions.length,
+          };
+        };
+        const handlers = {
+          'system.getDeviceRole': async () => ({ role: 'writer' }),
+          'system.getAppVersion': async () => '0.1.90',
+          'system.getLastBackupTime': async () => null,
+          'system.getCloudStatus': async () => ({ isConnected: false, connectionHealthy: false, syncHealth: 'disconnected', userEmail: null, lastCloudBackup: null, lastCloudBackupIso: null, lastUploadAttempt: null, lastSuccessfulUpload: null, lastError: null, rootFolderName: 'VR - Management', availableBackups: [] }),
+          'system.getSyncStatus': async () => ({ active: false, connected: false, syncHealth: 'disconnected', lastError: null, lastSync: null, role: 'writer', message: 'Simulator local' }),
+          'system.getUpdateState': async () => ({ status: 'idle', updateInfo: null, progress: 0, error: null }),
+          'dailyCash.getActiveDay': async () => cashDay.is_closed ? null : ({ ...cashDay }),
+          'dailyCash.getTransactions': async () => transactions.slice(),
+          'dailyCash.getTransactionsByDateRange': async () => transactions.slice(),
+          'dailyCash.getDailyReport': async (date) => date === today ? cashSnapshot() : null,
+          'dailyCash.closeDay': async () => {
+            const report = cashSnapshot();
+            cashDay.is_closed = 1;
+            cashDay.closing_balance = report.balance;
+            transactions = transactions.map((item) => ({ ...item, cash_day_closed: 1 }));
+            return { dayId: cashDay.id, date: today, closingBalance: report.balance };
+          },
+          'dailyCash.reopenDay': async () => {
+            cashDay.is_closed = 0;
+            cashDay.closing_balance = null;
+            transactions = transactions.map((item) => ({ ...item, cash_day_closed: 0 }));
+            return { dayId: cashDay.id, date: today };
+          },
+          'dailyCash.prepareWhatsAppReport': async () => ({
+            success: true,
+            filePath: `C:\\Users\\Demo\\Documents\\VR - Hub Management\\Daily Cash Reports\\Raport_Daily_Cash_${today}.pdf`,
+            deliveryMethod: 'windows-share',
+          }),
+          'dailyCash.initializeBalance': async (_dayId, balance) => {
+            const difference = Math.round((Number(balance) - cashDay.current_balance) * 100) / 100;
+            if (difference !== 0) {
+              transactions.unshift({
+                id: Date.now(), cash_day_id: 1, type: difference > 0 ? 'IN' : 'OUT',
+                category: 'cash_adjustment', amount: Math.abs(difference),
+                notes: `Inițializare unică sold casă: £${Number(balance).toFixed(2)}`,
+                created_at: new Date().toISOString(), cash_day_closed: 0,
+              });
+            }
+            cashDay.current_balance = Number(balance);
+            cashDay.balance_initialized = true;
+            return { currentBalance: Number(balance) };
+          },
+          'dailyCash.deleteTransaction': async (id) => {
+            transactions = transactions.filter((item) => item.id !== id || item.category === 'cash_adjustment');
+            return true;
+          },
+          'drivers.getAll': async () => [{ id: 1, name: 'Șofer Demo', is_active: 1 }],
+          'employees.getAll': async () => [{ id: 1, name: 'Angajat Demo', role: 'Operator', is_active: 1 }],
+          'finishedProducts.getAll': async () => [{ id: 1, name: 'Produs Demo', current_stock: 50, standard_price: 2.5, production_unit: 'buc', source_category: 'bakery', category_name: 'bakery', catalog_source: 'vrbaker', is_active: 1 }],
+          'finishedProducts.syncFromVrBaker': async () => ({ success: true, message: '1 produs a fost actualizat din VR Baker Platform.', result: { received: 1, created: 0, updated: 1, linked: 0, archivedManual: 0, deactivatedRemote: 0 } }),
+          'rawMaterials.getAll': async () => [],
+          'categories.get': async () => [],
+          'productions.getAll': async () => [],
+          'stockMovements.getAll': async () => [],
+          'billing.getStats': async () => ({}),
+          'billing.getInvoices': async () => billingInvoices.slice(),
+          'billing.getCreditNotes': async () => creditNotes.slice(),
+          'billing.getCreditNoteDraft': async () => creditDraft,
+          'billing.createCreditNote': async (input) => {
+            const total = input.items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unitAmount), 0);
+            const created = { id: creditNotes.length + 1, reference: `CN-TGB-${creditNotes.length + 1}`, issue_date: input.issueDate, company_name: 'Client Demo LTD', issuer_id: 1, issuer_name: 'THE GOODNESS BAKER LTD', issuer_code: 'goodness', issuer_color: '#4F46E5', invoice_references: 'TGB-100', total_amount: total, status: 'issued' };
+            creditNotes.unshift(created); return { creditNoteId: created.id, reference: created.reference, totalAmount: total };
+          },
+          'billing.prepareCreditNotePdf': async () => ({ success: true, filePath: 'C:\\Demo\\Credit_Note.pdf', cloud: { success: true } }),
+          'billing.openCreditNotePdf': async () => ({ success: true }),
+          'billing.cancelCreditNote': async (id) => { creditNotes = creditNotes.map((note) => note.id === id ? { ...note, status: 'cancelled' } : note); return true; },
+          'billing.getClients': async () => [],
+          'billing.getProducts': async () => billingProducts.slice(),
+          'billing.createManualInvoice': async (input) => {
+            const company = billingCompanies.find((item) => item.stores.some((store) => store.id === input.storeId));
+            const store = company?.stores.find((item) => item.id === input.storeId);
+            const issuer = billingIssuers.find((item) => item.id === company?.issuer_id);
+            if (!company || !store || !issuer) throw new Error('Date demonstrative incomplete.');
+            const invoiceNumber = `${issuer.invoice_series}-${issuer.next_invoice_number}`;
+            issuer.next_invoice_number += 1;
+            const items = input.items.map((line) => {
+              const product = billingProducts.find((item) => item.id === line.productId);
+              return { productName: product.name, name_ro: product.name_ro, unit: product.unit, quantity: line.quantity, unitPrice: line.unitPrice, totalPrice: Number(line.quantity) * Number(line.unitPrice) };
+            });
+            const totalAmount = items.reduce((sum, item) => sum + item.totalPrice, 0);
+            const created = {
+              invoiceId: Date.now(), invoiceNumber, totalAmount, issuerId: issuer.id,
+              issuerSettings: {
+                code: issuer.code, issuerName: issuer.legal_name, issuerAddress: issuer.address,
+                issuerCrn: issuer.company_number, issuerVat: issuer.vat_number, vatRegistered: Boolean(issuer.vat_registered),
+                invoiceBankName1: issuer.bank_name_1, invoiceAccountNumber: issuer.account_number_1,
+                invoiceSortCode: issuer.sort_code_1, invoiceFooter: issuer.footer, invoiceColor: issuer.color,
+                invoiceAlternateRowColor: issuer.alternate_row_color, invoiceAlternateRowOpacity: issuer.alternate_row_opacity,
+                invoiceSeries: issuer.invoice_series,
+              },
+            };
+            const savedInvoice = { id: created.invoiceId, invoice_number: invoiceNumber, invoice_date: input.invoiceDate, total_amount: totalAmount, paid_amount: 0, status: 'unpaid', store_name: store.name, store_address: store.address, store_postcode: store.postcode, company_name: company.name, company_address: company.address, issuer_id: issuer.id, issuer_name: issuer.legal_name, issuer_code: issuer.code, issuer_color: issuer.color, issuer_settings: created.issuerSettings, items };
+            billingInvoices.unshift(savedInvoice);
+            return { ...created, invoice: savedInvoice };
+          },
+          'billing.getIssuers': async () => billingIssuers.map((issuer) => ({ ...issuer })),
+          'billing.getTestMode': async () => ({ enabled: billingTestMode }),
+          'billing.setTestMode': async (enabled) => { billingTestMode = enabled === true; return { enabled: billingTestMode }; },
+          'billing.deleteTestInvoice': async (_invoiceId, confirmation) => ({ reference: String(confirmation || '').replace(/^STERGE\s+/i, ''), counterRewound: true }),
+          'billing.updatePayment': async (input) => ({ id: input.id, amount: input.amount, method: input.method, bankName: input.bankName || null }),
+          'billing.getAllCompaniesAndStores': async () => billingCompanies.map((company) => {
+            const issuer = billingIssuers.find((item) => item.id === company.issuer_id);
+            return { ...company, issuer_name: issuer?.legal_name, issuer_code: issuer?.code, issuer_color: issuer?.color, stores: company.stores.slice() };
+          }),
+          'billing.getCompanyProfile': async (companyId) => {
+            const company = billingCompanies.find((item) => item.id === companyId);
+            if (!company) return null;
+            const issuer = billingIssuers.find((item) => item.id === company.issuer_id);
+            const invoices = billingInvoices.filter((invoice) => company.stores.some((store) => store.id === invoice.store_id));
+            return {
+              company: { ...company, issuer_name: issuer?.legal_name, issuer_code: issuer?.code, issuer_color: issuer?.color },
+              issuers: billingIssuers.map((item) => ({ ...item })), stores: company.stores.slice(), invoices,
+              unpaidInvoices: invoices, payments: [], issuerCredits: [], creditLedger: { entries: [], applications: [] },
+            };
+          },
+          'billing.getSettings': async () => ({ invoiceLogo: '' }),
+          'billing.getVrBakerStatus': async () => ({ endpoint: 'https://demo.supabase.co/functions/v1/external-api', hasToken: true }),
+          'billing.previewWeeklyInvoices': async () => ({ success: true, message: 'Date demonstrative pentru facturarea pe zone.', zones: demoZones, ordersByStore: billingOrderPreview.map((order) => ({ ...order })) }),
+          'billing.createWeeklyInvoices': async (_startDate, _endDate, storeIds) => emitDemoWeeklyOrders(billingOrderPreview.filter((order) => storeIds.includes(order.store.id) && order.billingState === 'ready')),
+          'billing.createWeeklyInvoicesByZone': async (_startDate, _endDate, zoneId) => emitDemoWeeklyOrders(billingOrderPreview.filter((order) => (order.store.zone?.id || null) === zoneId && order.billingState === 'ready')),
+          'billing.updateIssuer': async (input) => {
+            billingIssuers = billingIssuers.map((issuer) => issuer.id === input.id ? {
+              ...issuer, legal_name: input.legalName, address: input.address, company_number: input.companyNumber,
+              vat_number: input.vatNumber, bank_name_1: input.bankName1, account_number_1: input.accountNumber1,
+              sort_code_1: input.sortCode1, bank_name_2: input.bankName2, account_number_2: input.accountNumber2,
+              sort_code_2: input.sortCode2, footer: input.footer, invoice_series: input.invoiceSeries,
+              next_invoice_number: input.nextInvoiceNumber, color: input.color, alternate_row_color: input.alternateRowColor,
+              credit_note_series: input.creditNoteSeries, next_credit_note_number: input.nextCreditNoteNumber,
+              credit_note_sequence_confirmed: input.confirmCreditNoteSequence ? 1 : 0,
+              alternate_row_opacity: input.alternateRowOpacity, is_active: input.isActive ? 1 : 0,
+              isReady: Boolean(input.legalName && input.address && input.companyNumber && input.invoiceSeries && input.nextInvoiceNumber && input.bankName1 && input.accountNumber1 && input.sortCode1),
+            } : issuer);
+            return { success: true };
+          },
+          'billing.saveSettings': async () => ({ success: true }),
+          'billing.assignCompanyIssuer': async (companyId, issuerId) => {
+            const resolvedIssuerId = issuerId === null ? billingIssuers.find((issuer) => issuer.is_default === 1)?.id : issuerId;
+            billingCompanies = billingCompanies.map((company) => company.id === companyId ? { ...company, issuer_id: resolvedIssuerId, issuer_assignment_mode: issuerId === null ? 'default' : 'explicit' } : company);
+            return { success: true };
+          },
+          'billing.configureVrBakerToken': async () => ({ success: true, message: 'Token demonstrativ validat.' }),
+          'billing.testVrBakerConnection': async () => ({ success: true, message: 'Conexiune demonstrativă reușită.' }),
+        };
+        window.desktopApi = new Proxy({}, {
+          get(_target, group) {
+            return new Proxy({}, {
+              get(_groupTarget, method) {
+                const key = `${String(group)}.${String(method)}`;
+                if (handlers[key]) return handlers[key];
+                if (String(method).startsWith('on')) return () => () => {};
+                return async () => [];
+              },
+            });
+          },
+        });
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

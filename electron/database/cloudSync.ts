@@ -2,11 +2,12 @@ import {resolveExistingInvoiceFolder,resolveCompanyInvoiceFolder,listInvoiceTree
 import fs from 'fs';
 import path from 'path';
 import { app, shell } from 'electron';
-import { db, dbPath, restoreDb } from './db';
+import { dbPath, restoreDb } from './db';
 import { google } from 'googleapis';
 import { CodeChallengeMethod } from 'google-auth-library';
 import http from 'http';
 import { createHash, randomBytes } from 'crypto';
+import { Readable } from 'stream';
 import {
   deleteCredential,
   getCredential,
@@ -24,6 +25,19 @@ import {
   PRIMARY_CLOUD_DATABASE_NAME,
   selectPreferredCloudDatabase,
 } from './cloudBackupSelection';
+import {
+  assertUploadedFileMatches,
+  CLOUD_DATABASE_FOLDER_NAME,
+  CLOUD_INVOICES_FOLDER_NAME,
+  CLOUD_ROOT_FOLDER_NAME,
+  evaluateCloudSyncHealth,
+  type CloudSyncHealth,
+  type UploadedFileMetadata,
+} from './cloudSyncPolicy';
+import {
+  normalCloudDocumentFolders,
+  type ClientFinancialDocumentKind,
+} from '../reports/clientDocumentStorage';
 
 const isDev = !app.isPackaged;
 const baseDir = isDev ? process.cwd() : app.getPath('userData');
@@ -31,30 +45,46 @@ const legacyConfigFilePath = path.join(baseDir, 'config_google_drive.json');
 const GOOGLE_TOKENS_KEY = 'google-drive-oauth-tokens';
 
 declare const __VR_HUB_GOOGLE_CLIENT_ID__: string;
+declare const __VR_HUB_GOOGLE_CLIENT_SECRET__: string;
 
 const CLIENT_ID = __VR_HUB_GOOGLE_CLIENT_ID__;
-const REDIRECT_URI = 'http://127.0.0.1:3456/oauth2callback';
-
+const CLIENT_SECRET = __VR_HUB_GOOGLE_CLIENT_SECRET__;
 function hasGoogleOAuthBuildConfig() {
-  return Boolean(CLIENT_ID);
+  return Boolean(CLIENT_ID && CLIENT_SECRET);
 }
 
 const oauth2Client = new google.auth.OAuth2(
   CLIENT_ID,
-  undefined,
-  REDIRECT_URI
+  CLIENT_SECRET,
 );
 
 export interface CloudSyncStatus {
   isConnected: boolean;
+  connectionHealthy: boolean;
+  syncHealth: CloudSyncHealth;
   userEmail: string | null;
   lastCloudBackup: string | null;
+  lastCloudBackupIso: string | null;
+  lastUploadAttempt: string | null;
+  lastSuccessfulUpload: string | null;
+  lastError: string | null;
+  rootFolderName: string;
   availableBackups: Array<{
     fileId: string;
     fileName: string;
     mtime: number;
     formattedTime: string;
   }>;
+}
+
+export interface CloudSaveResult {
+  success: boolean;
+  uploaded?: boolean;
+  skipped?: boolean;
+  error?: string;
+  fileId?: string;
+  fileName?: string;
+  modifiedTime?: string | null;
 }
 
 export interface CloudBackupMetadata {
@@ -66,6 +96,15 @@ export interface CloudBackupMetadata {
   size?: string | null;
 }
 
+export interface VerifiedCloudBuffer {
+  fileId: string;
+  fileName: string;
+  version: string | null;
+  modifiedTime: string | null;
+  md5Checksum: string | null;
+  buffer: Uint8Array;
+}
+
 function calculateFileMd5(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = createHash('md5');
@@ -74,6 +113,69 @@ function calculateFileMd5(filePath: string): Promise<string> {
     stream.on('end', () => resolve(hash.digest('hex')));
     stream.on('error', reject);
   });
+}
+
+const cloudRuntimeState: {
+  lastUploadAttempt: string | null;
+  lastSuccessfulUpload: string | null;
+  lastError: string | null;
+} = {
+  lastUploadAttempt: null,
+  lastSuccessfulUpload: null,
+  lastError: null,
+};
+
+function publicGoogleDriveError(error: unknown, fallback: string) {
+  const candidate = error as {
+    code?: unknown;
+    response?: { status?: unknown; data?: { error?: unknown; error_description?: unknown } };
+    errors?: Array<{ reason?: unknown }>;
+  } | null;
+  const status = Number(candidate?.response?.status || candidate?.code || 0);
+  const reason = typeof candidate?.errors?.[0]?.reason === 'string' ? candidate.errors[0].reason : '';
+  const message = error instanceof Error ? error.message : '';
+  const oauthError = typeof candidate?.response?.data?.error === 'string' ? candidate.response.data.error : '';
+  console.error('[GOOGLE DRIVE] Operație eșuată.', { status: status || null, reason: reason || null });
+  if (status === 401 || reason === 'authError' || oauthError === 'invalid_grant' || oauthError === 'invalid_token' || /invalid_grant|invalid_token|no refresh token/i.test(message)) {
+    return 'Autorizarea Google Drive a expirat sau a fost revocată. Reconectează contul din Setări.';
+  }
+  if (status === 403) return 'Contul Google nu permite accesul aplicației la folderul configurat. Reconectează contul corect.';
+  if (status === 429) return 'Google Drive a limitat temporar sincronizarea. Aplicația va reîncerca automat.';
+  if (/ENOTFOUND|ECONNRESET|ETIMEDOUT|network|socket hang up/i.test(message)) return 'Google Drive nu poate fi contactat. Verifică internetul și încearcă din nou.';
+  if (/^Google Drive nu a confirmat|^Fișierul încărcat nu se află|^Checksum-ul|^Dimensiunea fișierului/.test(message)) return message;
+  return fallback;
+}
+
+function publicGoogleOAuthError(error: unknown) {
+  const candidate = error as {
+    code?: unknown;
+    response?: { status?: unknown; data?: { error?: unknown; error_description?: unknown } };
+  } | null;
+  const oauthError = typeof candidate?.response?.data?.error === 'string' ? candidate.response.data.error : '';
+  const description = typeof candidate?.response?.data?.error_description === 'string' ? candidate.response.data.error_description : '';
+  const message = error instanceof Error ? error.message : '';
+  const details = `${oauthError} ${description} ${message}`;
+  console.error('[GOOGLE DRIVE] Autentificarea OAuth a eșuat.', {
+    status: Number(candidate?.response?.status || candidate?.code || 0) || null,
+    oauthError: oauthError || null,
+  });
+  if (/client_secret|unauthorized_client|invalid_client/i.test(details)) {
+    return 'Configurația OAuth Google Drive inclusă în această versiune este incompletă sau nu corespunde clientului Desktop. Actualizează aplicația la cea mai nouă versiune.';
+  }
+  if (/redirect_uri_mismatch/i.test(details)) return 'Adresa locală de revenire Google Drive nu este acceptată de configurația OAuth.';
+  if (/access_denied/i.test(details)) return 'Autorizarea Google Drive a fost anulată sau refuzată.';
+  if (/ENOTFOUND|ECONNRESET|ETIMEDOUT|network|socket hang up/i.test(details)) return 'Google nu poate fi contactat. Verifică internetul și încearcă din nou.';
+  return 'Autentificarea Google Drive nu a putut fi finalizată. Verifică configurația OAuth și încearcă din nou.';
+}
+
+function recordUploadFailure(error: string) {
+  cloudRuntimeState.lastError = error;
+  return error;
+}
+
+function recordUploadSuccess(modifiedTime?: string | null) {
+  cloudRuntimeState.lastSuccessfulUpload = modifiedTime || new Date().toISOString();
+  cloudRuntimeState.lastError = null;
 }
 
 function loadTokens() {
@@ -108,8 +210,26 @@ function saveTokens(tokens: any) {
   if (fs.existsSync(legacyConfigFilePath)) fs.unlinkSync(legacyConfigFilePath);
 }
 
+oauth2Client.on('tokens', (tokens) => {
+  if (!isCredentialStorageAvailable()) return;
+  try {
+    const stored = getCredential(GOOGLE_TOKENS_KEY);
+    const previous = stored ? JSON.parse(stored) : {};
+    saveTokens({ ...previous, ...oauth2Client.credentials, ...tokens });
+  } catch {
+    console.warn('[GOOGLE DRIVE] Tokenul reîmprospătat nu a putut fi persistat.');
+  }
+});
+
 let authServer: http.Server | null = null;
-let expectedOAuthState: string | null = null;
+let authAttemptInProgress = false;
+
+async function closeAuthServer() {
+  const server = authServer;
+  authServer = null;
+  if (!server?.listening) return;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
 
 export async function connectGoogleDrive(): Promise<{ success: boolean; message?: string }> {
   if (!hasGoogleOAuthBuildConfig()) {
@@ -124,131 +244,161 @@ export async function connectGoogleDrive(): Promise<{ success: boolean; message?
       message: 'Stocarea securizată a credentialelor nu este disponibilă pe acest sistem.',
     };
   }
+  if (authAttemptInProgress) {
+    return { success: false, message: 'O conectare Google Drive este deja în curs. Finalizeaz-o în fereastra deschisă.' };
+  }
 
-  const { codeVerifier, codeChallenge } = await oauth2Client.generateCodeVerifierAsync();
+  authAttemptInProgress = true;
+  try {
+    await closeAuthServer();
+    oauth2Client.setCredentials({});
 
-  return new Promise((resolve) => {
-    // If a server is already running, close it
-    if (authServer) {
-      authServer.close();
-      authServer = null;
-    }
+    return await new Promise((resolve) => {
+      const scopes = [
+        'https://www.googleapis.com/auth/drive.file',
+        'https://www.googleapis.com/auth/userinfo.email'
+      ];
+      const oauthState = randomBytes(32).toString('base64url');
+      let authorizationClient: InstanceType<typeof google.auth.OAuth2> | null = null;
+      let codeVerifier = '';
+      let callbackBaseUrl = '';
+      let settled = false;
+      let timeout: ReturnType<typeof setTimeout> | null = null;
 
-    const scopes = [
-      'https://www.googleapis.com/auth/drive.file',
-      'https://www.googleapis.com/auth/userinfo.email'
-    ];
+      const finish = (result: { success: boolean; message?: string }) => {
+        if (settled) return;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        const server = authServer;
+        authServer = null;
+        if (server?.listening) server.close();
+        resolve(result);
+      };
 
-    expectedOAuthState = randomBytes(32).toString('base64url');
+      authServer = http.createServer(async (req, res) => {
+        try {
+          if (!callbackBaseUrl || !authorizationClient || !codeVerifier) throw new Error('Fluxul OAuth local nu este inițializat.');
+          const callbackUrl = new URL(req.url || '/', callbackBaseUrl);
+          if (callbackUrl.pathname === '/oauth2callback') {
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            if (callbackUrl.searchParams.get('state') !== oauthState) {
+              res.statusCode = 400;
+              res.end('Cererea de autentificare nu este validă. Reîncearcă din aplicație.');
+              finish({ success: false, message: 'Validarea autentificării a eșuat. Pornește o singură reconectare și finalizeaz-o în aceeași fereastră.' });
+              return;
+            }
 
-    const url = oauth2Client.generateAuthUrl({
-      access_type: 'offline',
-      scope: scopes,
-      prompt: 'consent',
-      state: expectedOAuthState,
-      code_challenge: codeChallenge,
-      code_challenge_method: CodeChallengeMethod.S256,
-    });
-
-    authServer = http.createServer(async (req, res) => {
-      try {
-        const callbackUrl = new URL(req.url || '/', REDIRECT_URI);
-        if (callbackUrl.pathname === '/oauth2callback') {
-          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-          if (!expectedOAuthState || callbackUrl.searchParams.get('state') !== expectedOAuthState) {
-            res.statusCode = 400;
-            res.end('Cererea de autentificare nu este validă. Reîncearcă din aplicație.');
-            if (authServer) authServer.close();
-            authServer = null;
-            expectedOAuthState = null;
-            resolve({ success: false, message: 'Validarea autentificării a eșuat.' });
-            return;
-          }
-
-          const qs = callbackUrl.searchParams;
-          const code = qs.get('code');
-          if (code) {
-            const { tokens } = await oauth2Client.getToken({ code, codeVerifier });
-            oauth2Client.setCredentials(tokens);
-            saveTokens(tokens);
-            res.end('Autentificare cu succes! Poți închide această fereastră și reveni în aplicație.');
-            if (authServer) authServer.close();
-            authServer = null;
-            expectedOAuthState = null;
-            resolve({ success: true });
+            const qs = callbackUrl.searchParams;
+            const providerError = qs.get('error');
+            if (providerError) {
+              res.statusCode = 400;
+              res.end('Autorizarea Google Drive a fost anulată sau refuzată. Poți închide această fereastră.');
+              finish({ success: false, message: providerError === 'access_denied' ? 'Autorizarea Google Drive a fost anulată sau refuzată.' : 'Google nu a aprobat autentificarea.' });
+              return;
+            }
+            const code = qs.get('code');
+            if (code) {
+              const { tokens } = await authorizationClient.getToken({ code, codeVerifier });
+              oauth2Client.setCredentials(tokens);
+              await google.drive({ version: 'v3', auth: oauth2Client }).files.list({ pageSize: 1, fields: 'files(id)' });
+              saveTokens(tokens);
+              cloudRuntimeState.lastError = null;
+              res.end('Autentificare cu succes! Poți închide această fereastră și reveni în aplicație.');
+              finish({ success: true });
+            } else {
+              res.statusCode = 400;
+              res.end('Eroare: Nu s-a primit codul de autorizare. Poți închide această fereastră.');
+              finish({ success: false, message: 'Google nu a transmis codul de autorizare.' });
+            }
           } else {
-            res.end('Eroare: Nu s-a primit codul de autorizare.');
-            if (authServer) authServer.close();
-            authServer = null;
-            expectedOAuthState = null;
-            resolve({ success: false, message: 'Nu s-a primit codul.' });
+            res.statusCode = 404;
+            res.end('Not found');
           }
-        } else {
-          res.statusCode = 404;
-          res.end('Not found');
+        } catch (error) {
+          oauth2Client.setCredentials({});
+          res.statusCode = 500;
+          res.end('Autentificarea Google Drive nu a putut fi finalizată. Revino în aplicație pentru detalii.');
+          finish({ success: false, message: publicGoogleOAuthError(error) });
         }
-      } catch {
-        res.statusCode = 500;
-        res.end('Autentificarea nu a putut fi finalizată.');
-        if (authServer) authServer.close();
-        authServer = null;
-        expectedOAuthState = null;
-        resolve({ success: false, message: 'Autentificarea Google Drive a eșuat.' });
-      }
-    });
+      });
 
-    authServer.once('error', () => {
-      if (authServer) authServer.close();
-      authServer = null;
-      expectedOAuthState = null;
-      resolve({ success: false, message: 'Serverul local de autentificare nu a putut porni.' });
-    });
+      authServer.once('error', (error) => {
+        console.error('[GOOGLE DRIVE] Serverul OAuth local nu a putut porni.', { code: (error as NodeJS.ErrnoException).code || null });
+        finish({ success: false, message: 'Serverul local de autentificare nu a putut porni.' });
+      });
 
-    authServer.listen(3456, '127.0.0.1', () => {
-      shell.openExternal(url);
-      try {
-        const { BrowserWindow } = require('electron');
-        const windows = BrowserWindow.getAllWindows();
-        if (windows.length > 0) {
-          windows[0].webContents.send('google-auth-url', url);
+      authServer.listen(0, '127.0.0.1', async () => {
+        try {
+          const address = authServer?.address();
+          if (!address || typeof address === 'string') throw new Error('Portul local OAuth nu a putut fi rezervat.');
+          callbackBaseUrl = `http://127.0.0.1:${address.port}`;
+          const redirectUri = `${callbackBaseUrl}/oauth2callback`;
+          authorizationClient = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, redirectUri);
+          const challenge = await authorizationClient.generateCodeVerifierAsync();
+          codeVerifier = challenge.codeVerifier;
+          const url = authorizationClient.generateAuthUrl({
+            access_type: 'offline',
+            scope: scopes,
+            prompt: 'consent',
+            state: oauthState,
+            code_challenge: challenge.codeChallenge,
+            code_challenge_method: CodeChallengeMethod.S256,
+          });
+          await shell.openExternal(url);
+          try {
+            const { BrowserWindow } = require('electron');
+            const windows = BrowserWindow.getAllWindows();
+            if (windows.length > 0) windows[0].webContents.send('google-auth-url', url);
+          } catch {}
+        } catch (error) {
+          console.error('[GOOGLE DRIVE] Browserul pentru OAuth nu a putut fi deschis.', { message: error instanceof Error ? error.message : null });
+          finish({ success: false, message: 'Pagina Google Drive nu a putut fi deschisă în browser.' });
         }
-      } catch (e) {}
-    });
+      });
 
-    // Timeout after 3 minutes just in case
-    setTimeout(() => {
-      if (authServer) {
-        authServer.close();
-        authServer = null;
-        expectedOAuthState = null;
-        resolve({ success: false, message: 'Timpul de conectare a expirat. Te rog să încerci din nou.' });
-      }
-    }, 3 * 60 * 1000);
-  });
+      timeout = setTimeout(() => {
+        finish({ success: false, message: 'Timpul de conectare a expirat. Te rog să încerci din nou.' });
+      }, 3 * 60 * 1000);
+    });
+  } finally {
+    authAttemptInProgress = false;
+  }
 }
 
 export async function disconnectCloud() {
+  await closeAuthServer();
   if (fs.existsSync(legacyConfigFilePath)) {
     fs.unlinkSync(legacyConfigFilePath);
   }
   deleteCredential(GOOGLE_TOKENS_KEY);
   oauth2Client.setCredentials({});
+  cloudRuntimeState.lastUploadAttempt = null;
+  cloudRuntimeState.lastSuccessfulUpload = null;
+  cloudRuntimeState.lastError = null;
   return { success: true };
 }
 
-async function getOrCreateFolder(drive: any, folderName: string, parentId?: string): Promise<string> {
-  const query = parentId 
-    ? `name='${folderName}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
-    : `name='${folderName}' and 'root' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
-  
+function escapeDriveQueryValue(value: string) {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+async function findFolder(drive: any, folderName: string, parentId?: string): Promise<string | null> {
+  const escapedName = escapeDriveQueryValue(folderName);
+  const query = parentId
+    ? `name='${escapedName}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
+    : `name='${escapedName}' and 'root' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
   const search = await drive.files.list({
     q: query,
+    orderBy: 'createdTime asc',
+    pageSize: 10,
     fields: 'files(id)'
   });
+  return search.data.files?.[0]?.id || null;
+}
 
-  if (search.data.files && search.data.files.length > 0) {
-    return search.data.files[0].id!;
-  }
+async function getOrCreateFolder(drive: any, folderName: string, parentId?: string): Promise<string> {
+  const existingId = await findFolder(drive, folderName, parentId);
+  if (existingId) return existingId;
 
   const fileMetadata: any = {
     name: folderName,
@@ -267,9 +417,20 @@ async function getOrCreateFolder(drive: any, folderName: string, parentId?: stri
 }
 
 async function getDriveStructure(drive: any) {
-  const rootFolderId = await getOrCreateFolder(drive, 'VR - Hub Management');
-  const dbFolderId = await getOrCreateFolder(drive, 'Baza de date', rootFolderId);
+  const rootFolderId = await getOrCreateFolder(drive, CLOUD_ROOT_FOLDER_NAME);
+  const dbFolderId = await getOrCreateFolder(drive, CLOUD_DATABASE_FOLDER_NAME, rootFolderId);
   return { rootFolderId, dbFolderId };
+}
+
+async function listCloudDatabaseFiles(drive: any, dbFolderId?: string | null) {
+  const parentQuery = dbFolderId ? ` and '${dbFolderId}' in parents` : '';
+  const response = await drive.files.list({
+    q: `${cloudDatabaseQuery()}${parentQuery}`,
+    orderBy: 'modifiedTime desc',
+    pageSize: 100,
+    fields: 'files(id,name,version,modifiedTime,md5Checksum,size,parents)',
+  });
+  return response.data.files || [];
 }
 
 export async function getCloudStatus(): Promise<CloudSyncStatus> {
@@ -277,8 +438,15 @@ export async function getCloudStatus(): Promise<CloudSyncStatus> {
   if (!isConnected) {
     return {
       isConnected: false,
+      connectionHealthy: false,
+      syncHealth: 'disconnected',
       userEmail: null,
       lastCloudBackup: null,
+      lastCloudBackupIso: null,
+      lastUploadAttempt: cloudRuntimeState.lastUploadAttempt,
+      lastSuccessfulUpload: cloudRuntimeState.lastSuccessfulUpload,
+      lastError: cloudRuntimeState.lastError,
+      rootFolderName: CLOUD_ROOT_FOLDER_NAME,
       availableBackups: []
     };
   }
@@ -286,22 +454,11 @@ export async function getCloudStatus(): Promise<CloudSyncStatus> {
   try {
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
     
-    // Get user email
-    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
-    const userInfo = await oauth2.userinfo.get();
-    
-    const res = await drive.files.list({
-      q: cloudDatabaseQuery(),
-      orderBy: 'modifiedTime desc',
-      fields: 'files(id, name, modifiedTime)'
-    });
-
-    const files = res.data.files || [];
-    const backups = files.sort((left, right) => {
-      if (left.name === PRIMARY_CLOUD_DATABASE_NAME && right.name !== PRIMARY_CLOUD_DATABASE_NAME) return -1;
-      if (right.name === PRIMARY_CLOUD_DATABASE_NAME && left.name !== PRIMARY_CLOUD_DATABASE_NAME) return 1;
-      return Date.parse(right.modifiedTime || '') - Date.parse(left.modifiedTime || '');
-    }).map(f => {
+    const rootFolderId = await findFolder(drive, CLOUD_ROOT_FOLDER_NAME);
+    const dbFolderId = rootFolderId ? await findFolder(drive, CLOUD_DATABASE_FOLDER_NAME, rootFolderId) : null;
+    const files = dbFolderId ? await listCloudDatabaseFiles(drive, dbFolderId) : [];
+    const preferred = selectPreferredCloudDatabase(files, true);
+    const backups = files.sort((left, right) => Date.parse(right.modifiedTime || '') - Date.parse(left.modifiedTime || '')).map(f => {
       const d = new Date(f.modifiedTime as string);
       return {
         fileId: f.id as string,
@@ -311,102 +468,325 @@ export async function getCloudStatus(): Promise<CloudSyncStatus> {
       };
     });
 
+    const lastCloudBackupIso = preferred?.modifiedTime || null;
+    const syncHealth = evaluateCloudSyncHealth({
+      hasTokens: true,
+      apiHealthy: true,
+      lastModifiedTime: lastCloudBackupIso,
+      lastUploadError: cloudRuntimeState.lastError,
+    });
+    let userEmail: string | null = null;
+    try {
+      const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+      const userInfo = await oauth2.userinfo.get();
+      userEmail = userInfo.data.email || null;
+    } catch {
+      // File access is the authoritative health check. Email is only decorative.
+    }
+
     return {
       isConnected: true,
-      userEmail: userInfo.data.email || 'Conectat',
-      lastCloudBackup: backups.length > 0 ? backups[0].formattedTime : null,
+      connectionHealthy: true,
+      syncHealth,
+      userEmail,
+      lastCloudBackup: lastCloudBackupIso ? new Date(lastCloudBackupIso).toLocaleString('ro-RO') : null,
+      lastCloudBackupIso,
+      lastUploadAttempt: cloudRuntimeState.lastUploadAttempt,
+      lastSuccessfulUpload: cloudRuntimeState.lastSuccessfulUpload,
+      lastError: cloudRuntimeState.lastError,
+      rootFolderName: CLOUD_ROOT_FOLDER_NAME,
       availableBackups: backups
     };
   } catch (e) {
-    console.error('Error fetching cloud status:', e);
+    const error = publicGoogleDriveError(e, 'Google Drive nu poate fi contactat. Verifică internetul și reconectează contul dacă problema persistă.');
     return {
-      isConnected: true, // tokens exist logic
-      userEmail: 'Eroare conexiune',
+      isConnected: true,
+      connectionHealthy: false,
+      syncHealth: 'error',
+      userEmail: null,
       lastCloudBackup: null,
+      lastCloudBackupIso: null,
+      lastUploadAttempt: cloudRuntimeState.lastUploadAttempt,
+      lastSuccessfulUpload: cloudRuntimeState.lastSuccessfulUpload,
+      lastError: error,
+      rootFolderName: CLOUD_ROOT_FOLDER_NAME,
       availableBackups: []
     };
   }
 }
 
-export async function saveToCloud(isAutomatic = false, snapshotPath?: string): Promise<{ success: boolean; error?: string }> {
+async function findFileForUpload(drive: any, filename: string, parentId: string) {
+  const escapedFilename = escapeDriveQueryValue(filename);
+  const inTarget = await drive.files.list({
+    q: `name='${escapedFilename}' and '${parentId}' in parents and trashed=false`,
+    orderBy: 'modifiedTime desc',
+    pageSize: 10,
+    fields: 'files(id,name,parents,modifiedTime)',
+  });
+  if (inTarget.data.files?.[0]?.id) return inTarget.data.files[0];
+
+  const anywhere = await drive.files.list({
+    q: `name='${escapedFilename}' and trashed=false`,
+    orderBy: 'modifiedTime desc',
+    pageSize: 10,
+    fields: 'files(id,name,parents,modifiedTime)',
+  });
+  return anywhere.data.files?.[0] || null;
+}
+
+async function fetchUploadedMetadata(drive: any, fileId: string): Promise<UploadedFileMetadata> {
+  const response = await drive.files.get({
+    fileId,
+    fields: 'id,name,parents,modifiedTime,md5Checksum,size',
+  });
+  return response.data;
+}
+
+async function uploadVerifiedBuffer(
+  drive: any,
+  input: { filename: string; parentId: string; mimeType: string; buffer: Uint8Array; strictParent?: boolean },
+) {
+  const expectedMd5 = createHash('md5').update(Buffer.from(input.buffer)).digest('hex');
+  const expectedSize = input.buffer.byteLength;
+  const existing = input.strictParent
+    ? await findExactCloudFile(drive, input.parentId, input.filename)
+    : await findFileForUpload(drive, input.filename, input.parentId);
+  let fileId: string;
+
+  if (existing?.id) {
+    const updateParams: any = {
+      fileId: existing.id,
+      media: { mimeType: input.mimeType, body: Readable.from(Buffer.from(input.buffer)) },
+      fields: 'id',
+    };
+    if (!existing.parents?.includes(input.parentId)) {
+      updateParams.addParents = input.parentId;
+      if (existing.parents?.length) updateParams.removeParents = existing.parents.join(',');
+    }
+    const updated = await drive.files.update(updateParams);
+    fileId = updated.data.id || existing.id;
+  } else {
+    const created = await drive.files.create({
+      requestBody: { name: input.filename, parents: [input.parentId] },
+      media: { mimeType: input.mimeType, body: Readable.from(Buffer.from(input.buffer)) },
+      fields: 'id',
+    });
+    if (!created.data.id) throw new Error('Google Drive nu a confirmat crearea fișierului.');
+    fileId = created.data.id;
+  }
+
+  return assertUploadedFileMatches(await fetchUploadedMetadata(drive, fileId), {
+    name: input.filename,
+    parentId: input.parentId,
+    md5Checksum: expectedMd5,
+    size: expectedSize,
+  });
+}
+
+function validatePrivateCloudPath(folderNames: string[], filename: string) {
+  if (!Array.isArray(folderNames) || folderNames.length === 0 || folderNames.length > 6) {
+    throw new Error('Calea Google Drive este invalidă.');
+  }
+  for (const segment of folderNames) {
+    if (
+      typeof segment !== 'string'
+      || segment.length < 1
+      || segment.length > 60
+      || segment !== segment.normalize('NFC').trim()
+      || /[<>:"/\\|?*\p{Cc}]/u.test(segment)
+      || segment === '.'
+      || segment === '..'
+    ) {
+      throw new Error('Calea Google Drive conține un folder invalid.');
+    }
+  }
+  if (typeof filename !== 'string' || !/^[A-Za-z0-9._-]{1,120}$/.test(filename) || filename.startsWith('.')) {
+    throw new Error('Numele fișierului Google Drive este invalid.');
+  }
+}
+
+async function resolvePrivateCloudFolder(drive: any, folderNames: string[], create: boolean) {
+  const rootFolderId = create
+    ? await getOrCreateFolder(drive, CLOUD_ROOT_FOLDER_NAME)
+    : await findFolder(drive, CLOUD_ROOT_FOLDER_NAME);
+  if (!rootFolderId) return null;
+  let parentId = rootFolderId;
+  for (const folderName of folderNames) {
+    const next = create
+      ? await getOrCreateFolder(drive, folderName, parentId)
+      : await findFolder(drive, folderName, parentId);
+    if (!next) return null;
+    parentId = next;
+  }
+  return parentId;
+}
+
+async function findExactCloudFile(drive: any, parentId: string, filename: string) {
+  const response = await drive.files.list({
+    q: `name='${escapeDriveQueryValue(filename)}' and '${parentId}' in parents and trashed=false`,
+    orderBy: 'modifiedTime desc',
+    pageSize: 2,
+    fields: 'files(id,name,version,modifiedTime,md5Checksum,size,parents)',
+  });
+  return response.data.files?.[0] || null;
+}
+
+/**
+ * Writer-only primitive used by the encrypted parallel register. It never searches
+ * outside the canonical VR - Management folder and verifies Drive's checksum.
+ */
+export async function readVerifiedPrivateCloudFile(folderNames: string[], filename: string): Promise<VerifiedCloudBuffer | null> {
+  if (getDeviceRole() !== 'writer') throw new Error('Calculatorul Viewer nu poate accesa registrul separat.');
+  if (!loadTokens()) throw new Error('Google Drive nu este conectat.');
+  validatePrivateCloudPath(folderNames, filename);
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    const parentId = await resolvePrivateCloudFolder(drive, folderNames, false);
+    if (!parentId) return null;
+    const file = await findExactCloudFile(drive, parentId, filename);
+    if (!file?.id) return null;
+    const size = Number(file.size || 0);
+    if (!Number.isSafeInteger(size) || size < 0 || size > 30 * 1024 * 1024) throw new Error('Fișierul registrului depășește limita permisă.');
+    const response = await drive.files.get({ fileId: file.id, alt: 'media' }, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(response.data as ArrayBuffer);
+    if (buffer.length !== size) throw new Error('Dimensiunea fișierului descărcat nu corespunde metadatelor Drive.');
+    const checksum = createHash('md5').update(buffer).digest('hex');
+    if (file.md5Checksum && checksum !== file.md5Checksum) throw new Error('Checksum-ul fișierului descărcat nu corespunde versiunii Drive.');
+    return {
+      fileId: file.id,
+      fileName: file.name || filename,
+      version: file.version || null,
+      modifiedTime: file.modifiedTime || null,
+      md5Checksum: file.md5Checksum || checksum,
+      buffer: new Uint8Array(buffer),
+    };
+  } catch (error) {
+    throw new Error(publicGoogleDriveError(error, 'Fișierul registrului nu a putut fi citit și verificat din Google Drive.'));
+  }
+}
+
+export async function writeVerifiedPrivateCloudFile(input: {
+  folderNames: string[];
+  filename: string;
+  mimeType: string;
+  buffer: Uint8Array;
+  expectedVersion?: string | null;
+}) {
+  if (getDeviceRole() !== 'writer') throw new Error('Calculatorul Viewer nu poate publica registrul separat.');
+  if (!loadTokens()) throw new Error('Google Drive nu este conectat.');
+  validatePrivateCloudPath(input.folderNames, input.filename);
+  if (!/^[-\w.+/;= ]{3,100}$/.test(input.mimeType)) throw new Error('Tipul fișierului este invalid.');
+  if (input.buffer.byteLength > 30 * 1024 * 1024) throw new Error('Fișierul depășește limita permisă.');
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    const parentId = await resolvePrivateCloudFolder(drive, input.folderNames, true);
+    if (!parentId) throw new Error('Folderul Google Drive nu a putut fi creat.');
+    const existing = await findExactCloudFile(drive, parentId, input.filename);
+    const currentVersion = existing?.version || null;
+    if (input.expectedVersion !== undefined && currentVersion !== input.expectedVersion) {
+      throw new Error('Registrul a fost modificat în Google Drive de o altă operație. Reîncarcă înainte de a continua.');
+    }
+    return await uploadVerifiedBuffer(drive, {
+      filename: input.filename,
+      parentId,
+      mimeType: input.mimeType,
+      buffer: input.buffer,
+      strictParent: true,
+    });
+  } catch (error) {
+    const details = error instanceof Error ? error.message : '';
+    if (details.startsWith('Registrul a fost modificat')) throw error;
+    throw new Error(publicGoogleDriveError(error, 'Fișierul registrului nu a putut fi încărcat și verificat în Google Drive.'));
+  }
+}
+
+export async function deletePrivateCloudFile(folderNames: string[], filename: string) {
+  if (getDeviceRole() !== 'writer') throw new Error('Calculatorul Viewer nu poate modifica registrul separat.');
+  if (!loadTokens()) throw new Error('Google Drive nu este conectat.');
+  validatePrivateCloudPath(folderNames, filename);
+  const drive = google.drive({ version: 'v3', auth: oauth2Client });
+  const parentId = await resolvePrivateCloudFolder(drive, folderNames, false);
+  if (!parentId) return false;
+  const file = await findExactCloudFile(drive, parentId, filename);
+  if (!file?.id) return false;
+  await drive.files.delete({ fileId: file.id });
+  return true;
+}
+
+export async function saveToCloud(isAutomatic = false, snapshotPath?: string): Promise<CloudSaveResult> {
+  cloudRuntimeState.lastUploadAttempt = new Date().toISOString();
   if (getDeviceRole() !== 'writer') {
-    return { success: false, error: 'Calculatorul Viewer nu poate publica baza de date.' };
+    return { success: false, error: recordUploadFailure('Calculatorul Viewer nu poate publica baza de date.') };
   }
   if (!loadTokens()) {
-    return { success: false, error: 'Nu ești conectat la Google Drive.' };
+    return { success: false, error: recordUploadFailure('Nu ești conectat la Google Drive.') };
   }
 
   try {
     if (!snapshotPath || path.resolve(snapshotPath) === path.resolve(dbPath)) {
-      return { success: false, error: 'Sincronizarea cloud necesită un snapshot verificat.' };
+      return { success: false, error: recordUploadFailure('Sincronizarea cloud necesită un snapshot verificat.') };
     }
     const { evaluateDb, verifyDatabaseFile } = require('./db');
     verifyDatabaseFile(snapshotPath);
     const localInfo = evaluateDb(snapshotPath);
     const localScore = localInfo ? localInfo.totalItems : 0;
+    const localMd5 = await calculateFileMd5(snapshotPath);
+    const localSize = fs.statSync(snapshotPath).size;
 
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
     const { dbFolderId } = await getDriveStructure(drive);
+    const canonicalBackups = await listCloudDatabaseFiles(drive, dbFolderId);
+    const allBackups = await listCloudDatabaseFiles(drive);
+    const existingPrimary = canonicalBackups.find((file: any) => file.name === PRIMARY_CLOUD_DATABASE_NAME)
+      || allBackups.find((file: any) => file.name === PRIMARY_CLOUD_DATABASE_NAME)
+      || null;
 
-    // Check if file already exists in 'Baza de date' folder or anywhere on drive
-    let search = await drive.files.list({
-      q: `'${dbFolderId}' in parents and name='${PRIMARY_CLOUD_DATABASE_NAME}' and trashed=false`,
-      fields: 'files(id, parents)'
-    });
-
-    if (!search.data.files || search.data.files.length === 0) {
-      search = await drive.files.list({
-        q: `name='${PRIMARY_CLOUD_DATABASE_NAME}' and trashed=false`,
-        fields: 'files(id, parents)'
-      });
+    if (isAutomatic && localScore <= 5 && allBackups.length > 0) {
+      const error = recordUploadFailure('Salvarea automată a fost oprită: baza locală pare goală, iar în Google Drive există deja o copie.');
+      console.warn('[CLOUD SYNC] Snapshotul local gol nu a înlocuit backup-ul existent.');
+      return { success: false, skipped: true, error };
     }
 
-    // Protecție: Dacă salvarea este automată pe fundal și baza locală este goală/nouă, dar pe cloud există deja un backup, nu suprascriem!
-    if (isAutomatic && localScore <= 5 && search.data.files && search.data.files.length > 0) {
-      console.log('[CLOUD SYNC] Salvarea automată a fost ignorată pentru a proteja backup-ul existent din Google Drive.');
-      return { success: true };
-    }
-
-    const media = {
-      mimeType: 'application/x-sqlite3',
-      body: fs.createReadStream(snapshotPath)
-    };
-
-    if (search.data.files && search.data.files.length > 0) {
-      const existingFile = search.data.files[0];
-      const fileId = existingFile.id!;
-
+    let fileId: string;
+    if (existingPrimary?.id) {
       const updateParams: any = {
-        fileId: fileId,
-        media: media
+        fileId: existingPrimary.id,
+        media: { mimeType: 'application/x-sqlite3', body: fs.createReadStream(snapshotPath) },
+        fields: 'id',
       };
-
-      // Mutăm fișierul în folderul 'Baza de date' dacă era în rădăcină sau altundeva
-      if (!existingFile.parents || !existingFile.parents.includes(dbFolderId)) {
+      if (!existingPrimary.parents?.includes(dbFolderId)) {
         updateParams.addParents = dbFolderId;
-        const previousParents = (existingFile.parents || []).join(',');
-        if (previousParents) {
-          updateParams.removeParents = previousParents;
-        }
+        if (existingPrimary.parents?.length) updateParams.removeParents = existingPrimary.parents.join(',');
       }
-
-      await drive.files.update(updateParams);
+      const updated = await drive.files.update(updateParams);
+      fileId = updated.data.id || existingPrimary.id;
     } else {
-      // Creare fișier nou în subfolderul 'Baza de date'
-      await drive.files.create({
-        requestBody: {
-          name: PRIMARY_CLOUD_DATABASE_NAME,
-          parents: [dbFolderId]
-        },
-        media: media,
-        fields: 'id'
+      const created = await drive.files.create({
+        requestBody: { name: PRIMARY_CLOUD_DATABASE_NAME, parents: [dbFolderId] },
+        media: { mimeType: 'application/x-sqlite3', body: fs.createReadStream(snapshotPath) },
+        fields: 'id',
       });
+      if (!created.data.id) throw new Error('Google Drive nu a confirmat crearea backup-ului.');
+      fileId = created.data.id;
     }
 
-    return { success: true };
-  } catch (e: any) {
-    console.error('Save to cloud error:', e);
-    return { success: false, error: 'Backupul nu a putut fi salvat în Google Drive.' };
+    const verified = assertUploadedFileMatches(await fetchUploadedMetadata(drive, fileId), {
+      name: PRIMARY_CLOUD_DATABASE_NAME,
+      parentId: dbFolderId,
+      md5Checksum: localMd5,
+      size: localSize,
+    });
+    recordUploadSuccess(verified.modifiedTime);
+    return {
+      success: true,
+      uploaded: true,
+      fileId: verified.fileId,
+      fileName: PRIMARY_CLOUD_DATABASE_NAME,
+      modifiedTime: verified.modifiedTime,
+    };
+  } catch (error) {
+    const message = recordUploadFailure(publicGoogleDriveError(error, 'Backupul nu a putut fi salvat și verificat în Google Drive.'));
+    return { success: false, error: message };
   }
 }
 
@@ -485,14 +865,12 @@ async function getCloudBackupMetadata(drive: any, fileId: string): Promise<Cloud
 
 async function getLatestCloudBackupMetadata(drive?: any): Promise<CloudBackupMetadata | null> {
   const client = drive || google.drive({ version: 'v3', auth: oauth2Client });
-  const response = await client.files.list({
-    q: cloudDatabaseQuery(),
-    orderBy: 'modifiedTime desc',
-    pageSize: 100,
-    fields: 'files(id,name,version,modifiedTime,md5Checksum,size)',
-  });
+  const rootFolderId = await findFolder(client, CLOUD_ROOT_FOLDER_NAME);
+  const dbFolderId = rootFolderId ? await findFolder(client, CLOUD_DATABASE_FOLDER_NAME, rootFolderId) : null;
+  if (!dbFolderId) return null;
+  const files = await listCloudDatabaseFiles(client, dbFolderId);
   const file = selectPreferredCloudDatabase(
-    response.data.files || [],
+    files,
     !getDeviceState().seenPrimaryCloudBackup,
   );
   if (!file?.id) return null;
@@ -549,20 +927,17 @@ export async function uploadInvoicePdf(invoiceId: number): Promise<{success:bool
   if (!Number.isSafeInteger(invoiceId) || invoiceId <= 0) throw new Error('Factura este invalidă.');
   if (!loadTokens()) return {success:false,error:'Google Drive nu este conectat.'};
   const connection = db;
-  const inv = connection.prepare(`SELECT i.*, c.name AS company_name,c.cui,c.reg_com,c.address AS company_address,
-    s.name AS store_name,s.address AS store_address FROM invoices i JOIN stores s ON s.id=i.store_id
-    JOIN companies c ON c.id=s.company_id WHERE i.id=?`).get(invoiceId) as any;
-  if (!inv) throw new Error('Factura nu există.');
   try {
+    const {getInvoiceById,getAppSetting} = await import('./repositories/billingRepo');
     const {generateInvoicePDF} = await import('../../src/utils/pdfGenerator');
-    const {getInvoiceSettings} = await import('./invoiceSettings');
-    if (connection !== db) throw new Error('Baza de date s-a schimbat.');
-    const settings = getInvoiceSettings();
-    const items = (db.prepare('SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id').all(invoiceId) as any[])
-      .map(i=>({productName:i.product_name,quantity:i.quantity,unitPrice:i.unit_price,totalPrice:i.total_price}));
-    const buffer = generateInvoicePDF(settings,{invoiceNumber:inv.invoice_number,invoiceDate:inv.invoice_date,
-      client:{name:inv.company_name,cui:inv.cui,regCom:inv.reg_com,address:inv.company_address},
-      store:{name:inv.store_name,address:inv.store_address},items,totalAmount:inv.total_amount});
+    const inv=getInvoiceById(invoiceId);
+    if(inv.status==='cancelled' || !inv.issuer_settings) throw new Error('Factura nu poate fi publicată.');
+    const buffer=generateInvoicePDF({...inv.issuer_settings,invoiceLogo:getAppSetting('invoice_logo')||''},{
+      invoiceNumber:inv.invoice_number,invoiceDate:inv.invoice_date,
+      client:{name:inv.company_name,cui:inv.company_cui,regCom:inv.company_reg_com,address:inv.company_address||inv.store_address},
+      store:{name:inv.store_name,address:inv.store_address,postcode:inv.store_postcode,phone:inv.store_phone},
+      items:inv.items,totalAmount:inv.total_amount,
+    });
     const drive = google.drive({version:'v3',auth:oauth2Client});
     const facturiFolderId = await resolveExistingInvoiceFolder(drive,(db.prepare("SELECT value FROM app_settings WHERE key='invoice_drive_folder_id'").get() as {value:string}|undefined)?.value);
     const companyFolderId = await resolveCompanyInvoiceFolder(drive,facturiFolderId,inv.company_name);
@@ -581,6 +956,10 @@ export async function uploadInvoicePdf(invoiceId: number): Promise<{success:bool
       fileId=result.data.id;
     }
     if (!fileId || getDeviceRole() !== 'writer' || connection !== db) throw new Error('Publicarea PDF nu a fost finalizată.');
+    assertUploadedFileMatches(await fetchUploadedMetadata(drive,fileId),{
+      name,parentId:companyFolderId,md5Checksum:createHash('md5').update(Buffer.from(buffer)).digest('hex'),size:buffer.byteLength,
+    });
+    if(getDeviceRole()!=='writer' || connection!==db) throw new Error('Writer s-a schimbat.');
     const saved = db.prepare('UPDATE invoices SET drive_file_id=? WHERE id=? AND document_revision=?').run(fileId,invoiceId,inv.document_revision);
     if (!saved.changes) throw new Error('Factura s-a modificat; regenerează PDF-ul.');
     return {success:true,fileId};
@@ -590,15 +969,14 @@ export async function uploadInvoicePdf(invoiceId: number): Promise<{success:bool
 export async function reconcileInvoicePdfs() {
   const connection = db;
   if (getDeviceRole() !== 'writer' || !loadTokens()) throw new Error('Este necesar un Writer conectat la Drive.');
-  const {getInvoiceSettings} = await import('./invoiceSettings');
-  const series = getInvoiceSettings().invoiceSeries;
+  const series = '';
   const drive = google.drive({version:'v3',auth:oauth2Client});
   const facturiFolderId = await resolveExistingInvoiceFolder(drive,(db.prepare("SELECT value FROM app_settings WHERE key='invoice_drive_folder_id'").get() as {value:string}|undefined)?.value);
   const files = new Map<string,string[]>();
   for (const file of await listInvoiceTree(drive,facturiFolderId)) files.set(file.name,[...(files.get(file.name)||[]),file.id]);
   if(connection !== db) throw new Error('Baza de date s-a schimbat.');
   let linked=0; const unresolved:number[]=[];
-  for (const row of db.prepare(`SELECT i.id,i.invoice_number,i.document_revision,c.name AS company_name FROM invoices i JOIN stores s ON s.id=i.store_id JOIN companies c ON c.id=s.company_id WHERE i.drive_file_id IS NULL`).all() as any[]) {
+  for (const row of db.prepare(`SELECT i.id,i.invoice_number,i.document_revision,i.pdf_path,c.name AS company_name FROM invoices i JOIN stores s ON s.id=i.store_id JOIN companies c ON c.id=s.company_id WHERE i.drive_file_id IS NULL`).all() as any[]) {
     const names=legacyInvoiceFilenames(row.invoice_number,series);
     const candidates=names.flatMap(name=>(files.get(name)||[]).map(id=>({name,id})));
     if(candidates.length!==1){unresolved.push(row.id);continue;}
@@ -606,6 +984,7 @@ export async function reconcileInvoicePdfs() {
     const {resolvePdfPath} = await import('../security/fileValidation');
     const {localClientDocumentDirectory} = await import('../reports/clientDocumentStorage');
     const localPaths=[
+      ...(row.pdf_path ? [row.pdf_path] : []),
       resolvePdfPath(localClientDocumentDirectory(app.getPath('documents'),row.company_name,'Facturi'),match.name),
       resolvePdfPath(path.join(app.getPath('documents'),'Facturi Vatra Romaneasca'),match.name),
     ];
@@ -622,6 +1001,86 @@ export async function reconcileInvoicePdfs() {
   return {linked,unresolved};
 }
 
+
+export async function uploadCreditNotePdfToCloud(filename: string, companyName: string, issuerCode: string, buffer: Uint8Array): Promise<{ success: boolean; error?: string }> {
+  if (getDeviceRole() !== 'writer') return { success: false, error: 'Calculatorul Viewer nu poate publica documente.' };
+  if (!loadTokens()) return { success: false, error: 'Nu ești conectat la Google Drive.' };
+  if (!/^Credit_Note_[A-Z0-9-]{1,60}\.pdf$/i.test(filename) || !/^[a-z0-9-]{1,40}$/i.test(issuerCode)) {
+    return { success: false, error: 'Numele documentului Credit Note nu este valid.' };
+  }
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    const parentId = await resolvePrivateCloudFolder(drive, normalCloudDocumentFolders(companyName, 'Credit Notes'), true);
+    if (!parentId) throw new Error('Folderul clientului nu a putut fi creat în Google Drive.');
+    await uploadVerifiedBuffer(drive, { filename, parentId, mimeType: 'application/pdf', buffer, strictParent: true });
+    await deleteExactCloudFile(drive, ['Credit Notes', issuerCode.toLowerCase()], filename);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: publicGoogleDriveError(error, 'Credit Note-ul nu a putut fi salvat și verificat în Google Drive.') };
+  }
+}
+
+export async function downloadCreditNotePdfFromCloud(filename: string, companyName: string, issuerCode: string): Promise<{ success: boolean; buffer?: Uint8Array; error?: string }> {
+  if (!loadTokens()) return { success: false, error: 'Google Drive nu este conectat pe acest calculator.' };
+  if (!/^Credit_Note_[A-Z0-9-]{1,60}\.pdf$/i.test(filename) || !/^[a-z0-9-]{1,40}$/i.test(issuerCode)) return { success: false, error: 'Identitatea documentului Credit Note nu este validă.' };
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    let parentId = await resolvePrivateCloudFolder(drive, normalCloudDocumentFolders(companyName, 'Credit Notes'), false);
+    if (!parentId) {
+      const rootFolderId = await findFolder(drive, CLOUD_ROOT_FOLDER_NAME);
+      const creditNotesFolderId = rootFolderId ? await findFolder(drive, 'Credit Notes', rootFolderId) : null;
+      parentId = creditNotesFolderId ? await findFolder(drive, issuerCode.toLowerCase(), creditNotesFolderId) : null;
+    }
+    if (!parentId) return { success: false, error: 'Folderul Credit Note al clientului nu a fost găsit în Google Drive.' };
+    const escapedFilename = filename.replace(/'/g, "\\'");
+    const search = await drive.files.list({
+      q: `name='${escapedFilename}' and mimeType='application/pdf' and '${parentId}' in parents and trashed=false`,
+      fields: 'files(id,size,modifiedTime)',
+      orderBy: 'modifiedTime desc',
+      pageSize: 2,
+    });
+    const file = search.data.files?.[0];
+    if (!file?.id) return { success: false, error: 'PDF-ul Credit Note nu a fost găsit în Google Drive.' };
+    if (Number(file.size || 0) > 15 * 1024 * 1024) return { success: false, error: 'PDF-ul din Google Drive depășește limita permisă.' };
+    const response = await drive.files.get({ fileId: file.id, alt: 'media' }, { responseType: 'arraybuffer' });
+    return { success: true, buffer: new Uint8Array(response.data as ArrayBuffer) };
+  } catch (error) {
+    return { success: false, error: publicGoogleDriveError(error, 'Descărcarea Credit Note-ului a eșuat.') };
+  }
+}
+
+async function deleteExactCloudFile(drive: any, folderNames: string[], filename: string) {
+  const parentId = await resolvePrivateCloudFolder(drive, folderNames, false);
+  if (!parentId) return false;
+  const file = await findExactCloudFile(drive, parentId, filename);
+  if (!file?.id) return false;
+  await drive.files.delete({ fileId: file.id });
+  return true;
+}
+
+export async function deleteClientFinancialDocumentFromCloud(
+  companyName: string,
+  kind: ClientFinancialDocumentKind,
+  filename: string,
+  legacyIssuerCode?: string,
+): Promise<{ success: boolean; deleted: boolean; error?: string }> {
+  if (getDeviceRole() !== 'writer') return { success: false, deleted: false, error: 'Calculatorul Viewer nu poate șterge documente.' };
+  if (!loadTokens()) return { success: false, deleted: false, error: 'Nu ești conectat la Google Drive.' };
+  try {
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    let deleted = await deleteExactCloudFile(drive, normalCloudDocumentFolders(companyName, kind), filename);
+    if (kind === 'Facturi') {
+      // Compatibility with PDFs written directly in the old Facturi root.
+      deleted = await deleteExactCloudFile(drive, ['Facturi'], filename) || deleted;
+    } else if (legacyIssuerCode && /^[a-z0-9-]{1,40}$/i.test(legacyIssuerCode)) {
+      deleted = await deleteExactCloudFile(drive, ['Credit Notes', legacyIssuerCode.toLowerCase()], filename) || deleted;
+    }
+    return { success: true, deleted };
+  } catch (error) {
+    return { success: false, deleted: false, error: publicGoogleDriveError(error, 'Documentul nu a putut fi șters și verificat în Google Drive.') };
+  }
+}
+
 export async function deletePdfFromCloud(filename: string): Promise<{ success: boolean; error?: string }> {
   if (getDeviceRole() !== 'writer') {
     return { success: false, error: 'Calculatorul Viewer nu poate șterge documente.' };
@@ -631,12 +1090,10 @@ export async function deletePdfFromCloud(filename: string): Promise<{ success: b
   }
   try {
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
-    const facturiFolderId = await resolveExistingInvoiceFolder(drive,(db.prepare("SELECT value FROM app_settings WHERE key='invoice_drive_folder_id'").get() as {value:string}|undefined)?.value);
+    const facturiFolderId=await resolveExistingInvoiceFolder(drive,(db.prepare("SELECT value FROM app_settings WHERE key='invoice_drive_folder_id'").get() as {value:string}|undefined)?.value);
 
-    const {validatePdfFilename} = await import('../security/fileValidation');
-    const safeName = validatePdfFilename(filename).replace(/'/g, "\\'");
-    const fileSearch = await drive.files.list({
-      q: `name='${safeName}' and '${facturiFolderId}' in parents and trashed=false`,
+    let fileSearch = await drive.files.list({
+      q: `name='${filename}' and '${facturiFolderId}' in parents and trashed=false`,
       fields: 'files(id)'
     });
 

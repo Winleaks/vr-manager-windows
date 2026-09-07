@@ -9,7 +9,6 @@ import {
   prepareBillingDelivery,
 } from "./billingPublication.ts";
 import {
-  deleteUnpaidInvoiceTransaction,
   recordCompanyPaymentTransaction,
 } from "./repositories/billingTransactions.ts";
 const company = "11111111-1111-4111-8111-111111111111",
@@ -83,7 +82,7 @@ test("delete leaves explicit tombstone and document changes invalidate reference
         .drive_file_id,
       null,
     );
-    deleteUnpaidInvoiceTransaction(db, 1);
+    db.transaction(()=>{db.prepare('DELETE FROM invoice_items WHERE invoice_id=1').run();db.prepare('DELETE FROM invoices WHERE id=1').run();})();
     const next = prepareBillingDelivery(db, 1);
     assert.deepEqual(next.deleted, ["1"]);
     assert.equal(next.invoices.length, 0);
@@ -109,4 +108,31 @@ test("currency is integer pence and invalid amounts fail", () => {
   assert.equal(moneyInPence(0.29), 29);
   assert.throws(() => moneyInPence(NaN));
   assert.throws(() => moneyInPence(-1));
+});
+
+test('upgrade queues invoices created yesterday and older, including credit settlements', async()=>{
+ const {ensureBillingIssuerSchema}=await import('./billingIssuers.ts');
+ const {ensureCreditNoteSchema,getInvoiceFinancials}=await import('./creditNotes.ts');
+ const db=new Database(':memory:');db.pragma('foreign_keys=ON');db.exec(initialSchema);
+ try {
+  db.exec("INSERT INTO clients(id,name)VALUES(1,'Client')");
+  db.prepare("INSERT INTO companies(id,client_id,name,supabase_company_id,credit_balance)VALUES(1,1,'Company',?,12)").run(company);
+  db.prepare("INSERT INTO stores(id,company_id,name,supabase_store_id)VALUES(1,1,'Store',?)").run(store);
+  db.exec("INSERT INTO invoices(id,store_id,invoice_number,invoice_date,total_amount,paid_amount)VALUES(1,1,'TGB-1','2026-09-06',100,20),(2,1,'TGB-2','2025-01-01',50,0)");
+  ensureBillingIssuerSchema(db);ensureCreditNoteSchema(db);
+  const issuer=(db.prepare("SELECT id FROM billing_issuers WHERE code='goodness'").get() as any).id;
+  db.prepare("INSERT INTO credit_notes(company_id,issuer_id,reference,series,sequence_number,issue_date,reason,issuer_snapshot_json,customer_snapshot_json,net_amount,total_amount)VALUES(1,?,'CN-TGB-1','CN-TGB',1,'2026-09-06','Return','{}','{}',10,10)").run(issuer);
+  db.exec('INSERT INTO credit_note_invoice_links(credit_note_id,invoice_id,credited_net,credited_total)VALUES(1,1,10,10)');
+  db.exec("INSERT INTO invoice_credit_applications(credit_entry_id,invoice_id,amount,reason)VALUES(1,1,5,'Existing credit')");
+  db.transaction(()=>installBillingPublication(db))();
+  const snapshot=prepareBillingDelivery(db,1);
+  assert.equal(snapshot.invoices.length,2);assert.equal(snapshot.credit,1200);
+  assert.equal(snapshot.invoices[0].outstanding,6500);
+  assert.equal(snapshot.invoices[0].outstanding,Math.round(getInvoiceFinancials(db,1).outstanding*100));
+  assert.equal(snapshot.invoices[1].date,'2025-01-01');
+  acknowledgeBillingDelivery(db,1,snapshot.revision);
+  db.exec("UPDATE invoices SET status='cancelled' WHERE id=2");
+  const cancelled=prepareBillingDelivery(db,1);assert.equal(cancelled.invoices[1].outstanding,0);assert.equal(cancelled.invoices[1].cancelled,true);
+  assert.ok(cancelled.revision>snapshot.revision);
+ } finally {db.close();}
 });

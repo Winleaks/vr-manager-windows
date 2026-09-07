@@ -1,12 +1,10 @@
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   ArrowLeft,
   Cloud,
   FileText,
   Users,
-  Settings as SettingsIcon,
-  ShieldCheck
+  Settings as SettingsIcon
 } from 'lucide-react';
 
 export function Settings() {

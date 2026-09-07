@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import {getInvoiceFinancials} from "./creditNotes.ts";
 import { randomUUID } from "node:crypto";
 
 // Triggers participate in the caller's transaction, including rollback and deletes.
@@ -31,7 +32,7 @@ export function installBillingPublication(db: Database.Database) {
     CREATE TRIGGER billing_invoice_insert AFTER INSERT ON invoices BEGIN
       UPDATE billing_publication_queue SET revision=revision+1, retry_at=0 WHERE company_id=(SELECT company_id FROM stores WHERE id=NEW.store_id);
     END;
-    CREATE TRIGGER billing_invoice_update AFTER UPDATE OF total_amount, paid_amount, invoice_number, invoice_date, store_id, drive_file_id ON invoices BEGIN
+    CREATE TRIGGER billing_invoice_update AFTER UPDATE OF total_amount, paid_amount, invoice_number, invoice_date, store_id, drive_file_id, status ON invoices BEGIN
       UPDATE billing_publication_queue SET revision=revision+1, retry_at=0 WHERE company_id IN (SELECT company_id FROM stores WHERE id IN (OLD.store_id, NEW.store_id));
     END;
     CREATE TRIGGER billing_invoice_document AFTER UPDATE OF total_amount, invoice_number, invoice_date, store_id ON invoices BEGIN
@@ -52,6 +53,25 @@ export function installBillingPublication(db: Database.Database) {
       UPDATE billing_publication_queue SET revision=revision+1, retry_at=0 WHERE company_id=(SELECT company_id FROM stores WHERE id=OLD.store_id);
     END;
   `);
+  // The issuer credit table is authoritative in current databases.
+  if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='company_issuer_credits'").get()) {
+    for(const action of ['INSERT','UPDATE','DELETE']) {
+      const row=action==='DELETE'?'OLD':'NEW';
+      db.exec(`CREATE TRIGGER billing_issuer_credit_${action.toLowerCase()} AFTER ${action} ON company_issuer_credits BEGIN
+        UPDATE billing_publication_queue SET revision=revision+1,retry_at=0 WHERE company_id=${row}.company_id;
+      END;`);
+    }
+  }
+  for(const table of ['credit_notes','credit_note_invoice_links','invoice_credit_applications']) {
+    if(!db.prepare('SELECT 1 FROM sqlite_master WHERE name=?').get(table)) continue;
+    for(const action of ['INSERT','UPDATE','DELETE']) {
+      const row=action==='DELETE'?'OLD':'NEW';
+      const company=table==='credit_notes'?`${row}.company_id`:`(SELECT s.company_id FROM invoices i JOIN stores s ON s.id=i.store_id WHERE i.id=${row}.invoice_id)`;
+      db.exec(`CREATE TRIGGER billing_${table}_${action.toLowerCase()} AFTER ${action} ON ${table} BEGIN
+        UPDATE billing_publication_queue SET revision=revision+1,retry_at=0 WHERE company_id=${company};
+      END;`);
+    }
+  }
   db.prepare("INSERT INTO billing_publication_identity VALUES(1,?)").run(
     randomUUID(),
   );
@@ -90,6 +110,7 @@ export function prepareBillingDelivery(
     const rows = db.prepare(
       `SELECT i.*, s.supabase_store_id, s.name AS store_name FROM invoices i JOIN stores s ON s.id=i.store_id WHERE s.company_id=? ORDER BY i.id`,
     ).all(companyId) as any[];
+    const hasFinancials=Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE name='credit_note_invoice_links'").get());
     const invoices = rows.map((i) => {
       if (!uuid.test(i.supabase_store_id || "")) {
         throw new Error(
@@ -101,6 +122,8 @@ export function prepareBillingDelivery(
       if (paid > total) {
         throw new Error("Factura are o sumă achitată peste total.");
       }
+      const financial=hasFinancials?getInvoiceFinancials(db,i.id):null;
+      const cancelled=i.status==='cancelled';
       return {
         id: String(i.id),
         store_id: i.supabase_store_id,
@@ -108,6 +131,10 @@ export function prepareBillingDelivery(
         date: i.invoice_date,
         total,
         paid,
+        credited:financial?moneyInPence(financial.creditedAmount):0,
+        applied_credit:financial?moneyInPence(financial.appliedCredit):0,
+        outstanding:cancelled?0:financial?moneyInPence(financial.outstanding):total-paid,
+        cancelled,
         drive_file_id: i.drive_file_id || null,
       };
     });
@@ -124,7 +151,9 @@ export function prepareBillingDelivery(
       source_id,
       company_id: company.supabase_company_id,
       revision,
-      credit: moneyInPence(company.credit_balance || 0),
+      credit: moneyInPence(db.prepare("SELECT 1 FROM sqlite_master WHERE name='company_issuer_credits'").get()
+        ? (db.prepare('SELECT COALESCE(SUM(balance),0) AS credit FROM company_issuer_credits WHERE company_id=?').get(companyId) as {credit:number}).credit
+        : company.credit_balance || 0),
       invoices,
       deleted,
     };

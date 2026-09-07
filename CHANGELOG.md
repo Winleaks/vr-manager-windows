@@ -1,3 +1,164 @@
+### În lucru
+
+### VR - Hub Management v0.1.97
+
+- Corectarea manuală a cantităților și prețurilor funcționează și pentru facturile importate; totalurile și statusul plății se recalculează, păstrând încasările, identitatea emitentului și legăturile cu importul original. Modificările sunt auditate.
+- Același editor este disponibil prin iconul de editare din Facturi Emise și din profilul clientului, în filele Facturi Restante și Toate Facturile. Editarea rămâne disponibilă numai pe Writer, fără a permite modificarea facturilor anulate sau cu credite asociate.
+- Salvarea locală este confirmată separat de actualizarea PDF-ului și de încărcarea Google Drive; erorile sau întârzierile cloud nu mai sunt prezentate ca eșec al salvării facturii.
+- PDF-ul folosit la regenerare, trimitere și printare este construit din factura salvată, inclusiv după corectarea manuală a unei comenzi importate.
+- Trimiterea facturilor folosește o componentă Windows nativă cu DataTransferManager și PDF atașat, în locul comenzii Explorer. Printarea folosește dialogul Windows și randarea PDF nativă, fără previzualizarea PDF incompatibilă din Electron.
+- Componenta Windows x64 include propriul runtime .NET și este verificată înainte de împachetare. Necesită Windows 10 build 19041 sau mai nou / Windows 11; WhatsApp Desktop trebuie să fie disponibil ca destinație Windows Share.
+
+### VR - Hub Management v0.1.96
+
+- Facturile active pot fi trimise rapid prin Windows Share cu PDF-ul deja atașat; operatorul alege WhatsApp și apoi contactul, fără Explorer, WhatsApp Web sau alerte blocante.
+- Lista facturilor, profilul clientului și pagina de generare afișează aceleași iconuri compacte pentru WhatsApp și printare, cu tooltipuri, accesibilitate din tastatură și stare de încărcare.
+- Printarea deschide direct dialogul Windows, iar anularea lui nu este raportată ca eroare.
+- Writer și Viewer pot trimite sau printa numai PDF-ul rezolvat autoritar după ID-ul unei facturi active; căile arbitrare și facturile anulate sunt refuzate în procesul principal.
+
+### VR - Hub Management v0.1.95
+
+- Previzualizarea comenzilor afișează numere consecutive pentru fiecare factură pregătită, cu secvențe independente pentru `THE GOODNESS BAKER LTD` și `VATRA ROMANEASCA LTD`; contoarele reale continuă să avanseze numai la emitere.
+- Facturile și Credit Notes noi sau regenerate sunt organizate local și în Google Drive în foldere distincte pentru fiecare client, păstrând compatibilitatea de citire cu locațiile vechi.
+- Regenerarea unei facturi înlocuiește copia verificată din folderul clientului, iar ștergerea definitivă din Modul test elimină și PDF-urile asociate din Google Drive și de pe calculator.
+- Data unei facturi importate din VR Baker poate fi corectată manual fără modificarea pozițiilor, cantităților sau prețurilor provenite din comandă.
+- Câmpurile PIN ale registrului separat acceptă din nou introducerea normală de la tastatură pe Windows și păstrează mascarea celor șase cifre.
+
+### VR - Hub Management v0.1.94
+
+- Repară reconectarea Google Drive din v0.1.93: buildul Windows include din nou perechea completă de credentiale a clientului OAuth Desktop la schimbul codului de autorizare, păstrând portul local dinamic, PKCE și validarea stării.
+- Workflow-ul de release refuză publicarea dacă lipsește oricare dintre valorile OAuth necesare, prevenind generarea unui installer care nu se poate conecta la Google Drive.
+- Mesajul pentru o configurație OAuth incompletă nu mai identifică eronat clientul existent drept aplicație Web.
+
+### VR - Hub Management v0.1.93
+
+- Reconectarea Google Drive folosește un port local liber ales automat, eliminând conflictele produse de portul fix la autentificarea OAuth pe Windows.
+- Tokenul este salvat numai după ce aplicația verifică efectiv accesul la Google Drive; erorile de autorizare, rețea și configurare sunt afișate explicit operatorului.
+- Verificarea opțională a emailului contului nu mai poate marca drept defectă o conexiune Drive funcțională.
+- Setările afișează numai folderul principal `My Drive / VR - Management`, fără numele sau calea fișierului bazei de date și a facturilor.
+- Registrul separat refuză configurarea înainte ca accesul Google Drive al Writer-ului să fie verificat.
+
+### VR - Hub Management v0.1.92
+
+- Adaugă registrul oficial separat, disponibil numai pe Writer prin gestul ascuns și un PIN de 6 cifre, cu blocare temporară după încercări greșite, expirarea sesiunii și cheie de recuperare.
+- Starea autoritară este criptată AES-256-GCM în `My Drive / VR - Management / Duplicat`; facturarea normală verifică manifestul opac din Drive și exclude automat companiile și comenzile atribuite registrului separat.
+- Registrul folosește seriile independente `TGBL`, `VRL`, `CN-TGBL` și `CN-VRL` și permite facturi individuale, manuale, pe zonă sau pentru toate magazinele eligibile.
+- Include anulare și reemitere auditabilă, Credit Notes integrale sau parțiale, încasări separate pe emitent, credit FIFO, reversări și retur generic în stoc.
+- PDF-urile protejate pot fi deschise sau partajate temporar prin Windows Share, iar exportul lunar creează un registru Excel și copii ale documentelor pentru contabilitate în folderul `Duplicat`.
+- Modul test marchează documentele `TEST – NOT A TAX INVOICE`, creează backupuri criptate înaintea ștergerilor și blochează trecerea live până la eliminarea documentelor și a datelor financiare de test și revenirea contoarelor la valorile inițiale.
+- Viewer-ele nu primesc niciun API al registrului, iar fișierele temporare sunt curățate la blocare, expirare, închidere și următoarea pornire.
+- În Modul test normal, facturile deja anulate pot fi șterse definitiv împreună cu dependențele lor financiare pentru pregătirea bazei live.
+
+### VR - Hub Management v0.1.91
+
+- Societatea emitentă se configurează acum direct în profilul fiecărui client din `Clienți & Entități`, cu alegeri distincte pentru emitentul implicit, `VATRA ROMANEASCA LTD` și `THE GOODNESS BAKER LTD`.
+- Alegerea se aplică tuturor magazinelor clientului și numai facturilor viitoare; istoricul, plățile și creditele existente rămân legate de emitentul original.
+- Migrarea SQLite v16 păstrează atribuirile Vatra existente ca explicite și tratează clienții Goodness existenți drept utilizatori ai emitentului implicit.
+- Replica Writer este publicată exclusiv în folderul existent `My Drive / VR - Management / Baza de date`, iar facturile în `My Drive / VR - Management / Facturi`.
+- Fiecare upload al bazei și al PDF-urilor este confirmat prin folder părinte, nume, dimensiune și checksum MD5; o conexiune OAuth existentă nu mai este raportată fals drept sincronizare funcțională.
+- Reconectarea Writer-ului publică imediat un snapshot verificat, sincronizarea automată raportează eșecurile în interfață, iar o bază locală goală nu poate suprascrie nici copia nouă, nici backupul istoric.
+- Ecranele de facturare nu mai pretind că PDF-ul se află în Google Drive atunci când încărcarea sau verificarea lui a eșuat.
+
+### VR - Hub Management v0.1.90
+
+- Facturile săptămânale pot fi filtrate și generate atomic pentru o singură zonă de livrare, inclusiv grupa controlată `FĂRĂ ZONĂ ALOCATĂ`.
+- Zonele active, culoarea, șoferul și ordinea magazinelor sunt preluate read-only prin același export VR Baker, fără o sincronizare desktop separată.
+- Emiterea pe zonă revalidează sursa în backend, omite facturile deja generate și păstrează emitentul, seria și contorul propriu fiecărei societăți.
+- În Modul test, ștergerea unei facturi elimină tranzacțional și încasările, Credit Notes, aplicările de credit și legăturile de reemitere asociate, după crearea obligatorie a unui backup verificat.
+- Efectele Credit Notes asupra stocului și soldurilor sunt inversate înaintea ștergerii, iar contoarele sunt retrase numai când numărul șters este ultimul număr sigur.
+- Simulatorul recompilă automat `better-sqlite3` pentru ABI-ul Electron înainte de pornire și îl readuce la ABI-ul Node înaintea testelor, evitând eroarea `NODE_MODULE_VERSION`.
+
+### VR - Hub Management v0.1.89
+
+- Bazele existente pot trece corect de la schema v14 la v15: indicii pentru ordinea produselor sunt creați numai după adăugarea coloanelor necesare, eliminând pornirea fără fereastră din v0.1.88.
+- Erorile fatale de inițializare sunt acum raportate operatorului printr-un dialog explicit, în loc ca aplicația să rămână fără fereastră și fără explicație.
+- Pornirea Writer-ului nu mai afișează eroarea de reconciliere Daily Cash atunci când reconcilierea unică a fost deja aplicată sau ziua curentă a fost închisă manual.
+- Verificarea markerului de reconciliere are loc înaintea citirii zilei și a backupului, evitând operații inutile la fiecare repornire sau actualizare.
+
+### VR - Hub Management v0.1.88
+
+- Ordinea produselor din `Product Order` (`display_order`) este sincronizată read-only din VR Baker Platform și folosită consecvent în cataloagele Hub Manager, selectoarele operaționale, vânzarea directă, facturi și Credit Notes.
+- Liniile facturilor păstrează ordinea produsului în SQLite; resincronizarea catalogului poate reordona prezentarea documentelor existente fără a modifica denumiri, cantități, prețuri sau totaluri.
+- Produsele fără o ordine configurată sunt afișate după produsele ordonate, cu fallback stabil alfabetic; materiile prime locale nu sunt afectate.
+- Confirmarea ștergerii în Modul test acceptă numărul istoric afișat pentru facturile migrate înaintea introducerii seriilor, păstrând referința canonică în audit.
+- Writer-ul poate emite facturi manuale dintr-o pagină dedicată, alegând compania, magazinul, data și produse existente din catalogul local.
+- Emitentul, seria, numărul și denumirile bilingve ale produselor sunt rezolvate autoritar în backend; facturile manuale nu creează legături false cu comenzile VR Baker.
+- Prețul standard este completat automat, cantitatea și prețul pot fi ajustate pentru document, iar PDF-ul este generat din factura recitită din SQLite.
+- Viewer-ele pot vedea facturile replicate, dar nu pot emite facturi manuale.
+
+### VR - Hub Management v0.1.87
+
+- Facturile folosesc coloane compacte și centrate, cu mai mult spațiu pentru denumirile bilingve ale produselor și fără ruperea aceluiași produs între pagini.
+- Data documentelor este afișată `DD-MM-YYYY`, referința facturii este evidențiată cu bold, iar numerotarea paginilor este calculată corect ca `Page X of Y`.
+- Footerul facturilor și Credit Notes include creditul sistemului de facturare și site-ul `www.razvancristofor.ro`; totalurile sunt păstrate împreună cu ultimele poziții.
+- Postcode-ul magazinului este importat read-only din VR Baker Platform, păstrat prin migrarea SQLite v14 și afișat separat de adresa companiei-client, fără dublare.
+- Credit Notes folosesc aceleași reguli de dată, paginare, footer, culori și rânduri indivizibile, fără chenare negre.
+- Modul de testare permite ștergerea definitivă numai a facturilor fără dependențe financiare, iar încasările pot fi corectate auditabil fără a afecta alte societăți emitente.
+- Produsele sincronizate și documentele de facturare afișează numai numele în engleză și română, fără `variant label`.
+
+### VR - Hub Management v0.1.86
+
+- Writer-ul poate emite Credit Notes integrale sau parțiale pentru una sau mai multe facturi ale aceleiași companii și aceluiași emitent, inclusiv pentru facturi plătite.
+- `THE GOODNESS BAKER LTD` și `VATRA ROMANEASCA LTD` au serii și contoare Credit Note independente, confirmate explicit înaintea primei emiteri și protejate împotriva reducerii sau reutilizării numerelor.
+- Soldurile facturilor separă valoarea brută, suma creditată, valoarea netă, numerarul încasat, creditul aplicat și restul real; surplusurile devin credit disponibil izolat per companie și emitent.
+- Creditul poate fi aplicat manual în ordine FIFO și reversat auditabil numai în cadrul aceluiași client și emitent.
+- Returul în stoc este opțional și permis numai pentru produse mapate neechivoc; anularea internă inversează aplicările și mișcările de stoc fără a șterge documentul sau numărul.
+- PDF-urile Credit Note folosesc snapshoturile juridice persistate, afișează tratamentul VAT corect pentru fiecare emitent și sunt salvate local și în Google Drive.
+- Viewer-ele pot consulta documentele replicate, dar nu pot emite, anula, aplica credit sau modifica numerotarea.
+- Migrarea SQLite v13 este atomică, idempotentă și creează un snapshot local verificat înainte de modificarea soldurilor financiare.
+
+### VR - Hub Management v0.1.85
+
+- Facturarea acceptă două societăți emitente: `THE GOODNESS BAKER LTD` ca emitent implicit VAT și `VATRA ROMANEASCA LTD` ca emitent alternativ non-VAT.
+- Fiecare emitent are date juridice și bancare, culoare, serie și contor propriu; atribuirea se face o singură dată la nivelul companiei-client și se aplică automat tuturor magazinelor sale.
+- Generarea individuală și loturile săptămânale mixte rezolvă emitentul exclusiv în backend, păstrează snapshotul juridic pe factură și anulează întregul lot dacă o configurare sau numerotare este invalidă.
+- PDF-urile sunt separate pe emitent, iar facturile Vatra nu afișează și nu colectează VAT. Previzualizarea, lista facturilor, clienții și dashboardul permit filtrarea după emitent.
+- Plățile, avansurile și creditele sunt izolate per companie și emitent, fără mutarea istoricului când atribuirea clientului se schimbă.
+- Ștergerea definitivă a facturilor și PDF-urilor a fost eliminată. Facturile fără plăți pot fi anulate cu motiv și, pentru importurile săptămânale, reemise auditabil cu un număr nou.
+- Migrarea SQLite este atomică și idempotentă: păstrează facturile și creditele existente la Goodness, detectează sigur numerele istorice și nu modifică VR Baker Platform, care rămâne read-only.
+
+### VR - Hub Management v0.1.84
+
+- Sincronizarea comenzilor acceptă toate identificatoarele UUID canonice stocate valid de PostgreSQL, inclusiv identificatoarele istorice fără marcajele RFC restrictive.
+- Importul săptămânal continuă să respingă identificatori malformați și păstrează filtrarea comenzilor `open` și `locked`, fără acces de scriere în VR Baker Platform.
+- Validatorul Edge Function folosește aceeași regulă ca aplicația Windows, prevenind erori similare la filtrare și paginare.
+
+### VR - Hub Management v0.1.83
+
+- La prima pornire după update, exclusiv pe calculatorul Writer, Daily Cash este reconciliat o singură dată la soldul fizic de `£241.74`.
+- Diferența este înregistrată tranzacțional ca ajustare protejată, fără rescrierea sau ștergerea încasărilor și plăților existente.
+- Un marker persistent împiedică repetarea ajustării la repornire; Viewer-ele primesc rezultatul numai prin replica verificată din Google Drive.
+
+### VR - Hub Management v0.1.82
+
+- Materiile prime rămân gestionate manual în aplicația Windows și primesc denumiri bilingve: engleză sus, română dedesubt, cu suport complet pentru diacritice.
+- O singură actualizare a catalogului VR Baker sincronizează tranzacțional produsele finite folosite în producție și facturare, fără interogări duplicate.
+- Sincronizarea automată la simpla deschidere a paginii a fost eliminată; catalogul este interogat numai când operatorul Writer apasă butonul de actualizare.
+- Facturarea săptămânală folosește direct snapshotul produselor din comenzi și păstrează pe factură denumirea în engleză, denumirea în română, varianta și unitatea.
+- PDF-urile facturilor afișează denumirea în engleză cu majuscule și denumirea în română pe rândul următor, fără a modifica facturile istorice.
+- Produsele manuale vechi și toate stocurile, rețetele și istoricul local sunt păstrate; baza VR Baker Platform rămâne exclusiv read-only.
+
+### VR - Hub Management v0.1.81
+
+- Produsele finite se sincronizează automat din catalogul VR Baker Platform la deschiderea paginii și pot fi reîmprospătate manual prin butonul `Actualizează produse`.
+- Produsele manuale sunt asociate după nume când există în catalog, iar cele rămase sunt arhivate fără ștergerea istoricului, rețetelor sau stocului existent.
+- Prețul standard din catalog este completat automat în Vânzare Directă și poate fi ajustat înainte de încasare.
+- Vânzările directe pot duce stocul produselor finite sub zero; producția ulterioară corectează automat soldul.
+- Viewer-ele folosesc exclusiv catalogul replicat prin SQLite și nu contactează VR Baker Platform.
+
+### VR - Hub Management v0.1.80
+
+- Butonul `Încasează (Cash)` din Vânzare Directă înregistrează bonul cu protecție la apăsări repetate și actualizează imediat datele afișate.
+- Erorile reale de validare, zi închisă, produs inactiv sau stoc insuficient sunt afișate operatorului fără pierderea produselor introduse pe bon.
+- Cantitatea, prețul unitar și totalul sunt validate înainte de înregistrarea tranzacției.
+
+### VR - Hub Management v0.1.79
+
+- Daily Cash generează un raport PDF autoritar, structurat și paginat, cu solduri, totaluri pe categorii și tranzacții detaliate în GBP.
+- Butonul `Trimite pe WhatsApp` folosește Windows Share cu PDF-ul deja inclus; operatorul alege WhatsApp și apoi destinatarul, fără introducerea sau salvarea unui număr.
+- Writer-ul poate închide manual ziua și poate redeschide numai ziua calendaristică actuală; zilele închise blochează modificările și păstrează jurnalul operațiunilor.
+- Închiderea automată de la 00:00 preia corect soldul final inclusiv după o închidere manuală, iar Viewer-ele rămân fără drepturi de modificare sau partajare.
+
 ### VR - Hub Management v0.1.78
 
 - Toate câmpurile numerice folosesc un singur control stabil pentru tastatură în Electron/Windows; câmpurile native `type=number` sunt interzise prin test automat.

@@ -1,11 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { 
   Wallet, 
   TrendingUp, 
   TrendingDown, 
   Truck,
   User,
-  Trash2
+  Trash2,
+  LockKeyhole,
+  MessageCircle,
+  RotateCcw
 } from 'lucide-react';
 import { useCashStore } from '../store/cashStore';
 import { DateRangePicker } from '../components/DateRangePicker';
@@ -17,12 +20,14 @@ export function DailyCash() {
   const [loading, setLoading] = useState(false);
   const [deviceRole, setDeviceRole] = useState<'writer' | 'viewer'>('viewer');
   const [initializingBalance, setInitializingBalance] = useState(false);
+  const [selectedReport, setSelectedReport] = useState<any | null>(null);
+  const [reportAction, setReportAction] = useState<'close' | 'reopen' | 'whatsapp' | null>(null);
 
   useEffect(() => {
     api.system.getDeviceRole().then((state) => setDeviceRole(state.role)).catch(() => {});
   }, []);
 
-  const reloadData = async () => {
+  const reloadData = useCallback(async () => {
     setLoading(true);
     try {
       const result = await api.dailyCash.getTransactionsByDateRange(
@@ -30,12 +35,17 @@ export function DailyCash() {
         dateFilter.endDate
       );
       setData(result);
+      if (dateFilter.startDate === dateFilter.endDate) {
+        setSelectedReport(await api.dailyCash.getDailyReport(dateFilter.startDate));
+      } else {
+        setSelectedReport(null);
+      }
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [dateFilter.endDate, dateFilter.startDate]);
 
   const handleInitializeBalance = async () => {
     if (!activeDay) return;
@@ -53,8 +63,8 @@ export function DailyCash() {
   };
 
   useEffect(() => {
-    reloadData();
-  }, [dateFilter, storeTransactions]);
+    void reloadData();
+  }, [reloadData, storeTransactions]);
 
   const handleDeleteTransaction = async (id: number) => {
     if (window.confirm('Ești sigur că vrei să ștergi această tranzacție din registru?')) {
@@ -65,6 +75,55 @@ export function DailyCash() {
       } catch (error: any) {
         window.alert(error?.message || 'Tranzacția nu a putut fi ștearsă.');
       }
+    }
+  };
+
+  const refreshCashState = async () => {
+    await loadData();
+    await reloadData();
+  };
+
+  const handleCloseDay = async () => {
+    if (!selectedReport || selectedReport.isClosed) return;
+    if (!window.confirm(`Închizi ziua ${selectedReport.date} cu soldul calculat de £${Number(selectedReport.balance).toFixed(2)}? Tranzacțiile vor fi blocate.`)) return;
+    setReportAction('close');
+    try {
+      await api.dailyCash.closeDay(selectedReport.dayId);
+      await refreshCashState();
+    } catch (error: any) {
+      window.alert(error?.message || 'Ziua de casă nu a putut fi închisă.');
+    } finally {
+      setReportAction(null);
+    }
+  };
+
+  const handleReopenDay = async () => {
+    if (!selectedReport?.canReopen) return;
+    if (!window.confirm('Redeschizi ziua curentă? Orice raport pregătit anterior trebuie regenerat și retrimis.')) return;
+    setReportAction('reopen');
+    try {
+      await api.dailyCash.reopenDay(selectedReport.dayId);
+      await refreshCashState();
+    } catch (error: any) {
+      window.alert(error?.message || 'Ziua de casă nu a putut fi redeschisă.');
+    } finally {
+      setReportAction(null);
+    }
+  };
+
+  const handleWhatsAppReport = async () => {
+    if (!selectedReport) return;
+    setReportAction('whatsapp');
+    try {
+      const result = await api.dailyCash.prepareWhatsAppReport(selectedReport.date);
+      const instructions = result.deliveryMethod === 'windows-share'
+        ? 'Alege WhatsApp din fereastra Windows, apoi selectează destinatarul și apasă Trimite. PDF-ul este deja inclus.'
+        : 'WhatsApp a fost deschis, iar PDF-ul este selectat în Explorer. Atașează-l, alege destinatarul și apasă Trimite.';
+      window.alert(`PDF-ul a fost pregătit la:\n${result.filePath}\n\n${instructions}`);
+    } catch (error: any) {
+      window.alert(error?.message || 'Raportul WhatsApp nu a putut fi pregătit.');
+    } finally {
+      setReportAction(null);
     }
   };
 
@@ -88,12 +147,50 @@ export function DailyCash() {
               <p className="text-slate-500 text-sm">Privire de ansamblu asupra fluxului de numerar</p>
             </div>
           </div>
-          <div>
+          <div className="flex flex-wrap items-center gap-3">
             <DateRangePicker 
               startDate={dateFilter.startDate} 
               endDate={dateFilter.endDate} 
               onChange={setDateFilter} 
             />
+            {deviceRole === 'writer' && selectedReport && (
+              <>
+                {!selectedReport.isClosed && activeDay?.id === selectedReport.dayId && (
+                  <button
+                    type="button"
+                    onClick={handleCloseDay}
+                    disabled={reportAction !== null}
+                    className="px-4 py-2.5 rounded-xl bg-slate-800 text-white font-medium flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <LockKeyhole size={18} />
+                    {reportAction === 'close' ? 'Se închide...' : 'Închide ziua'}
+                  </button>
+                )}
+                {selectedReport.canReopen && (
+                  <button
+                    type="button"
+                    onClick={handleReopenDay}
+                    disabled={reportAction !== null}
+                    className="px-4 py-2.5 rounded-xl bg-amber-100 text-amber-800 font-medium flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <RotateCcw size={18} />
+                    {reportAction === 'reopen' ? 'Se redeschide...' : 'Redeschide ziua'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleWhatsAppReport}
+                  disabled={reportAction !== null}
+                  className="px-4 py-2.5 rounded-xl bg-emerald-600 text-white font-medium flex items-center gap-2 disabled:opacity-50"
+                >
+                  <MessageCircle size={18} />
+                  {reportAction === 'whatsapp' ? 'Se pregătește...' : 'Trimite pe WhatsApp'}
+                </button>
+              </>
+            )}
+            {deviceRole === 'writer' && dateFilter.startDate !== dateFilter.endDate && (
+              <span className="text-xs text-slate-500">Selectează o singură zi pentru raport.</span>
+            )}
           </div>
         </div>
 
@@ -152,6 +249,13 @@ export function DailyCash() {
                 </span>
               )}
             </div>
+          </div>
+        )}
+
+        {!activeDay && selectedReport?.isClosed && (
+          <div className="bg-slate-100 border border-slate-200 p-4 rounded-xl flex flex-wrap gap-4 justify-between items-center text-slate-700">
+            <div><span className="font-bold">Zi închisă:</span> {selectedReport.date}</div>
+            <div>Sold Final: <span className="font-bold">£{Number(selectedReport.balance).toFixed(2)}</span></div>
           </div>
         )}
 

@@ -20,7 +20,7 @@ function DailyCashSidebar() {
   const location = useLocation();
   const isActive = (path: string) => location.pathname === path;
 
-  const { activeDay, drivers, employees, products, loadData, isModalOpen, openModal, closeModal } = useCashStore();
+  const { activeDay, drivers, employees, products, loadData, isModalOpen, closeModal } = useCashStore();
 
   // Form states
   const [inData, setInData] = useState({ category: 'driver_collection', amount: '', reference_id: '', notes: '' });
@@ -28,14 +28,8 @@ function DailyCashSidebar() {
   const [collectionData, setCollectionData] = useState({ name: 'Emi', amount: '', notes: '' });
   const [saleData, setSaleData] = useState({ reference_id: '', reference_name: '', items: [] as {finished_product_id: number, quantity: number, unit_price: number}[] });
   const [currentSaleItem, setCurrentSaleItem] = useState({ finished_product_id: '', quantity: '', unit_price: '' });
-
-  const handleCloseDay = async () => {
-    if (!activeDay) return;
-    if (window.confirm(`Ești sigur că vrei să închizi ziua cu soldul final de £${activeDay.current_balance}?`)) {
-      await api.dailyCash.closeDay(activeDay.id, activeDay.current_balance);
-      loadData();
-    }
-  };
+  const [saleError, setSaleError] = useState('');
+  const [isSaleSubmitting, setIsSaleSubmitting] = useState(false);
 
   const handleInSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,15 +79,28 @@ function DailyCashSidebar() {
   };
 
   const addSaleItem = () => {
-    if (!currentSaleItem.finished_product_id || !currentSaleItem.quantity || !currentSaleItem.unit_price) return;
+    const quantity = Number(currentSaleItem.quantity);
+    const unitPrice = Number(currentSaleItem.unit_price);
+    if (!currentSaleItem.finished_product_id || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice <= 0) {
+      setSaleError('Selectează produsul și introdu o cantitate și un preț mai mari decât zero.');
+      return;
+    }
+    const items = [...saleData.items, {
+        finished_product_id: parseInt(currentSaleItem.finished_product_id),
+        quantity,
+        unit_price: unitPrice
+      }].sort((a, b) => {
+        const productA = products.find((product) => product.id === a.finished_product_id);
+        const productB = products.find((product) => product.id === b.finished_product_id);
+        const orderA = productA?.display_order ?? Number.MAX_SAFE_INTEGER;
+        const orderB = productB?.display_order ?? Number.MAX_SAFE_INTEGER;
+        return orderA - orderB || String(productA?.name || '').localeCompare(String(productB?.name || ''), 'en-GB');
+      });
     setSaleData({
       ...saleData,
-      items: [...saleData.items, {
-        finished_product_id: parseInt(currentSaleItem.finished_product_id),
-        quantity: parseFloat(currentSaleItem.quantity),
-        unit_price: parseFloat(currentSaleItem.unit_price)
-      }]
+      items
     });
+    setSaleError('');
     setCurrentSaleItem({ finished_product_id: '', quantity: '', unit_price: '' });
   };
 
@@ -103,29 +110,48 @@ function DailyCashSidebar() {
     setSaleData({...saleData, items: newItems});
   };
 
-  const handleSaleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaleSubmit = async () => {
+    if (isSaleSubmitting) return;
     if (saleData.items.length === 0) {
-      alert('Adaugă cel puțin un produs!');
+      setSaleError('Adaugă cel puțin un produs pe bon.');
       return;
     }
-    if (!activeDay) return;
+    if (!activeDay) {
+      setSaleError('Ziua de casă este închisă. Redeschide ziua din Dashboard înainte de vânzare.');
+      return;
+    }
 
     const totalAmount = saleData.items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+      setSaleError('Totalul bonului trebuie să fie mai mare decât zero.');
+      return;
+    }
 
-    await api.dailyCash.addTransaction({
-      cash_day_id: activeDay.id,
-      type: 'IN',
-      category: 'direct_sale',
-      amount: totalAmount,
-      reference_id: saleData.reference_id ? parseInt(saleData.reference_id) : null,
-      reference_name: saleData.reference_name || null,
-      items: saleData.items
-    });
+    setSaleError('');
+    setIsSaleSubmitting(true);
+    try {
+      await api.dailyCash.addTransaction({
+        cash_day_id: activeDay.id,
+        type: 'IN',
+        category: 'direct_sale',
+        amount: totalAmount,
+        reference_id: saleData.reference_id ? parseInt(saleData.reference_id) : null,
+        reference_name: saleData.reference_name || null,
+        items: saleData.items
+      });
 
-    closeModal();
-    setSaleData({ reference_id: '', reference_name: '', items: [] });
-    loadData();
+      closeModal();
+      setSaleData({ reference_id: '', reference_name: '', items: [] });
+      await loadData();
+    } catch (error: unknown) {
+      const message = error instanceof Error && error.message
+        ? error.message
+        : 'Vânzarea nu a putut fi încasată. Verifică datele și încearcă din nou.';
+      setSaleError(message);
+      window.alert(message);
+    } finally {
+      setIsSaleSubmitting(false);
+    }
   };
 
   return (
@@ -360,7 +386,17 @@ function DailyCashSidebar() {
                       <select
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
                         value={currentSaleItem.finished_product_id}
-                        onChange={e => setCurrentSaleItem({...currentSaleItem, finished_product_id: e.target.value})}
+                        onChange={e => {
+                          const finishedProductId = e.target.value;
+                          const selectedProduct = products.find(product => String(product.id) === finishedProductId);
+                          setCurrentSaleItem(current => ({
+                            ...current,
+                            finished_product_id: finishedProductId,
+                            unit_price: Number(selectedProduct?.standard_price) > 0
+                              ? Number(selectedProduct.standard_price).toFixed(2)
+                              : current.unit_price,
+                          }));
+                        }}
                       >
                         <option value="">-- Alege Produs --</option>
                         {products.map(p => (
@@ -435,11 +471,18 @@ function DailyCashSidebar() {
                       <span className="text-base text-indigo-400 ml-1">£</span>
                     </span>
                   </div>
+                  {saleError && (
+                    <div role="alert" className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">
+                      {saleError}
+                    </div>
+                  )}
                   <button
+                    type="button"
                     onClick={handleSaleSubmit}
-                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold text-lg transition-colors flex justify-center items-center gap-2"
+                    disabled={isSaleSubmitting}
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-wait text-white py-3 rounded-xl font-bold text-lg transition-colors flex justify-center items-center gap-2"
                   >
-                    Încasează (Cash)
+                    {isSaleSubmitting ? 'Se înregistrează...' : 'Încasează (Cash)'}
                   </button>
                 </div>
               </div>

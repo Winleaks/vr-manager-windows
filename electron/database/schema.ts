@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS suppliers (
 CREATE TABLE IF NOT EXISTS raw_materials (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
+  name_ro TEXT,
   category_id INTEGER,
   unit TEXT NOT NULL,
   current_stock REAL NOT NULL DEFAULT 0,
@@ -33,9 +34,15 @@ CREATE TABLE IF NOT EXISTS raw_materials (
 CREATE TABLE IF NOT EXISTS finished_products (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
+  name_ro TEXT,
   category_id INTEGER,
   production_unit TEXT NOT NULL DEFAULT 'buc',
   current_stock REAL NOT NULL DEFAULT 0,
+  external_product_id TEXT,
+  catalog_source TEXT NOT NULL DEFAULT 'manual',
+  source_category TEXT,
+  standard_price REAL NOT NULL DEFAULT 0,
+  display_order INTEGER,
   notes TEXT,
   is_active BOOLEAN DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -169,6 +176,15 @@ CREATE TABLE IF NOT EXISTS cash_days (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS cash_day_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cash_day_id INTEGER NOT NULL,
+  event_type TEXT NOT NULL CHECK(event_type IN ('manual_close', 'automatic_close', 'reopen', 'report_prepared')),
+  balance REAL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(cash_day_id) REFERENCES cash_days(id)
+);
+
 CREATE TABLE IF NOT EXISTS cash_transactions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   cash_day_id INTEGER NOT NULL,
@@ -223,6 +239,7 @@ CREATE TABLE IF NOT EXISTS stores (
   company_id INTEGER NOT NULL,
   name TEXT NOT NULL,
   address TEXT,
+  postcode TEXT,
   phone TEXT,
   supabase_store_id TEXT,
   is_active BOOLEAN DEFAULT 1,
@@ -248,9 +265,13 @@ CREATE TABLE IF NOT EXISTS invoice_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   invoice_id INTEGER NOT NULL,
   product_name TEXT NOT NULL,
+  product_name_ro TEXT,
+  variant_label TEXT,
+  unit TEXT,
   quantity REAL NOT NULL,
   unit_price REAL NOT NULL,
   total_price REAL NOT NULL,
+  product_order INTEGER,
   FOREIGN KEY(invoice_id) REFERENCES invoices(id)
 );
 
@@ -302,6 +323,7 @@ CREATE TABLE IF NOT EXISTS cloud_products (
   category TEXT,
   price_standard REAL DEFAULT 0,
   available BOOLEAN DEFAULT 1,
+  display_order INTEGER,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -317,6 +339,7 @@ CREATE INDEX IF NOT EXISTS idx_productions_product_date ON productions(finished_
 CREATE INDEX IF NOT EXISTS idx_stock_movements_raw_material ON stock_movements(raw_material_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_finished_product_movements_fp ON finished_product_movements(finished_product_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_cash_transactions_day ON cash_transactions(cash_day_id);
+CREATE INDEX IF NOT EXISTS idx_cash_day_events_day ON cash_day_events(cash_day_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_cash_transaction_items_tx ON cash_transaction_items(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_companies_supabase ON companies(supabase_company_id);
 CREATE INDEX IF NOT EXISTS idx_companies_cui ON companies(cui);

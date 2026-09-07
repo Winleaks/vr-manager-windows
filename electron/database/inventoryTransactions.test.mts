@@ -8,7 +8,10 @@ import {
   closeCashDayTransaction,
   createProductionTransaction,
   deleteCashTransaction,
+  hasCashBalanceReconciliation,
   initializeCashBalanceOnce,
+  reconcileCashBalanceOnce,
+  reopenCashDayTransaction,
   updateCashReceiptTransaction,
 } from './repositories/inventoryTransactions.ts';
 
@@ -54,7 +57,7 @@ test('production updates product and material stocks atomically', () => {
   }
 });
 
-test('cash sale rejects insufficient stock without leaving partial accounting rows', () => {
+test('cash sale may take finished stock negative and remains fully transactional', () => {
   const connection = createDatabase();
   try {
     const productId = Number(connection.prepare(
@@ -74,20 +77,33 @@ test('cash sale rejects insufficient stock without leaving partial accounting ro
     assert.ok(transactionId > 0);
     assert.equal((connection.prepare('SELECT current_stock AS value FROM finished_products WHERE id = ?').get(productId) as any).value, 3);
 
-    assert.throws(() => addCashTransaction(connection, {
+    const negativeStockTransactionId = addCashTransaction(connection, {
       cash_day_id: dayId,
       type: 'IN',
       category: 'direct_sale',
       amount: 12,
       items: [{ finished_product_id: productId, quantity: 4, unit_price: 3 }],
-    }), /Stoc insuficient/);
-    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM cash_transactions').get() as any).value, 1);
-    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM cash_transaction_items').get() as any).value, 1);
-    assert.equal((connection.prepare('SELECT current_stock AS value FROM finished_products WHERE id = ?').get(productId) as any).value, 3);
+    });
+    assert.ok(negativeStockTransactionId > transactionId);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM cash_transactions').get() as any).value, 2);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM cash_transaction_items').get() as any).value, 2);
+    assert.equal((connection.prepare('SELECT current_stock AS value FROM finished_products WHERE id = ?').get(productId) as any).value, -1);
 
-    assert.throws(() => closeCashDayTransaction(connection, dayId, 15), /nu corespunde/);
-    assert.equal((connection.prepare('SELECT is_closed AS value FROM cash_days WHERE id = ?').get(dayId) as any).value, 0);
-    assert.equal(closeCashDayTransaction(connection, dayId, 16), true);
+    const materialId = Number(connection.prepare(
+      "INSERT INTO raw_materials (name, unit, current_stock) VALUES ('Făină vânzare', 'kg', 10)",
+    ).run().lastInsertRowid);
+    const recipeId = Number(connection.prepare(
+      'INSERT INTO recipes (finished_product_id, batch_size) VALUES (?, 1)',
+    ).run(productId).lastInsertRowid);
+    connection.prepare(
+      'INSERT INTO recipe_items (recipe_id, raw_material_id, quantity) VALUES (?, ?, 1)',
+    ).run(recipeId, materialId);
+    createProductionTransaction(connection, productId, 2, '2026-08-11');
+    assert.equal((connection.prepare('SELECT current_stock AS value FROM finished_products WHERE id = ?').get(productId) as any).value, 1);
+
+    const closed = closeCashDayTransaction(connection, dayId, '2026-08-11');
+    assert.equal(closed.closingBalance, 28);
+    assert.equal((connection.prepare('SELECT is_closed AS value FROM cash_days WHERE id = ?').get(dayId) as any).value, 1);
     assert.throws(() => deleteCashTransaction(connection, transactionId), /zile închise/);
   } finally {
     connection.close();
@@ -137,12 +153,45 @@ test('open receipts can be edited or deleted and missing rows report an error', 
       amount: 10,
       reference_id: driverId,
     });
-    assert.equal(closeCashDayTransaction(connection, dayId, 10), true);
+    assert.equal(closeCashDayTransaction(connection, dayId, '2026-08-14').closingBalance, 10);
     assert.throws(() => updateCashReceiptTransaction(connection, {
       id: closedReceiptId,
       amount: 12,
       reference_id: driverId,
     }), /zile închise/);
+  } finally {
+    connection.close();
+  }
+});
+
+test('manual cash close is backend-calculated and current-day reopen is audited', () => {
+  const connection = createDatabase();
+  try {
+    const dayId = Number(connection.prepare(
+      "INSERT INTO cash_days (date, opening_balance) VALUES ('2026-08-18', 100)",
+    ).run().lastInsertRowid);
+    connection.prepare(`
+      INSERT INTO cash_transactions (cash_day_id, type, category, amount)
+      VALUES (?, 'IN', 'driver_collection', 25), (?, 'OUT', 'purchase', 5)
+    `).run(dayId, dayId);
+
+    const closed = closeCashDayTransaction(connection, dayId, '2026-08-18');
+    assert.deepEqual(closed, { dayId, date: '2026-08-18', closingBalance: 120 });
+    assert.throws(() => closeCashDayTransaction(connection, dayId, '2026-08-18'), /deja închisă/);
+    assert.throws(() => reopenCashDayTransaction(connection, dayId, '2026-08-19'), /actuală/);
+    assert.deepEqual(reopenCashDayTransaction(connection, dayId, '2026-08-18'), { dayId, date: '2026-08-18' });
+
+    const day = connection.prepare(
+      'SELECT is_closed, closing_balance, closed_at FROM cash_days WHERE id = ?',
+    ).get(dayId) as any;
+    assert.deepEqual(day, { is_closed: 0, closing_balance: null, closed_at: null });
+    const events = connection.prepare(
+      'SELECT event_type, balance FROM cash_day_events WHERE cash_day_id = ? ORDER BY id',
+    ).all(dayId);
+    assert.deepEqual(events, [
+      { event_type: 'manual_close', balance: 120 },
+      { event_type: 'reopen', balance: 120 },
+    ]);
   } finally {
     connection.close();
   }
@@ -208,6 +257,75 @@ test('cash balance is initialized once at £578.25 and remains transaction-drive
       FROM cash_transactions WHERE cash_day_id = ?
     `).get(dayId) as { total_in: number; total_out: number };
     assert.equal(Math.round((1000 + updatedTotals.total_in - updatedTotals.total_out) * 100) / 100, 600);
+  } finally {
+    connection.close();
+  }
+});
+
+test('Writer reconciliation reaches £241.74 once without rewriting cash history', () => {
+  const connection = createDatabase();
+  try {
+    const dayId = Number(connection.prepare(
+      "INSERT INTO cash_days (date, opening_balance) VALUES ('2026-08-25', 500)",
+    ).run().lastInsertRowid);
+    connection.prepare(`
+      INSERT INTO cash_transactions (cash_day_id, type, category, amount, notes)
+      VALUES (?, 'IN', 'driver_collection', 50, 'Istoric păstrat')
+    `).run(dayId);
+    connection.prepare(`
+      INSERT INTO cash_transactions (cash_day_id, type, category, amount, notes)
+      VALUES (?, 'OUT', 'purchase', 25, 'Istoric păstrat')
+    `).run(dayId);
+
+    const marker = 'daily_cash_reconciliation_v0_1_83_241_74';
+    assert.equal(hasCashBalanceReconciliation(connection, marker), false);
+    const first = reconcileCashBalanceOnce(connection, dayId, 241.74, marker);
+    assert.equal(hasCashBalanceReconciliation(connection, marker), true);
+    assert.deepEqual(first, {
+      applied: true,
+      adjustmentId: first.adjustmentId,
+      previousBalance: 525,
+      currentBalance: 241.74,
+    });
+    assert.ok(first.adjustmentId && first.adjustmentId > 0);
+    assert.deepEqual(connection.prepare(`
+      SELECT type, category, amount, notes FROM cash_transactions WHERE id = ?
+    `).get(first.adjustmentId), {
+      type: 'OUT',
+      category: 'cash_adjustment',
+      amount: 283.26,
+      notes: 'Reconciliere unică sold casă: £241.74',
+    });
+
+    const second = reconcileCashBalanceOnce(connection, dayId, 241.74, marker);
+    assert.deepEqual(second, { applied: false, adjustmentId: null, currentBalance: 241.74 });
+    assert.equal(
+      (connection.prepare("SELECT COUNT(*) AS value FROM cash_transactions WHERE category = 'cash_adjustment'").get() as any).value,
+      1,
+    );
+    assert.equal(
+      (connection.prepare('SELECT COUNT(*) AS value FROM cash_transactions').get() as any).value,
+      3,
+    );
+  } finally {
+    connection.close();
+  }
+});
+
+test('cash reconciliation refuses a closed day and does not write its marker', () => {
+  const connection = createDatabase();
+  try {
+    const dayId = Number(connection.prepare(`
+      INSERT INTO cash_days (date, opening_balance, closing_balance, is_closed)
+      VALUES ('2026-08-24', 100, 100, 1)
+    `).run().lastInsertRowid);
+    const marker = 'daily_cash_reconciliation_closed_test';
+    assert.throws(
+      () => reconcileCashBalanceOnce(connection, dayId, 241.74, marker),
+      /zile închise/,
+    );
+    assert.equal((connection.prepare('SELECT value FROM app_settings WHERE key = ?').get(marker) as any), undefined);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM cash_transactions').get() as any).value, 0);
   } finally {
     connection.close();
   }
