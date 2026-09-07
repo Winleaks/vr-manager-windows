@@ -163,9 +163,9 @@ export function initDb() {
   // 1. Execuția schemei și a indecșilor B-Tree
   db.exec(initialSchema)
 
-  // Credit Notes changes the authoritative financial balance. Keep a verified,
-  // pre-migration copy so the Writer can be recovered without touching Drive.
-  createPreMigrationSnapshotIfNeeded(13)
+  // Preserve a verified copy before adding the persistent billing publication queue.
+  // This also covers older Credit Notes migrations during a direct upgrade.
+  createPreMigrationSnapshotIfNeeded(17)
   
   // 2. Rularea migrărilor de schemă
   runMigrations()
