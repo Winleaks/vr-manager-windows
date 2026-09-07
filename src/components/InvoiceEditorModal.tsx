@@ -13,6 +13,10 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
   const [invoice, setInvoice] = useState<any>(null);
   const [date, setDate] = useState('');
   const [items, setItems] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [productId, setProductId] = useState('');
+  const [catalogError, setCatalogError] = useState('');
+  const [catalogLoading, setCatalogLoading] = useState(true);
   const [error, setError] = useState('');
   const [stage, setStage] = useState<'idle' | 'saving' | 'documents'>('idle');
   const busy = useRef(false);
@@ -24,12 +28,21 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
     const previousFocus = document.activeElement as HTMLElement | null;
     dialog.current?.focus();
     Promise.all([api.billing.getInvoice(invoiceId), api.system.getDeviceRole()])
-      .then(([row, device]) => {
+      .then(async ([row, device]) => {
         if (!active) return;
         setInvoice(row);
         setIsWriter(device.role === 'writer');
         setDate(row.invoice_date);
         setItems(row.items.map((item: any) => ({ ...item, quantity: String(item.quantity), unitPrice: String(item.unitPrice) })));
+        if (device.role !== 'writer' || row.status === 'cancelled') { setCatalogLoading(false); return; }
+        try {
+          const rows = await api.billing.getInvoiceProducts(invoiceId);
+          if (active) setProducts(rows || []);
+        } catch {
+          if (active) setCatalogError('Tarifele clientului nu pot fi verificate în VR Baker. Verifică conexiunea și actualizarea API-ului, apoi redeschide editorul. Pozițiile existente pot fi editate în continuare.');
+        } finally {
+          if (active) setCatalogLoading(false);
+        }
       })
       .catch((failure) => { if (active) setError(failure.message || 'Factura nu a putut fi încărcată.'); });
     return () => { active = false; previousFocus?.focus(); };
@@ -38,6 +51,18 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
   const blocked = !isWriter || invoice?.status === 'cancelled' || Number(invoice?.creditedAmount || 0) > 0.005 || Number(invoice?.appliedCredit || 0) > 0.005;
   const total = items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unitPrice), 0);
   const changeItem = (index: number, field: string, value: string) => setItems((previous) => previous.map((item, i) => i === index ? { ...item, [field]: value } : item));
+  const addProduct = () => {
+    if (blocked || busy.current || catalogLoading || catalogError) return;
+    const product = products.find((row) => String(row.id) === productId);
+    if (!product) return;
+    setItems((previous) => [...previous, {
+      productId: product.id, productName: product.name, name_ro: product.name_ro,
+      variant_label: product.variant_label, unit: product.unit,
+      externalProductId: product.supabase_product_id, productOrder: product.display_order,
+      quantity: '1', unitPrice: String(product.unitPrice),
+    }]);
+    setProductId('');
+  };
 
   const save = async () => {
     if (busy.current || blocked || !invoice) return;
@@ -72,7 +97,7 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
       onKeyDown={(event) => {
         if (event.key === 'Escape' && !busy.current) onClose();
         if (event.key !== 'Tab') return;
-        const controls = dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]');
+        const controls = dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]');
         if (!controls?.length) return;
         const first = controls[0], last = controls[controls.length - 1];
         if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { event.preventDefault(); last.focus(); }
@@ -95,18 +120,28 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
                 <input type="date" required value={date} onChange={(event) => setDate(event.target.value)} className="block mt-1 px-3 py-2 border rounded-lg" />
               </label>
               <p className="text-sm text-emerald-800">Încasări păstrate: £{Number(invoice.paid_amount || 0).toFixed(2)}. Totalul și statusul plății se recalculează la salvare.</p>
-              {Boolean(invoice.is_imported) && <p className="text-sm bg-indigo-50 text-indigo-800 p-3 rounded-xl">Poți corecta manual cantitățile și prețurile acestei facturi. Comenzile originale din VR Baker rămân neschimbate.</p>}
+              {Boolean(invoice.is_imported) && <p className="text-sm bg-indigo-50 text-indigo-800 p-3 rounded-xl">Poți adăuga produse din catalog și corecta manual cantitățile și prețurile. Pozițiile salvate și comenzile originale din VR Baker sunt păstrate.</p>}
               <div className="overflow-x-auto"><table className="w-full text-sm">
                 <thead><tr className="text-left text-slate-600"><th className="p-2">Produs</th><th className="p-2 w-28">Cantitate</th><th className="p-2 w-28">Preț unitar</th><th className="p-2">Total</th><th /></tr></thead>
                 <tbody>{items.map((item, index) => <tr key={item.id ?? 'new-' + index} className="border-t">
-                  <td className="p-2"><input aria-label={'Produs ' + (index + 1)} readOnly={Boolean(invoice.is_imported)} value={item.productName} onChange={(event) => changeItem(index, 'productName', event.target.value)} className="w-full border rounded p-2" /></td>
+                  <td className="p-2"><input aria-label={'Produs ' + (index + 1)} readOnly={Boolean(invoice.is_imported) || item.productId !== undefined} value={item.productName} onChange={(event) => changeItem(index, 'productName', event.target.value)} className="w-full border rounded p-2" /></td>
                   <td className="p-2"><NumericInput aria-label={'Cantitate ' + (index + 1)} value={item.quantity} onValueChange={(value) => changeItem(index, 'quantity', value)} className="w-full border rounded p-2" /></td>
                   <td className="p-2"><NumericInput aria-label={'Preț unitar ' + (index + 1)} value={item.unitPrice} onValueChange={(value) => changeItem(index, 'unitPrice', value)} className="w-full border rounded p-2" /></td>
                   <td className="p-2 font-semibold">£{(Number(item.quantity) * Number(item.unitPrice)).toFixed(2)}</td>
-                  <td>{!invoice.is_imported && <button type="button" title="Șterge poziția" aria-label={'Șterge poziția ' + (index + 1)} onClick={() => setItems((previous) => previous.filter((_, i) => i !== index))} className="p-2 text-rose-600"><Trash2 size={16} /></button>}</td>
+                  <td>{(!invoice.is_imported || item.id === undefined) && <button type="button" title="Șterge poziția" aria-label={'Șterge poziția ' + (index + 1)} onClick={() => setItems((previous) => previous.filter((_, i) => i !== index))} className="p-2 text-rose-600"><Trash2 size={16} /></button>}</td>
                 </tr>)}</tbody>
               </table></div>
-              {!invoice.is_imported && <button type="button" onClick={() => setItems((previous) => [...previous, { productName: '', quantity: '1', unitPrice: '0' }])} className="flex gap-2 items-center text-indigo-700"><Plus size={16} />Adaugă produs</button>}
+              {catalogError && <p role="alert" className="text-amber-800">{catalogError}</p>}
+              <div className="flex items-end gap-2">
+                <label className="flex-1 text-sm font-semibold">Adaugă produs din catalog
+                  <select value={productId} onChange={(event) => setProductId(event.target.value)} disabled={catalogLoading || Boolean(catalogError)} className="block mt-1 w-full border rounded-lg p-2">
+                    <option value="">{catalogLoading ? 'Se încarcă produsele...' : products.length ? 'Alege produsul...' : 'Nu există produse disponibile'}</option>
+                    {products.map((product) => <option key={product.id} value={product.id}>{product.name}{product.name_ro ? ' / ' + product.name_ro : ''} — £{Number(product.unitPrice).toFixed(2)}</option>)}
+                  </select>
+                </label>
+                <button type="button" title="Adaugă produs" aria-label="Adaugă produs" disabled={!productId || catalogLoading || Boolean(catalogError)} onClick={addProduct} className="p-2 rounded-lg text-indigo-700 hover:bg-indigo-50 disabled:opacity-40"><Plus size={20} /></button>
+              </div>
+              <p className="text-xs text-slate-500">La adăugare se aplică tariful clientului din VR Baker, inclusiv reducerile configurate; în lipsa lor, prețul standard. Prețul unitar poate fi modificat doar pentru această factură, fără să schimbi tarifele din platformă.</p>
               <p className="text-right font-bold text-xl">Total: £{total.toFixed(2)}</p>
             </fieldset>
             {stage !== 'idle' && <p role="status" className="text-indigo-700">{stage === 'saving' ? 'Se salvează factura...' : 'Factura este salvată. Se actualizează PDF-ul și copia Google Drive...'}</p>}

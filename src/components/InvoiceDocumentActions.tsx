@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, MessageCircle, Printer } from 'lucide-react';
+import { ExternalLink, Loader2, MessageCircle, Printer } from 'lucide-react';
 import { api } from '../shared/api';
 
-type DocumentAction = 'share' | 'print';
+type DocumentAction = 'open' | 'share' | 'print';
 
 export function InvoiceDocumentActions({
   invoiceId,
@@ -39,9 +39,11 @@ export function InvoiceDocumentActions({
     setNotice(null);
     try {
       await preparePdf();
-      const result = action === 'share'
-        ? await api.system.shareInvoicePdf(invoiceId)
-        : await api.system.printInvoicePdf(invoiceId);
+      const result = action === 'open'
+        ? await api.system.openPdfFile(invoiceId)
+        : action === 'share'
+          ? await api.system.shareInvoicePdf(invoiceId)
+          : await api.system.printInvoicePdf(invoiceId);
       if (result.canceled) return;
       if (!result.success) throw new Error(result.error || 'Acțiunea nu a putut fi pornită.');
       if (action === 'share') showNotice('info', 'PDF-ul este atașat. Alege WhatsApp, apoi contactul și trimite factura.');
@@ -55,6 +57,9 @@ export function InvoiceDocumentActions({
   const spacing = size === 'compact' ? 'p-1.5 rounded' : 'p-2 rounded-lg';
   return <>
     <div className="inline-flex items-center gap-2" role="group" aria-label="Acțiuni factură">
+      <button type="button" onClick={() => void runAction('open')} disabled={disabled || activeAction !== null} className={`${spacing} text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed`} title="Deschide factura" aria-label="Deschide factura">
+        {activeAction === 'open' ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <ExternalLink size={16} aria-hidden="true" />}
+      </button>
       <button type="button" onClick={() => void runAction('share')} disabled={disabled || activeAction !== null} className={`${spacing} text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed`} title="Trimite pe WhatsApp" aria-label="Trimite pe WhatsApp">
         {activeAction === 'share' ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <MessageCircle size={16} aria-hidden="true" />}
       </button>

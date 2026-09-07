@@ -9,7 +9,7 @@ if (process.platform !== 'win32') throw new Error('This smoke test requires Wind
 const helper = path.resolve('native/windows-documents/publish/VRHub.WindowsDocuments.exe');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vr-native-documents-'));
 const invoke = (file) => new Promise((resolve, reject) => {
-  const child = spawn(helper, ['validate', file], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+  const child = spawn(helper, ['validate', file], { windowsHide: false, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
   let output = '';
   const timeout = setTimeout(() => { child.kill(); reject(new Error('Native validation timed out.')); }, 30_000);
   child.stdout.on('data', data => output += data);
@@ -30,13 +30,14 @@ try {
   const valid = await invoke(filename);
   assert.equal(valid.code, 0);
   assert.ok(valid.events.some(event => event.status === 'validated' && event.pages === 2));
+  assert.ok(valid.events.some(event => event.status === 'validated' && event.windowVisible === true), 'The native GUI host must actually be visible, not hidden by process startup options.');
   fs.writeFileSync(filename, '%PDF-invalid content');
   const invalid = await invoke(filename);
   assert.notEqual(invalid.code, 0);
   assert.ok(invalid.events.some(event => event.status === 'error'));
   const missing = await invoke(path.join(directory, 'missing.pdf'));
   assert.notEqual(missing.code, 0);
-  console.log('Native Windows PDF load/render and invalid-file smoke checks passed. No documents were printed or shared.');
+  console.log('Native Windows window visibility, PDF load/render and invalid-file smoke checks passed. No printer dialog, printing or sharing was tested.');
 } finally {
   // Only this test's unique directory, containing synthetic PDF data.
   fs.rmSync(directory, { recursive: true, force: true });

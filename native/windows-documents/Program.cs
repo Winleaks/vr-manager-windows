@@ -1,4 +1,5 @@
 using System.Drawing.Printing;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Data.Pdf;
@@ -37,9 +38,9 @@ internal static class Program
         return path;
     }
 
-    internal static void Reply(string status, string? message = null, int? pages = null)
+    internal static void Reply(string status, string? message = null, int? pages = null, bool? windowVisible = null)
     {
-        Console.WriteLine(JsonSerializer.Serialize(new { protocol = 1, status, message, pages }));
+        Console.WriteLine(JsonSerializer.Serialize(new { protocol = 1, status, message, pages, windowVisible }));
         Console.Out.Flush();
     }
 
@@ -53,6 +54,10 @@ internal static class Program
 
 internal sealed class DocumentWindow : Form
 {
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr window);
+
     private readonly string operation;
     private readonly string pdfPath;
     private readonly System.Windows.Forms.Timer lifetime = new() { Interval = 600_000 };
@@ -69,6 +74,7 @@ internal sealed class DocumentWindow : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
+        ShowInTaskbar = true;
         Controls.Add(new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Text = "Se pregătește PDF-ul..." });
         Shown += async (_, _) => await StartAsync();
         lifetime.Tick += (_, _) => Close();
@@ -92,7 +98,7 @@ internal sealed class DocumentWindow : Form
             {
                 using var firstPage = await RenderPageAsync(pdf, 0);
                 completed = true;
-                Program.Reply("validated", pages: (int)pdf.PageCount);
+                Program.Reply("validated", pages: (int)pdf.PageCount, windowVisible: IsWindowVisible(Handle));
                 Close();
                 return;
             }
@@ -172,9 +178,12 @@ internal sealed class DocumentWindow : Form
             AllowSelection = false, AllowCurrentPage = false,
         };
         Controls[0].Text = "Alege imprimanta și paginile în dialogul Windows.";
-        Program.Reply("opened");
+        BringToFront();
+        Activate();
+        // This marks selection starting, not proof that the OS dialog opened.
+        Program.Reply("selecting");
         if (dialog.ShowDialog(this) != DialogResult.OK) { Close(); return; }
-        lifetime.Stop(); // Never time out an already submitted print job.
+        lifetime.Stop(); // Main owns the submission watchdog; closure must not report cancellation after submission.
         var first = document.PrinterSettings.PrintRange == PrintRange.SomePages ? document.PrinterSettings.FromPage : 1;
         var last = document.PrinterSettings.PrintRange == PrintRange.SomePages ? document.PrinterSettings.ToPage : (int)pdf.PageCount;
         if (first < 1 || last < first || last > pdf.PageCount) throw new InvalidDataException("Invalid page range.");
@@ -194,6 +203,7 @@ internal sealed class DocumentWindow : Form
         Controls[0].Text = "Se trimit paginile la imprimantă...";
         await Task.Yield();
         if (IsDisposed) return;
+        Program.Reply("printing");
         document.Print();
         completed = true;
         Program.Reply("printed");

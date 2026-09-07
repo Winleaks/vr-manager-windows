@@ -64,6 +64,62 @@ function fixture() {
   return { connection, company1, company2, store1, store2, goodnessId: goodness.id, vatraId: vatra.id };
 }
 
+test('imported invoice accepts active catalogue additions and editable prices while preserving source identity', () => {
+  const { connection, store1 } = fixture();
+  try {
+    const [invoice] = createWeeklyInvoiceBatchTransaction(connection, [weekly(store1, 'store-goodness', 'order-addition')], '2026-08-31');
+    const rows = () => connection.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id').all(invoice.invoiceId) as any[];
+    const original = rows();
+    const source = () => ({
+      identities: connection.prepare('SELECT * FROM invoice_identities').all(),
+      batches: connection.prepare('SELECT * FROM invoice_import_batches').all(),
+      orders: connection.prepare('SELECT * FROM invoice_source_orders').all(),
+      payments: connection.prepare('SELECT * FROM payments').all(),
+    });
+    const previousSource = source();
+    const productId = Number(connection.prepare(`INSERT INTO cloud_products
+      (name, name_ro, variant_label, unit, supabase_product_id, price_standard, display_order)
+      VALUES ('Cake', 'Prăjitură', 'Chocolate', 'buc', 'cake-id', 5, 3)`).run().lastInsertRowid);
+    const previousInput = original.map((row) => ({ id: row.id, productName: row.product_name, quantity: row.quantity, unitPrice: row.unit_price }));
+    const addition = { productId, productName: 'untrusted name', externalProductId: 'untrusted-id', quantity: 2, unitPrice: 3.25 };
+    const save = (items: any[]) => updateInvoiceTransaction(connection, invoice.invoiceId, invoice.invoiceNumber, '2026-09-01', items);
+    const updated = save([...previousInput, addition]);
+    assert.equal(updated.totalAmount, invoice.totalAmount + 6.5);
+    assert.deepEqual(rows().slice(0, original.length), original);
+    const added = rows().at(-1)!;
+    assert.equal(added.product_name, 'Cake');
+    assert.equal(added.product_name_ro, 'Prăjitură');
+    assert.equal(added.variant_label, 'Chocolate');
+    assert.equal(added.external_product_id, 'cake-id');
+    assert.equal(added.unit_price, 3.25);
+    assert.deepEqual(source(), previousSource);
+    assert.equal((connection.prepare('SELECT price_standard FROM cloud_products WHERE id = ?').get(productId) as any).price_standard, 5);
+    const savedInput = [...previousInput, { id: added.id, productName: 'Cake', quantity: 3, unitPrice: 0 }];
+    save(savedInput);
+    assert.equal(rows().at(-1)!.unit_price, 0, 'saved additions remain price-editable');
+    const snapshot = () => ({ rows: rows(), invoice: connection.prepare('SELECT * FROM invoices WHERE id = ?').get(invoice.invoiceId), audit: connection.prepare('SELECT * FROM billing_audit_events').all() });
+    const saved = snapshot();
+    for (const invalid of [
+      [...previousInput, addition], // replay must not duplicate an already saved addition
+      [...savedInput, { ...addition, productId: 999999 }],
+      [...savedInput, { ...addition, productId: undefined }],
+      [...savedInput, { ...addition, id: 999999 }],
+      [...savedInput, { ...addition, quantity: 0 }],
+      [...savedInput, { ...addition, unitPrice: -1 }],
+    ]) {
+      assert.throws(() => save(invalid));
+      assert.deepEqual(snapshot(), saved);
+    }
+    connection.prepare('UPDATE cloud_products SET available = 0 WHERE id = ?').run(productId);
+    assert.throws(() => save([...savedInput, addition]), /disponibil/);
+    assert.deepEqual(snapshot(), saved);
+    connection.prepare('UPDATE cloud_products SET available = 1 WHERE id = ?').run(productId);
+    connection.exec("CREATE TRIGGER reject_append_audit BEFORE INSERT ON billing_audit_events WHEN NEW.event_type = 'invoice_updated' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END;");
+    assert.throws(() => save([...savedInput, addition]), /audit unavailable/);
+    assert.deepEqual(snapshot(), saved, 'new items, header and audit roll back together');
+  } finally { connection.close(); }
+});
+
 test('manual correction of imported invoice preserves identity, source links and payments, and audits atomically', () => {
   const { connection, company1, store1, goodnessId } = fixture();
   try {

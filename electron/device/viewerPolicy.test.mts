@@ -20,12 +20,14 @@ test('viewer can read data and control its local role', () => {
   assert.equal(isChannelAllowedForRole('viewer', 'get-update-state'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'get-daily-cash-report'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'share-invoice-pdf'), true);
+  assert.equal(isChannelAllowedForRole('viewer', 'open-pdf-file'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'print-invoice-pdf'), true);
 });
 
 test('viewer denies business writes, cloud publishing and unknown channels', () => {
   assert.equal(isChannelAllowedForRole('viewer', 'add-production'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:updateInvoice'), false);
+  assert.equal(isChannelAllowedForRole('viewer', 'billing:getInvoiceProducts'), false, 'Viewer must not contact VR Baker for prices');
   assert.equal(isChannelAllowedForRole('viewer', 'save-to-cloud'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'upload-pdf-to-cloud'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:testVrBakerConnection'), false);

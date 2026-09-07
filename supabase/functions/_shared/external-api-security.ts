@@ -1,5 +1,6 @@
 export const EXTERNAL_API_SCOPES = [
   "health:read",
+  "billing:write",
   "products:read",
   "companies:read",
   "stores:read",

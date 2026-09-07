@@ -111,6 +111,7 @@ export const desktopApi = {
   },
   billing: {
     getInvoice: (invoiceId: number) => ipcRenderer.invoke('billing:getInvoice', invoiceId),
+    getInvoiceProducts: (invoiceId: number) => ipcRenderer.invoke('billing:getInvoiceProducts', invoiceId),
     getClients: () => ipcRenderer.invoke('billing:getClients'),
     createClient: (data: any) => ipcRenderer.invoke('billing:createClient', data),
     updateClient: (data: any) => ipcRenderer.invoke('billing:updateClient', data),

@@ -79,7 +79,7 @@ test('native protocol accepts split lines and rejects unknown or oversized respo
 
 test('startup timeout and process errors cannot claim success; lock/quit cleanup kills sources', async () => {
   const timed = childFixture();
-  assert.equal((await monitorWindowsDocumentProcess(timed.child, 'share', 5)).success, false);
+  assert.match((await monitorWindowsDocumentProcess(timed.child, 'share', 5)).error!, /nu a răspuns/);
   assert.equal(timed.child.killed, true);
   const failed = childFixture();
   const failure = monitorWindowsDocumentProcess(failed.child, 'print');
@@ -93,6 +93,81 @@ test('startup timeout and process errors cannot claim success; lock/quit cleanup
   await result;
   stopWindowsDocumentProcesses();
   assert.equal(shared.child.killed, true);
+});
+
+test('opened without an attachment does not disable the share watchdog', async () => {
+  const fixture = childFixture();
+  const pending = monitorWindowsDocumentProcess(fixture.child, 'share', 5);
+  fixture.emit('opened');
+  assert.equal((await pending).success, false);
+  assert.equal(fixture.child.killed, true);
+});
+
+test('stalled print selection cannot leave the invoice loading indefinitely', async () => {
+  for (const status of ['selecting', 'opened']) {
+    const fixture = childFixture();
+    const pending = monitorWindowsDocumentProcess(fixture.child, 'print', 1000, { dialogMs: 5 });
+    fixture.emit(status);
+    fixture.emit(status);
+    const result = await pending;
+    assert.equal(result.success, false);
+    assert.match(result.error!, /Selectarea imprimantei/);
+    assert.equal(fixture.child.killed, true);
+    fixture.emit('printing');
+    fixture.emit('printed');
+    assert.equal((await pending).success, false, 'late output cannot turn a timeout into success');
+  }
+});
+
+test('stalled submission warns about possible printed pages instead of promising a safe retry', async () => {
+  const fixture = childFixture();
+  const pending = monitorWindowsDocumentProcess(fixture.child, 'print', 1000, { dialogMs: 5, printingMs: 15 });
+  fixture.emit('selecting');
+  fixture.emit('printing');
+  fixture.emit('opened');
+  const result = await pending;
+  assert.equal(result.success, false);
+  assert.match(result.error!, /coada imprimantei/);
+  assert.match(result.error!, /pagini pot fi deja trimise/);
+  assert.equal(fixture.child.killed, true);
+});
+
+test('successful or canceled print clears the selection/submission watchdogs', async () => {
+  for (const status of ['printed', 'canceled']) {
+    const fixture = childFixture();
+    const pending = monitorWindowsDocumentProcess(fixture.child, 'print', 5, { dialogMs: 5, printingMs: 5 });
+    fixture.emit('selecting');
+    if (status === 'printed') fixture.emit('printing');
+    fixture.emit(status);
+    assert.deepEqual(await pending, status === 'printed' ? { success: true } : { success: false, canceled: true });
+    await new Promise(resolve => setTimeout(resolve, 15));
+    assert.equal(fixture.child.killed, false);
+    fixture.close();
+  }
+});
+
+test('a helper crash or error after submission also warns against duplicate printing', async () => {
+  for (const status of ['close', 'error']) {
+    const fixture = childFixture();
+    const pending = monitorWindowsDocumentProcess(fixture.child, 'print');
+    fixture.emit('printing');
+    if (status === 'close') fixture.close();
+    else fixture.emit('error');
+    assert.match((await pending).error!, /pagini pot fi deja trimise/);
+    fixture.close();
+  }
+});
+
+test('GUI launch and Windows smoke test must not hide the native window', () => {
+  const bridge = readFileSync(new URL('../reports/windowsDocumentProcess.ts', import.meta.url), 'utf8');
+  const smoke = readFileSync(new URL('../../scripts/testWindowsDocuments.mjs', import.meta.url), 'utf8');
+  const native = readFileSync(new URL('../../native/windows-documents/Program.cs', import.meta.url), 'utf8');
+  assert.match(bridge, /spawn\(command, args, \{ windowsHide: false/);
+  assert.match(smoke, /windowsHide: false/);
+  assert.match(smoke, /event.windowVisible === true/);
+  assert.match(native, /windowVisible: IsWindowVisible\(Handle\)/);
+  assert.match(native, /Activate\(\);[\s\S]*Program.Reply\("selecting"\);[\s\S]*dialog.ShowDialog\(this\)/);
+  assert.match(native, /Program.Reply\("printing"\);\s*document.Print\(\);/);
 });
 
 test('native implementation uses WinRT file sharing and native print without PDF preview', () => {

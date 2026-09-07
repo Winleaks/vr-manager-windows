@@ -131,7 +131,8 @@ export function registerSystemHandlers() {
       const filePath = resolvePdfPath(facturiDir, identity.filename);
 
       if (fs.existsSync(filePath)) {
-        await shell.openPath(filePath);
+        const error = await shell.openPath(filePath);
+        if (error) return { success: false, error: `Factura nu a putut fi deschisă: ${error}` };
         return { success: true, filePath };
       }
       const legacyDirectories = [
@@ -141,7 +142,8 @@ export function registerSystemHandlers() {
       for (const directory of legacyDirectories) {
         const legacyPath = resolvePdfPath(directory, identity.filename);
         if (fs.existsSync(legacyPath)) {
-          await shell.openPath(legacyPath);
+          const error = await shell.openPath(legacyPath);
+          if (error) return { success: false, error: `Factura nu a putut fi deschisă: ${error}` };
           return { success: true, filePath: legacyPath, legacy: true };
         }
       }

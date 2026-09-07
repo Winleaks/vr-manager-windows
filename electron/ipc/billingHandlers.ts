@@ -26,6 +26,7 @@ import {
   withRegistryRoutingLock,
 } from '../protectedRegistry/service';
 import { assignEstimatedInvoiceReferences } from '../../src/utils/invoicePreviewNumbering';
+import { priceInvoiceCatalog } from '../integrations/invoiceCatalogPricing';
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : 'Operațiunea a eșuat.';
@@ -136,6 +137,11 @@ export function registerBillingHandlers() {
   handleTrustedIpc('billing:updatePayment', (_, data) => billingRepo.updatePayment(data));
   handleTrustedIpc('billing:getInvoices', (_, startDate, endDate, issuerId) => billingRepo.getInvoicesByDateRange(startDate, endDate, issuerId));
   handleTrustedIpc('billing:getInvoice', (_, invoiceId) => billingRepo.getInvoiceById(invoiceId));
+  // Writer-only: derive the external store from the invoice, never renderer input.
+  handleTrustedIpc('billing:getInvoiceProducts', (_, invoiceId: number) => priceInvoiceCatalog(
+    billingRepo.getInvoiceProductContext(invoiceId),
+    (storeId) => createVrBakerClient().fetchInvoicePrices(storeId),
+  ));
   handleTrustedIpc('billing:createManualInvoice', async (_, data) => {
     return withRegistryRoutingLock(async () => {
       await assertNormalStoreAllowed(data.storeId);
