@@ -17,6 +17,7 @@ import {
   sha256,
   withBillingWriterScope,
 } from "../_shared/external-api-security.ts";
+import { resolveStoreCompany, storeCompanyColumns } from "../_shared/store-company.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -308,14 +309,15 @@ const actions: Record<string, ActionDefinition> = {
       const { data, error, count } = await supabaseAdmin
         .from("client_store")
         .select(
-          "id, name, address, postcode, owner_id, zone_id, route_order, phone, google_maps_url, active, client_company_id, client_company:client_company_id(id, name, address, vat_number, registration_number)",
+          `id, name, address, postcode, zone_id, route_order, phone, google_maps_url, active, ${storeCompanyColumns}`,
           { count: "exact" },
         )
         .order("route_order", { ascending: true })
         .limit(limit);
       ensureDatabaseSuccess(error);
-      if (payload.include_meta === true) return { version: 1, rows: data ?? [], count, complete: count !== null && count === data?.length };
-      return data ?? [];
+      const rows = (data ?? []).map(resolveStoreCompany);
+      if (payload.include_meta === true) return { version: 1, rows, count, complete: count !== null && count === rows.length };
+      return rows;
     },
   },
 
@@ -346,7 +348,7 @@ const actions: Record<string, ActionDefinition> = {
       let query = supabaseAdmin
         .from("orders")
         .select(
-          "id, delivery_date, status, updated_at, client_store:client_store_id(id, name, address, postcode, phone, client_company_id, zone_id, route_order, zone:zone_id(id, name, color, active, driver_id, driver:driver_id(id, name)), client_company:client_company_id(id, name, address, vat_number, registration_number)), order_items(id, qty_ordered, qty_delivered, unit_price_snapshot, products:product_id(id, name, name_ro, variant_label, unit, category, price_standard, available, display_order))",
+          `id, delivery_date, status, updated_at, client_store:client_store_id(id, name, address, postcode, phone, ${storeCompanyColumns}, zone_id, route_order, zone:zone_id(id, name, color, active, driver_id, driver:driver_id(id, name))), order_items(id, qty_ordered, qty_delivered, unit_price_snapshot, products:product_id(id, name, name_ro, variant_label, unit, category, price_standard, available, display_order))`,
         )
         .gte("delivery_date", weekStart)
         .lte("delivery_date", weekEnd)
@@ -371,6 +373,7 @@ const actions: Record<string, ActionDefinition> = {
       const hasMore = rows.length > limit;
       const page = rows.slice(0, limit).map((order: Record<string, unknown>) => ({
         ...order,
+        client_store: resolveStoreCompany(order.client_store),
         order_items: Array.isArray(order.order_items)
           ? order.order_items.map((item: Record<string, unknown>) => ({
               ...item,
