@@ -16,6 +16,14 @@ The desktop SQLite database is the financial source of truth. The platform store
 
 ## Protocol and recovery
 
+### Existing Writer credential: additive server configuration
+
+When the complete original `EXTERNAL_API_CREDENTIALS` configuration is unavailable, do not reconstruct it from a subset or rotate unrelated integrations. The API supports the optional backend-only `EXTERNAL_API_BILLING_WRITER_CREDENTIAL_ID`: set it to the exact existing Writer credential ID verified in the audit log. This grants only `billing:write` in memory to that existing enabled credential. It does not change the aggregate secret, keys/hashes, expiry, rate limits, other scopes or other entries. Authentication and expiry checks still apply. Missing, unknown, malformed or multiple IDs grant no additional permissions. Never accept this setting from an HTTP request or a client.
+
+Configure the setting only after explicit authorization. Verify the aggregate secret digest remains unchanged, `billing.status` succeeds from the intended Writer, and billing control stays disabled until import is separately approved. The Writer source ID is a separate database identity and must not be used as this credential ID. Revocation: remove the optional setting and redeploy the same current API to discard cached credentials. This removes only the additive grant; any scope explicitly present in the original aggregate remains authoritative. Keep protocol 2 and `products.invoice_prices` in all subsequent deployments.
+
+The paused desktop may retain historical queue `last_error` messages even after a successful status request; those messages alone are not proof of an ongoing authorization failure. Use the current API audit outcome to verify the connection. Do not enable import just to clear old messages.
+
 - Each company publication is a complete immutable snapshot split into parts of at most 50 invoices/deletion IDs. `billing.stage` stages the metadata; `billing.commit` validates company/store identities and atomically publishes the complete set with credit. Missing invoices require explicit deletion tombstones. The queue and tombstones survive restarts; financial changes and queue revisions share the same SQLite transaction.
 - Requests use deterministic idempotency keys and monotonically increasing company revisions. Keep the committed parts for the current revision to reject conflicting same-revision payloads after an old desktop backup is restored. Incomplete abandoned older parts are cleaned after seven days on a later commit. Automatic deletion of Drive PDFs is not part of publication.
 - Only a configured Writer source can publish. A source/association conflict or restored database older than the server's version requires operator reconciliation; never reset server revision guards just to clear the queue. Restore the latest verified Writer database or deliberately migrate the source after comparing both ledgers.

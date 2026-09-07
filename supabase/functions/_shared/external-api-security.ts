@@ -148,6 +148,23 @@ export function parseExternalApiCredentials(
   });
 }
 
+// Server-managed, additive authorization for one existing integration identity.
+// Never take this identifier from a request. Existing key, expiry, enabled state,
+// rate limit and all other scopes remain authoritative in the aggregate config.
+export function withBillingWriterScope(
+  credentials: ExternalApiCredential[],
+  configuredWriterId: string | undefined,
+): ExternalApiCredential[] {
+  if (!configuredWriterId || !CREDENTIAL_ID_PATTERN.test(configuredWriterId)) {
+    return credentials;
+  }
+  return credentials.map((credential) =>
+    credential.id === configuredWriterId
+      ? { ...credential, scopes: new Set([...credential.scopes, "billing:write" as const]) }
+      : credential
+  );
+}
+
 function extractBearerToken(headers: Headers): string {
   const authorization = headers.get("Authorization");
   const apiKey = headers.get("X-API-Key");

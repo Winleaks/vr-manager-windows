@@ -15,6 +15,7 @@ import {
   requireIdempotencyKey,
   requireUuid,
   sha256,
+  withBillingWriterScope,
 } from "../_shared/external-api-security.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -63,8 +64,9 @@ interface ActionDefinition {
 }
 
 function getCredentials(): ExternalApiCredential[] {
-  credentialsCache ??= parseExternalApiCredentials(
-    Deno.env.get("EXTERNAL_API_CREDENTIALS"),
+  credentialsCache ??= withBillingWriterScope(
+    parseExternalApiCredentials(Deno.env.get("EXTERNAL_API_CREDENTIALS")),
+    Deno.env.get("EXTERNAL_API_BILLING_WRITER_CREDENTIAL_ID"),
   );
   return credentialsCache;
 }
