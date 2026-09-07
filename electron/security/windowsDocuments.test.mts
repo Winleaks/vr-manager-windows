@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import test from 'node:test';
-import { buildWindowsDocumentCommand, monitorWindowsDocumentProcess, parseWindowsDocumentEvent, stopWindowsDocumentProcesses } from '../reports/windowsDocumentProcess.ts';
+import { buildWindowsDocumentCommand, monitorWindowsDocumentProcess, parseWindowsDocumentEvent, stopWindowsDocumentProcesses, stopWindowsDocumentProcessesForFile } from '../reports/windowsDocumentProcess.ts';
 
 const helper = 'C:\\Program Files\\VR Hub\\VRHub.WindowsDocuments.exe';
 const filename = 'C:\\Users\\Operator\\Documents\\Factură & apostrof\' test.pdf';
@@ -101,6 +101,39 @@ test('opened without an attachment does not disable the share watchdog', async (
   fixture.emit('opened');
   assert.equal((await pending).success, false);
   assert.equal(fixture.child.killed, true);
+});
+
+test('locking a protected document stops its source without closing another invoice or printer', async () => {
+  const protectedFile = 'C:\\Temp\\private-fixture.pdf';
+  const protectedSource = childFixture();
+  const normalSource = childFixture();
+  const protectedReady = monitorWindowsDocumentProcess(protectedSource.child, 'share', 1000, { sourcePath: protectedFile });
+  const normalReady = monitorWindowsDocumentProcess(normalSource.child, 'share', 1000, { sourcePath: filename });
+  for (const source of [protectedSource, normalSource]) { source.emit('opened'); source.emit('attached'); }
+  await Promise.all([protectedReady, normalReady]);
+  stopWindowsDocumentProcessesForFile(protectedFile);
+  assert.equal(protectedSource.child.killed, true);
+  assert.equal(normalSource.child.killed, false);
+  normalSource.close();
+});
+
+test('locking during attachment preparation cannot report a prepared document', async () => {
+  const fixture = childFixture();
+  const pending = monitorWindowsDocumentProcess(fixture.child, 'share', 1000, { sourcePath: filename });
+  fixture.emit('opened');
+  stopWindowsDocumentProcessesForFile(filename);
+  assert.equal((await pending).success, false);
+  assert.equal(fixture.child.killed, true);
+});
+
+test('protected invoices use the validated persistent native share host, not the legacy shell verb', () => {
+  const service = readFileSync(new URL('../protectedRegistry/service.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(service, /openWindowsShareSheet|reports\/windowsShare/);
+  assert.match(service, /await openWindowsDocument\('share', filePath\)/);
+  assert.match(service, /if \(result.canceled\) return result/);
+  assert.match(service, /stopWindowsDocumentProcessesForFile\(filePath\);\s*try \{ if \(fs.existsSync\(filePath\)\) fs.unlinkSync\(filePath\)/);
+  assert.match(service, /sessions.get\(webContentsId\) !== session/);
+  assert.match(service, /writeFileSync\(tempPath, toValidatedPdfBuffer\(file.buffer\)/);
 });
 
 test('stalled print selection cannot leave the invoice loading indefinitely', async () => {

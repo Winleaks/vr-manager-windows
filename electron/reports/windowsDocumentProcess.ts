@@ -5,11 +5,19 @@ import { toValidatedPdfBuffer } from '../security/fileValidation.ts';
 
 export type NativeDocumentResult = { success: boolean; canceled?: boolean; error?: string };
 export type NativeDocumentOperation = 'share' | 'print';
-const activeChildren = new Set<ChildProcess>();
+const activeChildren = new Map<ChildProcess, string | undefined>();
 
 export function stopWindowsDocumentProcesses() {
-  for (const child of activeChildren) child.kill();
+  for (const child of activeChildren.keys()) child.kill();
   activeChildren.clear();
+}
+
+export function stopWindowsDocumentProcessesForFile(filePath: string) {
+  for (const [child, sourcePath] of activeChildren) {
+    if (sourcePath !== filePath) continue;
+    child.kill();
+    activeChildren.delete(child);
+  }
 }
 
 export function buildWindowsDocumentCommand(helperPath: string, operation: NativeDocumentOperation, filePath: string) {
@@ -34,12 +42,12 @@ export async function runWindowsDocumentProcess(helperPath: string, operation: N
   // This is a WinExe (no console), not a background command. windowsHide also
   // hides GUI startup windows and can leave the print dialog inaccessible.
   const child = spawn(command, args, { windowsHide: false, shell: false, stdio: ['ignore', 'pipe', 'ignore'] });
-  return monitorWindowsDocumentProcess(child, operation);
+  return monitorWindowsDocumentProcess(child, operation, 30_000, { sourcePath: filePath });
 }
 
-export function monitorWindowsDocumentProcess(child: ChildProcess, operation: NativeDocumentOperation, startupTimeoutMs = 30_000, timeouts: { dialogMs?: number; printingMs?: number } = {}): Promise<NativeDocumentResult> {
+export function monitorWindowsDocumentProcess(child: ChildProcess, operation: NativeDocumentOperation, startupTimeoutMs = 30_000, timeouts: { dialogMs?: number; printingMs?: number; sourcePath?: string } = {}): Promise<NativeDocumentResult> {
   return new Promise((resolve) => {
-    activeChildren.add(child);
+    activeChildren.set(child, timeouts.sourcePath);
     let buffer = '';
     let settled = false;
     let opened = false;

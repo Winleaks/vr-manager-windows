@@ -53,7 +53,9 @@ import { isIssuerReady, issuerSnapshot, type BillingIssuerRow } from '../databas
 import { validateWeeklyPeriod } from '../integrations/vrBakerApiClient.ts';
 import { generateInvoicePDF } from '../../src/utils/pdfGenerator.ts';
 import { generateCreditNotePdf } from '../reports/creditNotePdf.ts';
-import { openWindowsShareSheet } from '../reports/windowsShare.ts';
+import { openWindowsDocument } from '../reports/windowsDocuments.ts';
+import { stopWindowsDocumentProcessesForFile } from '../reports/windowsDocumentProcess.ts';
+import { toValidatedPdfBuffer } from '../security/fileValidation.ts';
 import {
   assertCanGoLive,
   nextProtectedCreditNoteCounter,
@@ -404,6 +406,7 @@ export function lockProtectedRegistry(webContentsId: number) {
   sessionTimers.delete(webContentsId);
   sessions.delete(webContentsId);
   for (const filePath of temporaryFiles.get(webContentsId) || []) {
+    stopWindowsDocumentProcessesForFile(filePath);
     try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch {}
   }
   temporaryFiles.delete(webContentsId);
@@ -1469,8 +1472,12 @@ async function protectedPdfToTemporaryFile(webContentsId: number, type: 'invoice
     file = await readProtectedDocumentPdf(type, record, filename);
   }
   if (!file) throw new Error('PDF-ul nu a putut fi recitit din Google Drive.');
+  // A cloud read can finish after the operator locks the registry. Do not
+  // recreate plaintext files or start a transfer for that expired session.
+  assertWriter();
+  if (sessions.get(webContentsId) !== session) throw new Error('Registrul a fost blocat. Deblochează-l înainte de a deschide documentul.');
   const tempPath = path.join(app.getPath('temp'), `vr-hub-protected-${randomUUID()}.pdf`);
-  fs.writeFileSync(tempPath, Buffer.from(file.buffer), { flag: 'wx', mode: 0o600 });
+  fs.writeFileSync(tempPath, toValidatedPdfBuffer(file.buffer), { flag: 'wx', mode: 0o600 });
   const paths = temporaryFiles.get(webContentsId) || new Set<string>(); paths.add(tempPath); temporaryFiles.set(webContentsId, paths);
   return tempPath;
 }
@@ -1487,9 +1494,12 @@ export async function shareProtectedDocument(webContentsId: number, type: 'invoi
   const id = requireText(idInput, 'Documentul', 100);
   if (type !== 'invoice' && type !== 'credit-note') throw new Error('Tipul documentului este invalid.');
   const filePath = await protectedPdfToTemporaryFile(webContentsId, type, id);
-  const opened = await openWindowsShareSheet(filePath);
-  if (!opened) throw new Error('Windows Share nu a putut fi deschis. PDF-ul rămâne temporar disponibil până la blocarea registrului.');
-  return { success: true };
+  const result = await openWindowsDocument('share', filePath);
+  if (result.canceled) return result;
+  if (!result.success) throw new Error(result.error || 'PDF-ul nu a putut fi atașat în Windows Share.');
+  // The source process stays alive for deferred reads. This confirms preparation
+  // in Windows Share, not WhatsApp delivery to the recipient.
+  return result;
 }
 
 export async function exportProtectedRegistryMonth(webContentsId: number, monthInput: unknown) {
