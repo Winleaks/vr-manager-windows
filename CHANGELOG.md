@@ -1,5 +1,12 @@
 ### În lucru
 
+### VR - Hub Management v0.1.99
+
+- Include integral corecțiile din v0.1.98 și modificările din ramura de publicare a facturilor clienților, fără revenire la o versiune mai veche.
+- Pregătește sincronizarea privată a facturilor și soldurilor din Writer către platformă, cu o coadă persistentă, revizii și reîncercări idempotente. Activarea sincronizării și accesul clienților rămân controlate separat, după verificare și reconciliere.
+- PDF-urile încărcate în Drive sunt legate de ID-ul și revizia facturii; copiile existente pot fi asociate prin verificarea conținutului, fără suprascriere sau ștergere automată.
+- Migrarea bazei de date la versiunea 17 creează o copie verificată înainte de upgrade, inclusiv pentru bazele aflate deja la versiunea 16.
+
 ### VR - Hub Management v0.1.98
 
 - Editorul facturii permite adăugarea produselor din catalog inclusiv pe facturile importate. Cantitatea și prețul unitar pot fi ajustate manual, iar numărul facturii, încasările și comenzile originale sunt păstrate.
