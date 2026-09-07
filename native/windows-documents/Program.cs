@@ -15,7 +15,7 @@ internal static class Program
         ApplicationConfiguration.Initialize();
         try
         {
-            if (args.Length != 2 || args[0] is not ("share" or "print" or "validate" or "validate-preview"))
+            if (args.Length != 2 || args[0] is not ("share" or "print" or "validate" or "validate-preview" or "validate-share"))
                 throw new ArgumentException("Invalid document operation.");
             var pdfPath = ValidatePath(args[1]);
             using var form = new DocumentWindow(args[0], pdfPath);
@@ -62,6 +62,7 @@ internal sealed class DocumentWindow : Form
     private readonly string pdfPath;
     private readonly System.Windows.Forms.Timer lifetime = new() { Interval = 600_000 };
     private DataTransferManager? shareManager;
+    private DataPackage? sharePackage;
     private bool completed;
     private readonly Label statusLabel = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Text = "Se pregătește PDF-ul..." };
 
@@ -104,6 +105,25 @@ internal sealed class DocumentWindow : Form
                 return;
             }
             lifetime.Start();
+            if (operation == "validate-share")
+            {
+                var package = new DataPackage();
+                PrepareSharePackage(package, storageFile);
+                var view = package.GetView();
+                var items = await view.GetStorageItemsAsync();
+                if (items.Count != 1 || items[0] is not StorageFile attachment || attachment.Name != Path.GetFileName(pdfPath)
+                    || !view.Properties.FileTypes.Contains(".pdf") || view.Contains(StandardDataFormats.Text))
+                    throw new InvalidDataException("Invalid PDF attachment package.");
+                var buffer = await FileIO.ReadBufferAsync(attachment);
+                using var reader = DataReader.FromBuffer(buffer);
+                var bytes = new byte[buffer.Length];
+                reader.ReadBytes(bytes);
+                if (!bytes.SequenceEqual(File.ReadAllBytes(pdfPath))) throw new InvalidDataException("Attachment bytes differ.");
+                completed = true;
+                Program.Reply("share-validated", pages: (int)pdf.PageCount, windowVisible: IsWindowVisible(Handle));
+                Close();
+                return;
+            }
             if (operation == "share") StartShare(storageFile);
             else await ShowPrintPreviewAsync(pdf);
         }
@@ -115,19 +135,37 @@ internal sealed class DocumentWindow : Form
         }
     }
 
+    private static void PrepareSharePackage(DataPackage package, StorageFile file)
+    {
+        package.Properties.Title = Path.GetFileNameWithoutExtension(file.Name);
+        package.Properties.FileTypes.Add(".pdf");
+        package.RequestedOperation = DataPackageOperation.Copy;
+        // Electron supplies a disposable, verified local snapshot, never the
+        // working invoice. Avoid a read-only broker representation for targets.
+        package.SetStorageItems(new IStorageItem[] { file }, false);
+    }
+
     private void StartShare(StorageFile file)
     {
-        statusLabel.Text = "Alege WhatsApp în fereastra Windows Share, apoi contactul.\nPoți închide această fereastră pentru a anula.";
+        ClientSize = new Size(540, 170);
+        statusLabel.Text = "Alege WhatsApp, apoi contactul și verifică atașamentul PDF.\nPăstrează această fereastră deschisă până ai trimis factura.\nSe închide automat după 10 minute.";
+        var done = new Button { Text = "Am terminat în WhatsApp — închide", Dock = DockStyle.Bottom, Height = 36 };
+        done.Click += (_, _) => Close();
+        Controls.Add(done);
         // Own a real STA window and keep its loop alive during deferred transfers.
         shareManager = DataTransferManagerInterop.GetForWindow(Handle);
         shareManager.DataRequested += (_, args) => {
             try
             {
-                args.Request.Data.Properties.Title = Path.GetFileNameWithoutExtension(pdfPath);
-                args.Request.Data.RequestedOperation = DataPackageOperation.Copy;
-                args.Request.Data.SetStorageItems(new IStorageItem[] { file }, true);
-                args.Request.Data.ShareCompleted += (_, _) => {
-                    if (!IsDisposed) BeginInvoke((Action)(() => { completed = true; Close(); }));
+                sharePackage = args.Request.Data;
+                PrepareSharePackage(sharePackage, file);
+                sharePackage.ShareCompleted += (_, _) => {
+                    // Handoff to a target is not its network upload to a recipient.
+                    // Do not dispose the source while WhatsApp may still read it.
+                    if (!IsDisposed) BeginInvoke((Action)(() => {
+                        completed = true;
+                        statusLabel.Text = "PDF-ul a fost predat aplicației selectate.\nVerifică atașamentul și finalizează trimiterea în WhatsApp.\nÎnchide această fereastră după trimitere (maximum 10 minute).";
+                    }));
                 };
                 Program.Reply("attached");
             }

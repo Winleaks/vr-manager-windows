@@ -2,20 +2,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { toValidatedPdfBuffer } from '../security/fileValidation.ts';
+import { createWindowsShareSnapshot } from './windowsShareSnapshot.ts';
 
 export type NativeDocumentResult = { success: boolean; canceled?: boolean; error?: string };
 export type NativeDocumentOperation = 'share' | 'print';
-const activeChildren = new Map<ChildProcess, string | undefined>();
+const activeChildren = new Map<ChildProcess, { sourcePath?: string; cleanup?: () => void }>();
 
 export function stopWindowsDocumentProcesses() {
-  for (const child of activeChildren.keys()) child.kill();
+  for (const [child, document] of activeChildren) { child.kill(); document.cleanup?.(); }
   activeChildren.clear();
 }
 
 export function stopWindowsDocumentProcessesForFile(filePath: string) {
-  for (const [child, sourcePath] of activeChildren) {
-    if (sourcePath !== filePath) continue;
+  for (const [child, document] of activeChildren) {
+    if (document.sourcePath !== filePath) continue;
     child.kill();
+    document.cleanup?.();
     activeChildren.delete(child);
   }
 }
@@ -33,7 +35,7 @@ export function parseWindowsDocumentEvent(line: string): { status: string; messa
 }
 
 export async function runWindowsDocumentProcess(helperPath: string, operation: NativeDocumentOperation, filePath: string): Promise<NativeDocumentResult> {
-  const { command, args } = buildWindowsDocumentCommand(helperPath, operation, filePath);
+  buildWindowsDocumentCommand(helperPath, operation, filePath);
   if (!fs.existsSync(helperPath)) throw new Error('Componenta pentru trimitere și printare lipsește. Reinstalează versiunea actualizată a hubului.');
   const stat = fs.statSync(filePath);
   if (!stat.isFile() || stat.size > 25 * 1024 * 1024) throw new Error('PDF-ul este invalid sau prea mare.');
@@ -41,13 +43,17 @@ export async function runWindowsDocumentProcess(helperPath: string, operation: N
   if (activeChildren.size >= 3) throw new Error('Închide dialogul de trimitere sau printare deja deschis.');
   // This is a WinExe (no console), not a background command. windowsHide also
   // hides GUI startup windows and can leave the print dialog inaccessible.
-  const child = spawn(command, args, { windowsHide: false, shell: false, stdio: ['ignore', 'pipe', 'ignore'] });
-  return monitorWindowsDocumentProcess(child, operation, 30_000, { sourcePath: filePath });
+  const snapshot = operation === 'share' ? createWindowsShareSnapshot(filePath) : undefined;
+  try {
+    const { command, args } = buildWindowsDocumentCommand(helperPath, operation, snapshot?.filePath ?? filePath);
+    const child = spawn(command, args, { windowsHide: false, shell: false, stdio: ['ignore', 'pipe', 'ignore'] });
+    return monitorWindowsDocumentProcess(child, operation, 30_000, { sourcePath: filePath, cleanup: snapshot?.cleanup });
+  } catch (error) { snapshot?.cleanup(); throw error; }
 }
 
-export function monitorWindowsDocumentProcess(child: ChildProcess, operation: NativeDocumentOperation, startupTimeoutMs = 30_000, timeouts: { previewMs?: number; dialogMs?: number; printingMs?: number; sourcePath?: string } = {}): Promise<NativeDocumentResult> {
+export function monitorWindowsDocumentProcess(child: ChildProcess, operation: NativeDocumentOperation, startupTimeoutMs = 30_000, timeouts: { previewMs?: number; dialogMs?: number; printingMs?: number; shareMs?: number; sourcePath?: string; cleanup?: () => void } = {}): Promise<NativeDocumentResult> {
   return new Promise((resolve) => {
-    activeChildren.set(child, timeouts.sourcePath);
+    activeChildren.set(child, timeouts);
     let buffer = '';
     let settled = false;
     let opened = false;
@@ -102,7 +108,12 @@ export function monitorWindowsDocumentProcess(child: ChildProcess, operation: Na
             deadline(timeouts.printingMs ?? 120_000, 'Windows nu a confirmat finalizarea trimiterii la imprimantă.');
           }
           if (event.status === 'attached') attached = true;
-          if (opened && attached && operation === 'share') finish({ success: true });
+          if (opened && attached && operation === 'share') {
+            finish({ success: true });
+            // Preparation is not recipient delivery. Keep the physical snapshot
+            // and source process alive for deferred reads, but never indefinitely.
+            timer = setTimeout(() => { child.kill(); timeouts.cleanup?.(); }, timeouts.shareMs ?? 600_000);
+          }
           if (event.status === 'printed' && operation === 'print') finish({ success: true });
           if (event.status === 'canceled') finish({ success: false, canceled: true });
           if (event.status === 'error') finish({ success: false, error: event.message || 'Operația Windows a eșuat.' });
@@ -114,6 +125,7 @@ export function monitorWindowsDocumentProcess(child: ChildProcess, operation: Na
     child.once('close', () => {
       activeChildren.delete(child);
       clearTimeout(timer);
+      timeouts.cleanup?.();
       if (!settled) finish({ success: false, error: 'Componenta Windows s-a închis fără confirmarea operației.' });
     });
   });

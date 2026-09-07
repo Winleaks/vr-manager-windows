@@ -3,15 +3,97 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, symlinkSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import { buildWindowsDocumentCommand, monitorWindowsDocumentProcess, parseWindowsDocumentEvent, stopWindowsDocumentProcesses, stopWindowsDocumentProcessesForFile } from '../reports/windowsDocumentProcess.ts';
+import { createWindowsShareSnapshot, cleanupStaleWindowsShareSnapshots } from '../reports/windowsShareSnapshot.ts';
 
 const helper = 'C:\\Program Files\\VR Hub\\VRHub.WindowsDocuments.exe';
 const filename = 'C:\\Users\\Operator\\Documents\\Factură & apostrof\' test.pdf';
+
+test('share snapshots preserve exact PDF bytes/name independently of later invoice edits', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'vr-share-test-'));
+  try {
+    const source = path.join(root, 'Factură 123 & client.pdf');
+    const bytes = Buffer.from('%PDF-1.7\nsynthetic invoice 123');
+    writeFileSync(source, bytes);
+    const first = createWindowsShareSnapshot(source, root);
+    const second = createWindowsShareSnapshot(source, root);
+    assert.equal(path.basename(first.filePath), path.basename(source));
+    assert.notEqual(first.filePath, second.filePath);
+    assert.deepEqual(readFileSync(first.filePath), bytes);
+    writeFileSync(source, '%PDF-1.7\nupdated invoice');
+    assert.deepEqual(readFileSync(first.filePath), bytes);
+    writeFileSync(first.filePath, '%PDF-1.7\nrecipient edit');
+    assert.equal(readFileSync(source, 'utf8'), '%PDF-1.7\nupdated invoice');
+    first.cleanup(); first.cleanup(); second.cleanup();
+    assert.deepEqual(readdirSync(root), [path.basename(source)]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('sharing rejects server error text and invalid file types before creating a session', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'vr-share-test-'));
+  try {
+    for (const name of ['0.txt', 'invoice.pdf']) {
+      const source = path.join(root, name);
+      writeFileSync(source, 'Internal Server Error');
+      assert.throws(() => createWindowsShareSnapshot(source, root), /PDF/);
+    }
+    assert.deepEqual(readdirSync(root).sort(), ['0.txt', 'invoice.pdf']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('startup cleanup removes only owned share sessions and never traverses symlinks', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'vr-share-test-'));
+  try {
+    const source = path.join(root, 'invoice.pdf');
+    writeFileSync(source, '%PDF-1.7\nfixture');
+    const snapshot = createWindowsShareSnapshot(source, root);
+    const unrelated = path.join(root, 'vr-hub-share-unrelated');
+    mkdirSync(unrelated);
+    writeFileSync(path.join(unrelated, 'keep.pdf'), '%PDF-1.7\nkeep');
+    if (process.platform !== 'win32') symlinkSync(unrelated, path.join(root, 'vr-hub-share-12345678-1234-4234-8234-123456789012'));
+    cleanupStaleWindowsShareSnapshots(root);
+    assert.equal(existsSync(snapshot.filePath), false);
+    assert.equal(existsSync(source), true);
+    assert.equal(existsSync(path.join(unrelated, 'keep.pdf')), true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('prepared shares retain their snapshot until close, lock, or a bounded retention deadline', async () => {
+  for (const ending of ['close', 'lock', 'timeout']) {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'vr-share-test-'));
+    try {
+      const source = path.join(root, 'invoice.pdf');
+      writeFileSync(source, '%PDF-1.7\nfixture');
+      const snapshot = createWindowsShareSnapshot(source, root);
+      const fixture = childFixture();
+      const ready = monitorWindowsDocumentProcess(fixture.child, 'share', 1000, { sourcePath: source, cleanup: snapshot.cleanup, shareMs: ending === 'timeout' ? 10 : 1000 });
+      fixture.emit('attached'); fixture.emit('opened');
+      assert.equal((await ready).success, true);
+      assert.equal(existsSync(snapshot.filePath), true);
+      if (ending === 'close') fixture.close();
+      if (ending === 'lock') stopWindowsDocumentProcessesForFile(source);
+      if (ending === 'timeout') await new Promise(resolve => setTimeout(resolve, 30));
+      assert.equal(existsSync(snapshot.filePath), false);
+      assert.equal(existsSync(source), true);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test('native sharing uses a physical disposable PDF with metadata and retains it after handoff', () => {
+  const native = readFileSync(new URL('../../native/windows-documents/Program.cs', import.meta.url), 'utf8');
+  const bridge = readFileSync(new URL('../reports/windowsDocumentProcess.ts', import.meta.url), 'utf8');
+  assert.match(bridge, /operation === 'share' \? createWindowsShareSnapshot\(filePath\)/);
+  assert.match(native, /SetStorageItems\(new IStorageItem\[\] \{ file \}, false\)/);
+  assert.match(native, /FileTypes.Add\(".pdf"\)/);
+  const handler = native.slice(native.indexOf('sharePackage.ShareCompleted +='), native.indexOf('Program.Reply("attached")'));
+  assert.ok(handler.includes('completed = true'));
+  assert.doesNotMatch(handler, /Close\(\)/);
+});
 
 function childFixture() {
   const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), killed: false, kill() { this.killed = true; this.emit('close', null); return true; } });

@@ -46,7 +46,7 @@ export function InvoiceDocumentActions({
           : await api.system.printInvoicePdf(invoiceId);
       if (result.canceled) return;
       if (!result.success) throw new Error(result.error || 'Acțiunea nu a putut fi pornită.');
-      if (action === 'share') showNotice('info', 'PDF-ul este atașat. Alege WhatsApp, apoi contactul și trimite factura.');
+      if (action === 'share') showNotice('info', 'PDF pregătit în Windows Share. Alege WhatsApp și contactul; păstrează fereastra de transfer deschisă până finalizezi trimiterea.');
     } catch (error) {
       showNotice('error', error instanceof Error ? error.message : 'Acțiunea nu a putut fi finalizată.');
     } finally {

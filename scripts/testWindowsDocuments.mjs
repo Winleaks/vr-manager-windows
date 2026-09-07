@@ -35,6 +35,10 @@ try {
   assert.equal(preview.code, 0);
   assert.ok(preview.events.some(event => event.status === 'preview-validated' && event.pages === 2 && event.windowVisible === true), 'The preview must display actual page images and navigate from first to last and back.');
   assert.ok(!preview.events.some(event => ['selecting', 'printing', 'printed'].includes(event.status)), 'Preview validation must never open the printer dialog or submit a job.');
+  const share = await invoke(filename, 'validate-share');
+  assert.equal(share.code, 0);
+  assert.ok(share.events.some(event => event.status === 'share-validated' && event.pages === 2 && event.windowVisible === true), 'The StorageItems package must preserve the PDF name, metadata and exact readable bytes without text fallback.');
+  assert.ok(!share.events.some(event => ['opened', 'attached', 'printed'].includes(event.status)), 'Package validation must not open Share or send anything.');
   fs.writeFileSync(filename, '%PDF-invalid content');
   const invalid = await invoke(filename);
   assert.notEqual(invalid.code, 0);
@@ -44,7 +48,10 @@ try {
   assert.ok(!invalidPreview.events.some(event => ['previewing', 'selecting', 'printing', 'printed'].includes(event.status)));
   const missing = await invoke(path.join(directory, 'missing.pdf'));
   assert.notEqual(missing.code, 0);
-  console.log('Native Windows window visibility, PDF load/render, preview navigation and invalid-file smoke checks passed. No printer dialog, printing or sharing was tested.');
+  const invalidShare = await invoke(filename, 'validate-share');
+  assert.notEqual(invalidShare.code, 0);
+  assert.ok(!invalidShare.events.some(event => event.status === 'share-validated'));
+  console.log('Native window, PDF render/preview and StorageItems PDF name/bytes checks passed. No printer dialog, printing or delivery to a share target was tested.');
 } finally {
   // Only this test's unique directory, containing synthetic PDF data.
   fs.rmSync(directory, { recursive: true, force: true });

@@ -22,6 +22,7 @@ import { cashRepo } from './database/repositories/cashRepo'
 import { millisecondsUntilNextLocalMidnight } from './database/cashDayRollover'
 import { runStartupCashReconciliation } from './startupCashReconciliation'
 import { cleanupStaleProtectedRegistryTemporaryFiles, lockAllProtectedRegistrySessions } from './protectedRegistry/service'
+import { cleanupStaleWindowsShareSnapshots } from './reports/windowsShareSnapshot'
 
 const DIST_PATH = path.join(__dirname, '../dist')
 process.env.DIST = DIST_PATH
@@ -109,6 +110,7 @@ app.on('before-quit', () => {
 app.whenReady().then(async () => {
   app.setAppUserModelId('com.winleaks.vrhubmanagement')
   cleanupStaleProtectedRegistryTemporaryFiles()
+  if (hasSingleInstanceLock) cleanupStaleWindowsShareSnapshots()
   if (process.platform === 'win32' && getDeviceRole() === 'writer') {
     try {
       const processes = execFileSync('tasklist.exe', ['/FO', 'CSV', '/NH'], {
