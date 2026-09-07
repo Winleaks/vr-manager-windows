@@ -14,6 +14,7 @@ import {
 import {
   deleteInvoiceForTestingTransaction,
   setBillingTestModeTransaction,
+  updateInvoiceTransaction,
 } from './repositories/billingTransactions.ts';
 
 function today() {
@@ -59,6 +60,23 @@ test('v13 migration preserves an existing issuer credit once and suggests unconf
     const entries = connection.prepare("SELECT source_type, original_amount, available_amount FROM company_credit_entries WHERE company_id = ? AND issuer_id = ?").all(companyId, issuerId);
     assert.deepEqual(entries, [{ source_type: 'legacy', original_amount: 12.5, available_amount: 12.5 }]);
     assert.equal((connection.prepare("SELECT value FROM app_settings WHERE key = 'credit_ledger_migrated_v13'").get() as any).value, '1');
+  } finally { connection.close(); }
+});
+
+test('invoice corrections remain blocked for issued Credit Notes and active applied credit', () => {
+  const { connection, companyId, store1, issuerId, invoice } = fixture();
+  try {
+    const credited = invoice(store1, 'TGB-31');
+    createCreditNoteTransaction(connection, { issueDate: today(), reason: 'Retur', items: [{ invoiceItemId: credited.itemId, quantity: 1, unitAmount: 5 }] });
+    const applied = invoice(store1, 'TGB-32');
+    applyCompanyCreditTransaction(connection, { companyId, issuerId, invoiceId: applied.invoiceId, amount: 2, reason: 'Credit existent' });
+    for (const target of [credited, applied]) {
+      const before = connection.prepare('SELECT * FROM invoices WHERE id = ?').get(target.invoiceId);
+      const beforeItems = connection.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(target.invoiceId);
+      assert.throws(() => updateInvoiceTransaction(connection, target.invoiceId, 'TGB-31', today(), [{ id: target.itemId, productName: 'Bread', quantity: 2, unitPrice: 8 }]), /Credit Notes sau credit aplicat/);
+      assert.deepEqual(connection.prepare('SELECT * FROM invoices WHERE id = ?').get(target.invoiceId), before);
+      assert.deepEqual(connection.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(target.invoiceId), beforeItems);
+    }
   } finally { connection.close(); }
 });
 

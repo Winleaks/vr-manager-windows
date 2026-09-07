@@ -32,6 +32,7 @@ function ensureInvoiceProductColumns(connection: SqliteDatabase) {
 }
 
 export interface InvoiceItemInput {
+  id?: number;
   productName: string;
   name_ro?: string;
   variant_label?: string;
@@ -637,29 +638,30 @@ export function updateInvoiceTransaction(
     if (!existing) throw new Error('Factura nu există.');
     if (existing.status === 'cancelled') throw new Error('O factură anulată nu poate fi modificată.');
 
+    const previousItems = connection.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id').all(invoiceId) as Array<{
+      id: number; product_name: string; quantity: number; unit_price: number; total_price: number;
+    }>;
+    let importedItems: Array<{ id: number; quantity: number; unitPrice: number; totalPrice: number }> = [];
     if (imported) {
-      if (invoiceDate !== existing.invoice_date) {
-        const result = connection.prepare('UPDATE invoices SET invoice_date = ? WHERE id = ?').run(invoiceDate, invoiceId);
-        if (result.changes !== 1) throw new Error('Data facturii nu a putut fi actualizată.');
-        const hasAudit = Boolean(connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'billing_audit_events'").get());
-        if (hasAudit) {
-          const hasIdentities = Boolean(connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'invoice_identities'").get());
-          const identity = hasIdentities
-            ? connection.prepare('SELECT issuer_id FROM invoice_identities WHERE invoice_id = ?').get(invoiceId) as { issuer_id: number } | undefined
-            : undefined;
-          connection.prepare(`INSERT INTO billing_audit_events (event_type, issuer_id, company_id, invoice_id, details) VALUES ('invoice_date_updated', ?, ?, ?, ?)`)
-            .run(identity?.issuer_id ?? null, existing.company_id, invoiceId, JSON.stringify({ previousDate: existing.invoice_date, invoiceDate, imported: true }));
-        }
+      if (!Array.isArray(itemsInput) || itemsInput.length !== previousItems.length) {
+        throw new Error('Păstrează pozițiile facturii importate; poți modifica doar cantitățile și prețurile.');
       }
-      return {
-        invoiceId,
-        totalAmount: requireFiniteNonNegative(existing.total_amount, 'Totalul facturii'),
-        paidAmount: requireFiniteNonNegative(existing.paid_amount, 'Suma achitată a facturii'),
-        status: existing.status,
-      };
+      const existingIds = new Set(previousItems.map((item) => item.id));
+      importedItems = itemsInput.map((item) => {
+        const id = requirePositiveInteger(item.id, 'Poziția facturii');
+        if (!existingIds.delete(id)) throw new Error('Poziție invalidă sau duplicată în factura importată.');
+        const quantity = requireFinitePositive(item.quantity, 'Cantitatea');
+        const unitPrice = requireFiniteNonNegative(item.unitPrice, 'Prețul unitar');
+        const totalPrice = quantity * unitPrice;
+        if (!Number.isFinite(totalPrice)) throw new Error('Totalul poziției nu este valid.');
+        return { id, quantity, unitPrice, totalPrice };
+      });
     }
-
-    const { items, totalAmount } = validateInvoiceItems(connection, itemsInput);
+    const validated = imported ? null : validateInvoiceItems(connection, itemsInput);
+    const totalAmount = imported
+      ? importedItems.reduce((sum, item) => sum + item.totalPrice, 0)
+      : validated!.totalAmount;
+    if (!Number.isFinite(totalAmount)) throw new Error('Totalul facturii nu este valid.');
     const paidAmount = requireFiniteNonNegative(existing.paid_amount, 'Suma achitată a facturii');
     if (paidAmount > totalAmount + 0.01) {
       throw new Error('Totalul facturii nu poate fi mai mic decât suma deja achitată.');
@@ -673,13 +675,33 @@ export function updateInvoiceTransaction(
     `).run(invoiceNumber, invoiceDate, totalAmount, status, invoiceId);
     if (result.changes !== 1) throw new Error('Factura nu a putut fi actualizată.');
 
-    connection.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
-    const insertItem = connection.prepare(`
-      INSERT INTO invoice_items (invoice_id, product_name, product_name_ro, variant_label, unit, quantity, unit_price, total_price, product_order, external_product_id, finished_product_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT id FROM finished_products WHERE external_product_id = ? LIMIT 1))
-    `);
-    for (const item of items) {
-      insertItem.run(invoiceId, item.productName, item.name_ro, item.variant_label, item.unit, item.quantity, item.unitPrice, item.totalPrice, item.productOrder, item.externalProductId, item.externalProductId);
+    if (imported) {
+      const updateItem = connection.prepare('UPDATE invoice_items SET quantity = ?, unit_price = ?, total_price = ? WHERE id = ? AND invoice_id = ?');
+      for (const item of importedItems) {
+        updateItem.run(item.quantity, item.unitPrice, item.totalPrice, item.id, invoiceId);
+      }
+    } else {
+      connection.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
+      const insertItem = connection.prepare(`
+        INSERT INTO invoice_items (invoice_id, product_name, product_name_ro, variant_label, unit, quantity, unit_price, total_price, product_order, external_product_id, finished_product_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT id FROM finished_products WHERE external_product_id = ? LIMIT 1))
+      `);
+      for (const item of validated!.items) {
+        insertItem.run(invoiceId, item.productName, item.name_ro, item.variant_label, item.unit, item.quantity, item.unitPrice, item.totalPrice, item.productOrder, item.externalProductId, item.externalProductId);
+      }
+    }
+    if (connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'billing_audit_events'").get()) {
+      const hasIdentities = connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'invoice_identities'").get();
+      const identity = hasIdentities
+        ? connection.prepare('SELECT issuer_id FROM invoice_identities WHERE invoice_id = ?').get(invoiceId) as { issuer_id: number } | undefined
+        : undefined;
+      const updatedItems = connection.prepare('SELECT id, product_name, quantity, unit_price, total_price FROM invoice_items WHERE invoice_id = ? ORDER BY id').all(invoiceId);
+      connection.prepare("INSERT INTO billing_audit_events (event_type, issuer_id, company_id, invoice_id, details) VALUES ('invoice_updated', ?, ?, ?, ?)")
+        .run(identity?.issuer_id ?? null, existing.company_id, invoiceId, JSON.stringify({
+          imported, previousDate: existing.invoice_date, invoiceDate,
+          previousTotal: existing.total_amount, totalAmount, paidAmount,
+          previousItems, updatedItems,
+        }));
     }
     return { invoiceId, totalAmount, paidAmount, status };
   })();

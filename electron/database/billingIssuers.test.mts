@@ -17,6 +17,7 @@ import {
   reissueCancelledWeeklyInvoiceTransaction,
   setBillingTestModeTransaction,
   updatePaymentTransaction,
+  updateInvoiceTransaction,
 } from './repositories/billingTransactions.ts';
 import { ensureCreditNoteSchema } from './creditNotes.ts';
 
@@ -62,6 +63,71 @@ function fixture() {
   assignCompanyIssuer(connection, company2, vatra.id);
   return { connection, company1, company2, store1, store2, goodnessId: goodness.id, vatraId: vatra.id };
 }
+
+test('manual correction of imported invoice preserves identity, source links and payments, and audits atomically', () => {
+  const { connection, company1, store1, goodnessId } = fixture();
+  try {
+    const order = weekly(store1, 'store-goodness', 'order-correction');
+    order.items.push({ productName: 'Cake', name_ro: 'Prăjitură', quantity: 1, unitPrice: 4 });
+    const [invoice] = createWeeklyInvoiceBatchTransaction(connection, [order], '2026-08-31');
+    const rows = () => connection.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id').all(invoice.invoiceId) as any[];
+    const originalItems = rows();
+    const source = () => ({
+      identity: connection.prepare('SELECT * FROM invoice_identities WHERE invoice_id = ?').get(invoice.invoiceId),
+      batches: connection.prepare('SELECT * FROM invoice_import_batches WHERE invoice_id = ?').all(invoice.invoiceId),
+      orders: connection.prepare('SELECT * FROM invoice_source_orders WHERE batch_id IN (SELECT id FROM invoice_import_batches WHERE invoice_id = ?)').all(invoice.invoiceId),
+      issuer: connection.prepare('SELECT * FROM billing_issuers WHERE id = ?').get(goodnessId),
+    });
+    const originalSource = source();
+    recordCompanyPaymentTransaction(connection, { companyId: company1, issuerId: goodnessId, invoiceId: invoice.invoiceId, amount: 3, paymentDate: '2026-08-31', method: 'cash' });
+    const payments = connection.prepare('SELECT * FROM payments').all();
+    const items = originalItems.map((row) => ({ id: row.id, productName: row.product_name, quantity: 2.5, unitPrice: 4.2 }));
+    const save = (data = items, id = invoice.invoiceId, date = '2026-09-01') => updateInvoiceTransaction(connection, id, invoice.invoiceNumber, date, data);
+    const result = save();
+    assert.equal(result.totalAmount, items.length * 10.5);
+    assert.equal(result.paidAmount, 3);
+    assert.equal(result.status, 'partial');
+    assert.deepEqual(rows(), originalItems.map((row) => ({ ...row, quantity: 2.5, unit_price: 4.2, total_price: 10.5 })));
+    assert.deepEqual(source(), originalSource);
+    assert.deepEqual(connection.prepare('SELECT * FROM payments').all(), payments);
+    const audit = connection.prepare("SELECT * FROM billing_audit_events WHERE event_type = 'invoice_updated' AND invoice_id = ?").get(invoice.invoiceId) as any;
+    assert.equal(audit.issuer_id, goodnessId);
+    assert.equal(audit.company_id, company1);
+    assert.equal(JSON.parse(audit.details).previousTotal, invoice.totalAmount);
+    assert.equal(JSON.parse(audit.details).totalAmount, result.totalAmount);
+
+    const snapshot = () => ({ header: connection.prepare('SELECT * FROM invoices WHERE id = ?').get(invoice.invoiceId), items: rows(), audit: connection.prepare("SELECT * FROM billing_audit_events WHERE invoice_id = ?").all(invoice.invoiceId) });
+    const saved = snapshot();
+    const invalid = [
+      [], [...items, items[0]],
+      items.map((row) => ({ ...row, id: items[0].id })),
+      items.map((row) => ({ ...row, id: 999999 })),
+      items.map((row) => ({ ...row, id: undefined })),
+      items.map((row) => ({ ...row, quantity: 0 })),
+      items.map((row) => ({ ...row, quantity: NaN })),
+      items.map((row) => ({ ...row, unitPrice: -1 })),
+      items.map((row) => ({ ...row, unitPrice: Infinity })),
+      items.map((row) => ({ ...row, quantity: Number.MAX_VALUE, unitPrice: Number.MAX_VALUE })),
+      items.map((row) => ({ ...row, quantity: 1, unitPrice: 0.1 })),
+    ];
+    for (const data of invalid) {
+      assert.throws(() => save(data as typeof items));
+      assert.deepEqual(snapshot(), saved);
+    }
+    assert.throws(() => save(items, 999999), /nu există/);
+    assert.throws(() => save(items, invoice.invoiceId, 'not-a-date'));
+    connection.exec("CREATE TRIGGER reject_invoice_audit BEFORE INSERT ON billing_audit_events WHEN NEW.event_type = 'invoice_updated' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END;");
+    assert.throws(() => save(items.map((row) => ({ ...row, quantity: 5 }))), /audit unavailable/);
+    assert.deepEqual(snapshot(), saved);
+    connection.exec('DROP TRIGGER reject_invoice_audit');
+
+    const paid = save(items.map((row) => ({ ...row, quantity: 1, unitPrice: 3 / items.length })));
+    assert.equal(paid.status, 'paid');
+    assert.deepEqual(connection.prepare('SELECT * FROM payments').all(), payments);
+    connection.prepare("UPDATE invoices SET status = 'cancelled' WHERE id = ?").run(invoice.invoiceId);
+    assert.throws(() => save(), /anulată/);
+  } finally { connection.close(); }
+});
 
 function weekly(storeId: number, storeExternalId: string, orderId: string) {
   return {

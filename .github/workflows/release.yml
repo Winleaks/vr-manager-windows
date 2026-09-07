@@ -36,6 +36,20 @@ jobs:
       - name: Run Lint
         run: npm run lint
 
+      - name: Run Type Check
+        run: npm run typecheck
+
+      - name: Install .NET SDK for native document dialogs
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build native Windows document component
+        run: npm run build:windows-documents
+
+      - name: Verify native PDF loading and rendering
+        run: npm run test:windows-documents
+
       - name: Validate Build Secrets
         shell: pwsh
         run: |

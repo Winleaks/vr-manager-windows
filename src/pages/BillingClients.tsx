@@ -5,7 +5,8 @@ import {
   DollarSign, CheckCircle2, PlusCircle, CreditCard, Banknote,
   ChevronRight, ShieldCheck, Loader2, Search, X, FileMinus2, Edit3
 } from 'lucide-react';
-import { generateInvoicePDF } from '../utils/pdfGenerator';
+import { prepareInvoiceDocument } from '../utils/prepareInvoiceDocument';
+import { InvoiceEditorModal } from '../components/InvoiceEditorModal';
 import { NumericInput } from '../components/NumericInput';
 import { TextConfirmationModal } from '../components/TextConfirmationModal';
 import { InvoiceDocumentActions } from '../components/InvoiceDocumentActions';
@@ -36,6 +37,9 @@ export function BillingClients() {
   const [, setLoadingProfile] = useState(false);
   const [activeTab, setActiveTab] = useState<'unpaid' | 'all' | 'payments' | 'credits' | 'stores'>('unpaid');
   const [profileIssuerFilter, setProfileIssuerFilter] = useState('all');
+
+  const [editingInvoiceId, setEditingInvoiceId] = useState<number | null>(null);
+  const [invoiceNotice, setInvoiceNotice] = useState('');
 
   // Modal Încasare
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -75,6 +79,7 @@ export function BillingClients() {
   useEffect(() => {
     if (selectedCompanyId) {
       setIssuerAssignmentNotice('');
+      setInvoiceNotice('');
       loadCompanyProfile(selectedCompanyId);
     } else {
       setProfileData(null);
@@ -253,33 +258,16 @@ export function BillingClients() {
     }
   };
 
-  const prepareInvoicePdf = async (inv: any) => {
-    const sharedSettings = await api.billing.getSettings();
-    const settings = { ...(inv.issuer_settings || {}), invoiceLogo: sharedSettings.invoiceLogo };
-    if (!inv.issuer_settings) throw new Error('Snapshotul emitentului facturii lipsește.');
-    const pdfData = {
-        invoiceNumber: inv.invoice_number,
-        invoiceDate: inv.invoice_date,
-        client: {
-          name: profileData?.company?.name || inv.store_name || 'Client',
-          cui: profileData?.company?.cui,
-          regCom: profileData?.company?.reg_com,
-          address: profileData?.company?.address,
-          county: '',
-          city: ''
-        },
-        store: {
-          name: inv.store_name || '',
-          address: inv.store_address || '',
-          postcode: inv.store_postcode || '',
-        },
-        items: inv.items || [],
-        totalAmount: inv.total_amount
-    };
-    const buffer = generateInvoicePDF(settings, pdfData);
-    const localSave = await api.system.savePdfAuto({ buffer, invoiceId: inv.id });
-    if (!localSave.success) throw new Error(localSave.error || 'PDF-ul nu a putut fi salvat local.');
-  };
+  const prepareInvoicePdf = async (inv: any) => { await prepareInvoiceDocument(inv.id); };
+
+  const invoiceEditAction = (inv: any) => inv.status !== 'cancelled' && Number(inv.creditedAmount || 0) <= 0.005 && Number(inv.appliedCredit || 0) <= 0.005 && (
+    <button type="button" onClick={() => setEditingInvoiceId(inv.id)} disabled={!isWriter}
+      title={isWriter ? 'Editează factura' : 'Editare disponibilă numai pe Writer'}
+      aria-label="Editează factura"
+      className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors disabled:opacity-40">
+      <Edit3 size={16} />
+    </button>
+  );
 
   const filteredCompanies = companies.filter(c => 
     c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -310,6 +298,19 @@ export function BillingClients() {
 
     return (
       <div className="p-8 max-w-7xl mx-auto space-y-8">
+        {invoiceNotice && <p role="status" className="rounded-xl bg-indigo-50 p-4 text-sm text-indigo-800">{invoiceNotice}</p>}
+        {editingInvoiceId !== null && <InvoiceEditorModal
+          key={editingInvoiceId}
+          invoiceId={editingInvoiceId}
+          onClose={() => setEditingInvoiceId(null)}
+          onSaved={(saved, message) => {
+            setProfileData((previous: any) => ({ ...previous, invoices: previous.invoices.map((inv: any) => inv.id === saved.id ? saved : inv) }));
+            setEditingInvoiceId(null);
+            setInvoiceNotice(message);
+            void loadCompanyProfile(selectedCompanyId);
+            void fetchCompanies();
+          }}
+        />}
         {/* Header Profil Companie */}
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
@@ -511,6 +512,7 @@ export function BillingClients() {
                               <td className="py-3.5 px-4 font-bold text-rose-600">£{due.toFixed(2)}</td>
                               <td className="py-3.5 px-4 text-right">
                                 <InvoiceDocumentActions invoiceId={inv.id} status={inv.status} size="compact" preparePdf={() => prepareInvoicePdf(inv)} />
+                            {invoiceEditAction(inv)}
                                 <button
                                   onClick={() => handleOpenPaymentModal(inv)}
                                   className="ml-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-3.5 py-1.5 rounded-lg font-semibold text-xs transition-colors"
@@ -565,6 +567,7 @@ export function BillingClients() {
                           <td className="py-3.5 px-4 text-right">
                             {inv.status !== 'cancelled' && inv.status !== 'credited' && <button onClick={() => { window.location.hash = `/facturare/credit-notes?invoice=${inv.id}`; }} className="p-1.5 text-amber-700 hover:bg-amber-50 rounded transition-colors" title="Creează Credit Note"><FileMinus2 size={16} /></button>}
                             <InvoiceDocumentActions invoiceId={inv.id} status={inv.status} size="compact" preparePdf={() => prepareInvoicePdf(inv)} />
+                            {invoiceEditAction(inv)}
                           </td>
                         </tr>
                       );

@@ -1,5 +1,14 @@
 ### În lucru
 
+### VR - Hub Management v0.1.97
+
+- Corectarea manuală a cantităților și prețurilor funcționează și pentru facturile importate; totalurile și statusul plății se recalculează, păstrând încasările, identitatea emitentului și legăturile cu importul original. Modificările sunt auditate.
+- Același editor este disponibil prin iconul de editare din Facturi Emise și din profilul clientului, în filele Facturi Restante și Toate Facturile. Editarea rămâne disponibilă numai pe Writer, fără a permite modificarea facturilor anulate sau cu credite asociate.
+- Salvarea locală este confirmată separat de actualizarea PDF-ului și de încărcarea Google Drive; erorile sau întârzierile cloud nu mai sunt prezentate ca eșec al salvării facturii.
+- PDF-ul folosit la regenerare, trimitere și printare este construit din factura salvată, inclusiv după corectarea manuală a unei comenzi importate.
+- Trimiterea facturilor folosește o componentă Windows nativă cu DataTransferManager și PDF atașat, în locul comenzii Explorer. Printarea folosește dialogul Windows și randarea PDF nativă, fără previzualizarea PDF incompatibilă din Electron.
+- Componenta Windows x64 include propriul runtime .NET și este verificată înainte de împachetare. Necesită Windows 10 build 19041 sau mai nou / Windows 11; WhatsApp Desktop trebuie să fie disponibil ca destinație Windows Share.
+
 ### VR - Hub Management v0.1.96
 
 - Facturile active pot fi trimise rapid prin Windows Share cu PDF-ul deja atașat; operatorul alege WhatsApp și apoi contactul, fără Explorer, WhatsApp Web sau alerte blocante.

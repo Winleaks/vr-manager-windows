@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { 
-  Receipt, Search, Edit3, Trash2, X, Plus, Save, FilePlus2,
+  Receipt, Search, Edit3, Trash2, FilePlus2,
   CheckCircle2, Clock, AlertCircle, Building2, Store, FileText, Loader2, RefreshCw, FileMinus2
 } from 'lucide-react';
 import { api } from '../shared/api';
@@ -8,8 +8,8 @@ import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
 import { format } from 'date-fns';
 import { ro } from 'date-fns/locale';
-import { generateInvoicePDF } from '../utils/pdfGenerator';
-import { NumericInput } from '../components/NumericInput';
+import { prepareInvoiceDocument } from '../utils/prepareInvoiceDocument';
+import { InvoiceEditorModal } from '../components/InvoiceEditorModal';
 import { TextConfirmationModal } from '../components/TextConfirmationModal';
 import { InvoiceDocumentActions } from '../components/InvoiceDocumentActions';
 
@@ -74,23 +74,10 @@ export function BillingInvoices() {
   const [startDate, setStartDate] = useState<Date>(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
   const [endDate, setEndDate] = useState<Date>(new Date());
 
+  const [invoiceNotice, setInvoiceNotice] = useState('');
+
   // Modal editare
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
-  const [editForm, setEditForm] = useState<{
-    invoice_number: string;
-    invoice_date: string;
-    paid_amount: number;
-    status: string;
-    items: InvoiceItem[];
-  }>({
-    invoice_number: '',
-    invoice_date: '',
-    paid_amount: 0,
-    status: 'unpaid',
-    items: []
-  });
-
-  const [isSaving, setIsSaving] = useState(false);
   const [generatingPdfId, setGeneratingPdfId] = useState<number | null>(null);
 
   const loadInvoices = useCallback(async () => {
@@ -168,115 +155,9 @@ export function BillingInvoices() {
     } catch (e: any) { alert('Eroare la reemitere: ' + e.message); }
   };
 
-  const handleOpenEdit = (inv: Invoice) => {
-    setEditingInvoice(inv);
-    setEditForm({
-      invoice_number: inv.invoice_number,
-      invoice_date: inv.invoice_date,
-      paid_amount: inv.paid_amount || 0,
-      status: inv.status || 'unpaid',
-      items: inv.items ? JSON.parse(JSON.stringify(inv.items)) : []
-    });
-  };
-
-  const handleItemChange = (index: number, field: keyof InvoiceItem, value: any) => {
-    const newItems = [...editForm.items];
-    const item = { ...newItems[index] };
-    
-    if (field === 'quantity') {
-      item.quantity = parseFloat(value) || 0;
-      item.totalPrice = item.quantity * item.unitPrice;
-    } else if (field === 'unitPrice') {
-      item.unitPrice = parseFloat(value) || 0;
-      item.totalPrice = item.quantity * item.unitPrice;
-    } else if (field === 'productName') {
-      item.productName = value;
-    }
-    
-    newItems[index] = item;
-    setEditForm(prev => ({ ...prev, items: newItems }));
-  };
-
-  const handleAddItem = () => {
-    setEditForm(prev => ({
-      ...prev,
-      items: [
-        ...prev.items,
-        { productName: 'Produs nou', quantity: 1, unitPrice: 0, totalPrice: 0 }
-      ]
-    }));
-  };
-
-  const handleRemoveItem = (index: number) => {
-    setEditForm(prev => ({
-      ...prev,
-      items: prev.items.filter((_, i) => i !== index)
-    }));
-  };
-
-  const calculatedTotalAmount = editForm.items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
-
-  const handleSaveEdit = async () => {
-    if (!editingInvoice) return;
-    setIsSaving(true);
-    try {
-      const saved = await api.billing.updateInvoice({
-        id: editingInvoice.id,
-        invoiceDate: editForm.invoice_date,
-        items: editForm.items
-      });
-
-      // Re-generăm și suprascriem PDF-ul cu datele actualizate
-      const updatedInv = {
-        ...editingInvoice,
-        invoice_date: editForm.invoice_date,
-        total_amount: saved.totalAmount,
-        paid_amount: saved.paidAmount,
-        status: saved.status,
-        items: editForm.items
-      };
-      await handlePrintPdf(updatedInv, true);
-
-      alert('Factura a fost modificată și fișierul PDF a fost actualizat pe disk & Google Drive!');
-      setEditingInvoice(null);
-      await loadInvoices();
-    } catch (e: any) {
-      alert('Eroare la salvarea modificărilor: ' + e.message);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   const prepareInvoicePdf = async (inv: Invoice, uploadCloud = false) => {
-    const sharedSettings = await api.billing.getSettings();
-    const settings = { ...(inv.issuer_settings || {}), invoiceLogo: sharedSettings.invoiceLogo };
-    if (!inv.issuer_settings) throw new Error('Snapshotul emitentului facturii lipsește.');
-    const pdfData = {
-        invoiceNumber: inv.invoice_number,
-        invoiceDate: inv.invoice_date,
-        client: {
-          name: inv.company_name || inv.client_name || inv.store_name || 'Client',
-          cui: inv.company_cui,
-          regCom: inv.company_reg_com,
-          address: inv.company_address || inv.store_address,
-          county: '',
-          city: ''
-        },
-        store: {
-          name: inv.store_name || '',
-          address: inv.store_address || '',
-          postcode: inv.store_postcode || '',
-        },
-        items: inv.items || [],
-        totalAmount: inv.total_amount
-    };
-    const buffer = generateInvoicePDF(settings, pdfData);
-    const localSave = await api.system.savePdfAuto({ buffer, invoiceId: inv.id });
-    if (!localSave.success) throw new Error(localSave.error || 'PDF-ul nu a putut fi salvat local.');
-    if (uploadCloud) {
-      const cloudSave = await api.system.uploadPdfToCloud(inv.id, buffer);
-      if (!cloudSave.success) throw new Error(`PDF-ul a fost salvat local, dar nu a fost confirmat în Google Drive: ${cloudSave.error || 'Eroare necunoscută'}`);
-    }
+    const result = await prepareInvoiceDocument(inv.id, uploadCloud);
+    if (uploadCloud && !result) throw new Error('PDF-ul este salvat local, dar Google Drive nu a confirmat încărcarea.');
   };
 
   const handlePrintPdf = async (inv: Invoice, isQuiet = false) => {
@@ -309,6 +190,7 @@ export function BillingInvoices() {
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
+      {invoiceNotice && <p role="status" className="mb-4 rounded-xl bg-indigo-50 p-4 text-sm text-indigo-800">{invoiceNotice}</p>}
       {/* Header */}
       <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -481,10 +363,11 @@ export function BillingInvoices() {
 
                           {/* Editează */}
                           {!isCancelled && Number(inv.creditedAmount || 0) <= 0.005 && Number(inv.appliedCredit || 0) <= 0.005 && <button
-                            onClick={() => handleOpenEdit(inv)}
+                            onClick={() => setEditingInvoice(inv)}
                             disabled={!isWriter}
                             className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                            title={inv.is_imported ? 'Modifică data emiterii' : 'Editează detaliile facturii'}
+                            title={isWriter ? 'Editează factura' : 'Editare disponibilă numai pe Writer'}
+                            aria-label="Editează factura"
                           >
                             <Edit3 size={16} />
                           </button>}
@@ -510,161 +393,18 @@ export function BillingInvoices() {
         )}
       </div>
 
-      {/* Modal Editare Factură */}
-      {editingInvoice && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] overflow-y-auto flex flex-col">
-            {/* Header Modal */}
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50 rounded-t-2xl">
-              <div>
-                <h3 className="text-xl font-bold text-slate-900">Modificare Factură #{editingInvoice.invoice_number}</h3>
-                <p className="text-sm text-slate-500 mt-0.5">{editingInvoice.store_name} - {editingInvoice.company_name}</p>
-              </div>
-              <button
-                onClick={() => setEditingInvoice(null)}
-                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-lg transition-colors"
-              >
-                <X size={20} />
-              </button>
-            </div>
+      {editingInvoice && <InvoiceEditorModal
+        key={editingInvoice.id}
+        invoiceId={editingInvoice.id}
+        onClose={() => setEditingInvoice(null)}
+        onSaved={(saved, message) => {
+          setInvoices((previous) => previous.map((invoice) => invoice.id === saved.id ? saved : invoice));
+          setEditingInvoice(null);
+          setInvoiceNotice(message);
+          void loadInvoices();
+        }}
+      />}
 
-            {/* Corp Modal */}
-            <div className="p-6 space-y-6 flex-1 overflow-y-auto">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1.5">Număr Factură</label>
-                  <input
-                    type="text"
-                    value={editForm.invoice_number}
-                    readOnly
-                    className="w-full px-4 py-2.5 bg-slate-100 border border-slate-200 rounded-xl font-bold text-slate-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1.5">Data Emiterii</label>
-                  <input
-                    type="date"
-                    value={editForm.invoice_date}
-                    onChange={(e) => setEditForm({ ...editForm, invoice_date: e.target.value })}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  />
-                </div>
-
-                <div className="sm:col-span-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-                  <div className="text-xs font-semibold uppercase text-emerald-700">Situație plată protejată</div>
-                  <div className="mt-1 text-sm text-emerald-900">
-                    {editForm.status === 'paid' ? 'Achitat integral' : editForm.status === 'partial' ? 'Achitat parțial' : 'Neachitat'}
-                    {' · '}£{editForm.paid_amount.toFixed(2)} înregistrat prin istoricul de încasări
-                  </div>
-                  <p className="mt-1 text-xs text-emerald-700">Suma și statusul se modifică numai prin înregistrarea unei plăți.</p>
-                </div>
-              </div>
-
-              {/* Articole din Factură */}
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="font-semibold text-slate-800">Produse / Pozitii Factură</h4>
-                  {!editingInvoice.is_imported && <button
-                    type="button"
-                    onClick={handleAddItem}
-                    className="flex items-center gap-1.5 text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
-                  >
-                    <Plus size={14} /> Adaugă Produs
-                  </button>}
-                </div>
-
-                {editingInvoice.is_imported && <p className="mb-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">Factura provine din VR Baker Platform. Poți corecta data emiterii; produsele, cantitățile și prețurile rămân legate de comenzile sursă.</p>}
-
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 font-semibold text-slate-600">
-                        <th className="py-2.5 px-3">Denumire Produs</th>
-                        <th className="py-2.5 px-3 w-24">Cantitate</th>
-                        <th className="py-2.5 px-3 w-28">Preț unitar</th>
-                        <th className="py-2.5 px-3 w-28">Total</th>
-                        <th className="py-2.5 px-2 w-10 text-center"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {editForm.items.map((item, idx) => (
-                        <tr key={idx}>
-                          <td className="p-2">
-                            <input
-                              type="text"
-                              value={item.productName}
-                              readOnly={Boolean(editingInvoice.is_imported)}
-                              onChange={(e) => handleItemChange(idx, 'productName', e.target.value)}
-                              className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded text-slate-800"
-                            />
-                          </td>
-                          <td className="p-2">
-                            <NumericInput
-                              decimalScale={2}
-                              value={item.quantity}
-                              disabled={Boolean(editingInvoice.is_imported)}
-                              onValueChange={(value) => handleItemChange(idx, 'quantity', value)}
-                              className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded text-slate-800 font-mono"
-                            />
-                          </td>
-                          <td className="p-2">
-                            <NumericInput
-                              decimalScale={2}
-                              value={item.unitPrice}
-                              disabled={Boolean(editingInvoice.is_imported)}
-                              onValueChange={(value) => handleItemChange(idx, 'unitPrice', value)}
-                              className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded text-slate-800 font-mono"
-                            />
-                          </td>
-                          <td className="p-2 font-bold text-slate-900 font-mono">
-                            £{item.totalPrice.toFixed(2)}
-                          </td>
-                          <td className="p-2 text-center">
-                            {!editingInvoice.is_imported && <button
-                              type="button"
-                              onClick={() => handleRemoveItem(idx)}
-                              className="text-slate-400 hover:text-rose-600 p-1"
-                            >
-                              <Trash2 size={14} />
-                            </button>}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="mt-4 p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 flex justify-between items-center">
-                  <span className="font-semibold text-slate-700">Total Calculat Factură:</span>
-                  <span className="text-xl font-bold text-indigo-700 font-mono">£{calculatedTotalAmount.toFixed(2)}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Footer Modal */}
-            <div className="p-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setEditingInvoice(null)}
-                className="px-5 py-2.5 border border-slate-200 rounded-xl font-medium text-slate-600 hover:bg-slate-100 transition-colors"
-              >
-                Anulează
-              </button>
-
-              <button
-                type="button"
-                onClick={handleSaveEdit}
-                disabled={isSaving}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white px-6 py-2.5 rounded-xl font-medium transition-colors shadow-sm"
-              >
-                {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-                {isSaving ? 'Se salvează...' : 'Salvează Modificările'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       {pendingInvoiceAction && <TextConfirmationModal
         title={testMode ? `Șterge definitiv factura #${pendingInvoiceAction.invoice_number}` : `Anulează factura #${pendingInvoiceAction.invoice_number}`}
         description={testMode ? 'Se va crea o copie de siguranță, apoi vor fi șterse tranzacțional factura și toate dependențele ei: încasări, Credit Notes, aplicări de credit și legături de reemitere. Operația poate fi recuperată numai din backup.' : 'Factura și numărul rămân în registru. Facturile cu plăți sau Credit Notes nu pot fi anulate direct.'}

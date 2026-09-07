@@ -1,7 +1,7 @@
 {
   "name": "vr-hub-management",
   "private": true,
-  "version": "0.1.96",
+  "version": "0.1.97",
   "description": "Platformă desktop integrată pentru management, producție, facturare și operațiuni VR",
   "author": "Razvan Cristofor",
   "main": "dist-electron/main.js",
@@ -13,6 +13,8 @@
     "pretest": "npm rebuild better-sqlite3",
     "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON electron/security/*.test.mts electron/database/*.test.mts electron/device/*.test.mts electron/integrations/*.test.mts electron/migration/*.test.mts electron/updater/*.test.mts",
     "typecheck": "tsc -b",
+    "build:windows-documents": "dotnet publish native/windows-documents/WindowsDocuments.csproj -c Release -r win-x64 --self-contained true -o native/windows-documents/publish",
+    "test:windows-documents": "node scripts/testWindowsDocuments.mjs",
     "preview": "vite preview",
     "release": "npm version patch && git push && git push --tags"
   },
@@ -74,8 +76,11 @@
       "output": "release"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "extraResources": [{ "from": "native/windows-documents/publish", "to": "windows-documents", "filter": ["**/*", "!**/*.pdb"] }]
     },
+    "beforePack": "scripts/verifyWindowsDocuments.cjs",
+    "files": ["**/*", "!native{,/**/*}"],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true

@@ -495,7 +495,7 @@ export function getInvoicesByDateRange(startDate?: string, endDate?: string, iss
 export function updateInvoiceWithItems(
   id: number,
   invoiceDate: string,
-  items: { productName: string, name_ro?: string, variant_label?: string, unit?: string, quantity: number, unitPrice: number, totalPrice: number }[]
+  items: { id?: number, productName: string, name_ro?: string, variant_label?: string, unit?: string, quantity: number, unitPrice: number, totalPrice: number }[]
 ) {
   const invoice = db.prepare('SELECT invoice_number FROM invoices WHERE id = ?').get(id) as { invoice_number: string } | undefined;
   if (!invoice) throw new Error('Factura nu există.');

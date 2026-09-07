@@ -135,6 +135,7 @@ export function registerBillingHandlers() {
   handleTrustedIpc('billing:recordCompanyPayment', (_, data) => billingRepo.recordCompanyPayment(data));
   handleTrustedIpc('billing:updatePayment', (_, data) => billingRepo.updatePayment(data));
   handleTrustedIpc('billing:getInvoices', (_, startDate, endDate, issuerId) => billingRepo.getInvoicesByDateRange(startDate, endDate, issuerId));
+  handleTrustedIpc('billing:getInvoice', (_, invoiceId) => billingRepo.getInvoiceById(invoiceId));
   handleTrustedIpc('billing:createManualInvoice', async (_, data) => {
     return withRegistryRoutingLock(async () => {
       await assertNormalStoreAllowed(data.storeId);
@@ -142,7 +143,10 @@ export function registerBillingHandlers() {
       return { ...created, invoice: billingRepo.getInvoiceById(created.invoiceId) };
     });
   });
-  handleTrustedIpc('billing:updateInvoice', (_, data) => billingRepo.updateInvoiceWithItems(data.id, data.invoiceDate, data.items || []));
+  handleTrustedIpc('billing:updateInvoice', (_, data) => {
+    const saved = billingRepo.updateInvoiceWithItems(data.id, data.invoiceDate, data.items || []);
+    return { ...saved, invoice: billingRepo.getInvoiceById(saved.invoiceId) };
+  });
   handleTrustedIpc('billing:cancelInvoice', (_, data) => billingRepo.cancelInvoice(data.invoiceId, data.reason));
   handleTrustedIpc('billing:getTestMode', () => billingRepo.getBillingTestMode());
   handleTrustedIpc('billing:setTestMode', (_, data) => billingRepo.setBillingTestMode(data.enabled, data.confirmation));

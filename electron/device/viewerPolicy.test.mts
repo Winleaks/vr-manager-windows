@@ -10,6 +10,7 @@ test('writer may invoke every registered channel', () => {
 test('viewer can read data and control its local role', () => {
   assert.equal(isChannelAllowedForRole('viewer', 'get-raw-materials'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:getInvoices'), true);
+  assert.equal(isChannelAllowedForRole('viewer', 'billing:getInvoice'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:getIssuers'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:getTestMode'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:getCreditNotes'), true);

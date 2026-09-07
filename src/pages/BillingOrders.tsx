@@ -5,7 +5,7 @@ import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
 import { format, startOfWeek, endOfWeek } from 'date-fns';
 import { ro } from 'date-fns/locale';
-import { generateInvoicePDF } from '../utils/pdfGenerator';
+import { prepareInvoiceDocument } from '../utils/prepareInvoiceDocument';
 import { InvoiceDocumentActions } from '../components/InvoiceDocumentActions';
 import { TextConfirmationModal } from '../components/TextConfirmationModal';
 import { assignEstimatedInvoiceReferences } from '../utils/invoicePreviewNumbering';
@@ -118,37 +118,9 @@ export function BillingOrders() {
   };
 
   const prepareOrderInvoicePdf = async (currentOrder: any, uploadCloud = false) => {
-      const sharedSettings = await api.billing.getSettings();
-      const settings = { ...currentOrder.issuerSettings, invoiceLogo: sharedSettings.invoiceLogo };
-      if (!currentOrder.issuerSettings) throw new Error('Snapshotul emitentului facturii lipsește.');
-      const pdfData = {
-        invoiceNumber: currentOrder.assignedInvoiceNumber,
-        invoiceDate: currentOrder.assignedInvoiceDate,
-        client: {
-          name: currentOrder.store.company?.name || currentOrder.store.name,
-          cui: currentOrder.store.company?.vatNumber,
-          regCom: currentOrder.store.company?.registrationNumber,
-          address: currentOrder.store.company?.address || currentOrder.store.address,
-          county: currentOrder.store.owner?.county,
-          city: currentOrder.store.owner?.city
-        },
-        store: {
-          name: currentOrder.store.name,
-          address: currentOrder.store.address,
-          postcode: currentOrder.store.postcode,
-        },
-        items: currentOrder.items,
-        totalAmount: currentOrder.items.reduce((acc: number, item: any) => acc + item.totalPrice, 0)
-      };
-
-      const buffer = generateInvoicePDF(settings, pdfData);
-      const invoiceId = Number(currentOrder.assignedInvoiceId);
-      if (!Number.isInteger(invoiceId) || invoiceId <= 0) throw new Error('Identificatorul facturii lipsește.');
-      const localSave = await api.system.savePdfAuto({ buffer, invoiceId });
-      if (!localSave.success) throw new Error(localSave.error || 'PDF-ul nu a putut fi salvat local.');
-      if (!uploadCloud) return true;
-      const cloudSave = await api.system.uploadPdfToCloud(invoiceId, buffer);
-      return cloudSave.success;
+    const invoiceId = Number(currentOrder.assignedInvoiceId);
+    if (!Number.isSafeInteger(invoiceId) || invoiceId <= 0) throw new Error('Identificatorul facturii lipsește.');
+    return prepareInvoiceDocument(invoiceId, uploadCloud);
   };
 
   const generatePdfForOrder = async (order: any, isRegenerate = false) => {
