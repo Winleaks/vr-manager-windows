@@ -3,6 +3,13 @@ import type { VrBakerCompany, VrBakerStore } from '../integrations/vrBakerApiCli
 
 export const externalEntityId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export class EntityAssociationConflict extends Error {
+  constructor(storeName: string) {
+    super(`Magazinul „${storeName}” are facturi locale și o altă asociere în platformă. Istoricul nu a fost mutat; verifică asocierea înainte de sincronizare.`);
+    this.name = 'EntityAssociationConflict';
+  }
+}
+
 export function installEntitySyncState(db: Database.Database) {
   for (const table of ['companies', 'stores']) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN vrbaker_missing INTEGER NOT NULL DEFAULT 0 CHECK(vrbaker_missing IN (0,1))`);
@@ -29,7 +36,7 @@ export function assertEntitySyncSafe(db: Database.Database, companies: VrBakerCo
     const local = db.prepare(`SELECT c.supabase_company_id AS company_external_id FROM stores s JOIN companies c ON c.id=s.company_id
       WHERE s.supabase_store_id=? COLLATE NOCASE AND EXISTS(SELECT 1 FROM invoices i WHERE i.store_id=s.id)`).get(store.id) as {company_external_id:string|null}|undefined;
     if (local && (local.company_external_id || '').toLowerCase() !== (store.company?.id || 'vrbaker-unassigned-company').toLowerCase()) {
-      throw new Error(`Magazinul „${store.name}” are facturi locale și o altă asociere în platformă. Istoricul nu a fost mutat; verifică asocierea înainte de sincronizare.`);
+      throw new EntityAssociationConflict(store.name);
     }
   }
 }

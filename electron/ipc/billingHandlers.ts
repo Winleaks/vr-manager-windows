@@ -29,6 +29,8 @@ import {
 } from '../protectedRegistry/service';
 import { assignEstimatedInvoiceReferences } from '../../src/utils/invoicePreviewNumbering';
 import { priceInvoiceCatalog } from '../integrations/invoiceCatalogPricing';
+import { synchronizeWeeklySnapshot } from '../integrations/weeklyEntitySync';
+import { getDeviceRole } from '../device/deviceRole';
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : 'Operațiunea a eșuat.';
@@ -38,14 +40,20 @@ function setting(key: string, value: unknown) {
   billingRepo.setAppSetting(key, value === undefined || value === null ? '' : String(value));
 }
 
-async function prepareWeeklyPreview(startDate: string, endDate: string) {
+async function prepareWeeklyPreview(startDate: string, endDate: string, allowRepair = false) {
   validateWeeklyPeriod(startDate, endDate);
+  const connection = db;
   const client = createVrBakerClient();
-  const snapshot = await client.fetchWeeklyBillingSnapshot(startDate, endDate);
+  const snapshot = await synchronizeWeeklySnapshot({
+    fetchSnapshot: () => client.fetchWeeklyBillingSnapshot(startDate,endDate),
+    synchronize: (companies,stores) => billingRepo.syncEntitiesFromVrBaker(companies,stores),
+    assertCurrent: () => {
+      if (connection !== db || getDeviceRole() !== 'writer') throw new Error('Baza de date sau rolul s-a schimbat. Reia sincronizarea comenzilor.');
+    },
+    repair: () => syncVrBakerEntities(),
+    allowRepair,
+  });
   const { orders, zones } = snapshot;
-  const stores = [...new Map(orders.map((order) => [order.store.id, order.store])).values()];
-  const companies = [...new Map(stores.flatMap((store) => store.company ? [[store.company.id, store.company] as const] : [])).values()];
-  billingRepo.syncEntitiesFromVrBaker(companies, stores);
   const visibleGroups = await filterNormalWeeklyGroups(aggregateWeeklyOrders(orders));
   const ordersByStore = assignEstimatedInvoiceReferences(visibleGroups.map((group) => ({
     ...group,
@@ -328,7 +336,7 @@ export function registerBillingHandlers() {
 
   handleTrustedIpc('billing:previewWeeklyInvoices', async (_, startDate: string, endDate: string) => {
     try {
-      const { ordersByStore, zones } = await prepareWeeklyPreview(startDate, endDate);
+      const { ordersByStore, zones } = await prepareWeeklyPreview(startDate, endDate, true);
       return { success: true, message: `Au fost găsite ${ordersByStore.length} magazine cu comenzi open/locked.`, ordersByStore, zones };
     } catch (error) {
       return { success: false, message: message(error), ordersByStore: [], zones: [] };

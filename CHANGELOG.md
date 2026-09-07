@@ -1,5 +1,7 @@
 ### În lucru
 
+- Butonul „Sincronizează Comenzi” oferă repararea confirmată și cu backup a asocierilor istorice, apoi reîncarcă aceeași săptămână. Nu mai necesită mutarea în pagina „Clienți & Entități” pentru acest pas; emiterea facturilor rămâne separată și protejată împotriva duplicatelor.
+
 ### VR - Hub Management v0.1.101
 
 - Repară eroarea „db is not defined” la asocierea PDF-urilor existente și încărcarea facturilor în Drive.
