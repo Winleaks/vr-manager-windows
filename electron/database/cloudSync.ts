@@ -28,7 +28,6 @@ import {
 import {
   assertUploadedFileMatches,
   CLOUD_DATABASE_FOLDER_NAME,
-  CLOUD_INVOICES_FOLDER_NAME,
   CLOUD_ROOT_FOLDER_NAME,
   evaluateCloudSyncHealth,
   type CloudSyncHealth,

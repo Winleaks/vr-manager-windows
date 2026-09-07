@@ -257,6 +257,29 @@ const actions: Record<string, ActionDefinition> = {
     },
   },
 
+  "products.invoice_prices": {
+    methods: new Set(["POST"]),
+    scope: "orders:read",
+    mutates: false,
+    handler: async (payload) => {
+      const storeId = requireUuid(payload.store_id, "store_id");
+      const { data: store, error: storeError } = await supabaseAdmin
+        .from("client_store").select("owner_id").eq("id", storeId).maybeSingle();
+      ensureDatabaseSuccess(storeError);
+      if (!store?.owner_id) throw new ExternalApiRequestError(404, "store_not_found", "Store pricing identity not found");
+      // Reuse the platform's authoritative rules: product override/discount,
+      // category discount, general discount, then standard price. Read-only RPC.
+      const { data, error } = await supabaseAdmin.rpc("get_effective_prices_batch", {
+        _owner_ids: [store.owner_id],
+      }).limit(1001);
+      ensureDatabaseSuccess(error);
+      if (!data || data.length >= 1000) throw new ExternalApiRequestError(409, "pricing_limit", "Pricing catalogue exceeds the export limit");
+      return { store_id: storeId, prices: data.map((row: { product_id: string; effective_price: number }) => ({
+        product_id: row.product_id, unit_price: row.effective_price,
+      })) };
+    },
+  },
+
   "companies.list": {
     methods: new Set(["GET", "POST"]),
     scope: "companies:read",

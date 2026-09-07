@@ -4,7 +4,7 @@ The desktop SQLite database is the financial source of truth. The platform store
 
 ## Deploy in this order
 
-1. Back up the Writer database. Release the desktop build only after the Windows upgrade/offline/restore smoke test. Migration 7 installs transactional queue triggers and a stable source identity. Existing records are queued automatically. Viewers never contact the billing API or publish documents.
+1. Back up the Writer database. Release the desktop build only after the Windows upgrade/offline/restore smoke test. Migration 17 installs transactional queue triggers and a stable source identity. Existing records are queued automatically. Viewers never contact the billing API or publish documents.
 2. Apply `supabase/migrations/20260907090700_billing_publication.sql` to the correct VR Baker Supabase project. Both `sync_enabled` and `client_enabled` default to false. The migration is additive and contains no customer data changes.
 3. Deploy `external-api` and `billing-download`. The API copies in the Hub and platform now include the same existing company/store/weekly export contract plus `billing.status`, `billing.stage`, and `billing.commit`. Keep `companies:read` and add `billing:write` to the dedicated Writer credential's existing scopes in `EXTERNAL_API_CREDENTIALS`. Do not grant this scope to browsers or Viewers. Do not rotate unrelated credentials.
 4. In the intended Google Cloud project, enable Drive API and create a dedicated service account (no project-level Editor/Owner roles). Reuse the existing desktop Google project and share only the existing `VR - Management / Facturi` folder with its email as Viewer. Do not share the parent folder or `Baza de date`. Confirm existing PDFs are children of the selected folder and inherit the read permission.
@@ -20,7 +20,7 @@ The desktop SQLite database is the financial source of truth. The platform store
 - Requests use deterministic idempotency keys and monotonically increasing company revisions. Keep the committed parts for the current revision to reject conflicting same-revision payloads after an old desktop backup is restored. Incomplete abandoned older parts are cleaned after seven days on a later commit. Automatic deletion of Drive PDFs is not part of publication.
 - Only a configured Writer source can publish. A source/association conflict or restored database older than the server's version requires operator reconciliation; never reset server revision guards just to clear the queue. Restore the latest verified Writer database or deliberately migrate the source after comparing both ledgers.
 - Network/credential/permission errors retain the queue. Automatic attempts occur on startup and every five minutes. The settings action retries immediately. Client queries refresh on focus and every minute; last successful data remain visible while Hub is closed. Missing account data use an unavailable state, not a fabricated zero balance.
-- Rollback: set `client_enabled=false` and `sync_enabled=false`. Keep the additive schema, SQLite data and Drive files. This hides the page and denies client reads/downloads while stopping further publication. Do not downgrade the database by deleting migration 7 tables.
+- Rollback: set `client_enabled=false` and `sync_enabled=false`. Keep the additive schema, SQLite data and Drive files. This hides the page and denies client reads/downloads while stopping further publication. Do not downgrade the database by deleting migration 17 tables.
 
 ## Verification
 
@@ -33,7 +33,7 @@ Current state: the service account, backend Drive secrets and additive financial
 
 ### Recorded local results
 
-- 58 Hub tests passed; renderer, main and preload builds passed. The generated PDF module was also executed in Node and produced a valid PDF from synthetic invoice rows.
+- 165 Hub tests passed; renderer, main and preload builds passed. The generated PDF module was also executed in Node and produced a valid PDF from synthetic invoice rows.
 - 4 new frontend tests and 8 download-handler tests passed. The isolated PostgreSQL assertions passed, including same-revision restore conflicts and mismatched store ownership.
 - Desktop/mobile browser fixture: no JavaScript errors or viewport overflow; filtering and download-error retry state verified. Mobile uses invoice cards.
 - Hub's full TypeScript diagnostics match the unchanged HEAD baseline (apart from line offsets). Platform's broad checks retain an existing `appUpdate.test.ts` signature/assertion failure. Eight other suites initially needed test Supabase variables; all passed on focused reruns with synthetic configuration.
@@ -52,3 +52,11 @@ The user explicitly approved production deployment of `external-api` and `billin
 Six live smoke checks passed: billing-download rejects missing authentication and invalid bearer tokens with 401, rejects GET with 405, and emits private no-store headers; external-api rejects unauthenticated health, billing.status and billing.stage requests with 401. These checks do not establish successful publication from the Writer or an authenticated client invoice download, which require initial import and reconciliation. The direct service-account PDF check already passed independently of the desktop application.
 
 Rollback: restore the saved version 11 external-api artifact if existing integration behavior regresses; keep the additive schema and Drive documents, with both flags false. The new download function always authenticates and checks RLS before contacting Drive. Release hashes, prior API source and verification receipts remain outside the repository. Remaining launch prerequisites: install the compatible Writer build after Windows checks, add billing:write to its integration credential, configure its stable source identity, backfill metadata and Drive references, reconcile all balances, then verify authenticated client downloads and enable the page.
+
+### Current Writer compatibility and complete history
+
+The feature branch now incorporates the published Hub v0.1.97 code. SQLite migration 17 preserves migrations 7–16 and queues every existing company. Initial snapshots select all invoices without a date filter, including invoices issued before installation. A migration test starts with invoices dated yesterday and in the previous year and verifies both appear in the first payload. Nothing has yet been imported from the operational Writer.
+
+Balances use the current Hub credit calculations: gross invoice total, cash paid, issued Credit Notes and applied company credit remain separate. Available credit aggregates the issuer balances. Cancelled invoices remain in history with zero outstanding and an English Cancelled status. PostgreSQL migration 20260907120000 supports those settlements; its synthetic credit/authorization tests passed. The backend schema and protocol response are deployed while both flags remain disabled. The current API's products.invoice_prices action is preserved.
+
+Local verification: 165 desktop tests, TypeScript, both builds, PostgreSQL authorization/settlement checks, and frontend billing tests pass. Windows verification workflow produces a temporary test installer only; it has not run because automatic approval review rejected pushing the feature branch to GitHub without explicit approval for that source transmission. The repository was then verified as the existing public Winleaks/vr-manager-windows repository. No push or release was performed.
