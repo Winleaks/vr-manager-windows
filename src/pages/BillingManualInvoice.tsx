@@ -1,3 +1,4 @@
+import { confirmAction, notify } from '../utils/feedback';
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Building2, CheckCircle2, FilePlus2, Loader2, Package, Plus, Store, Trash2 } from 'lucide-react';
 import { api } from '../shared/api';
@@ -44,7 +45,7 @@ export function BillingManualInvoice() {
       if (activeCompanies[0]) setCompanyId(String(activeCompanies[0].id));
     }).catch((error) => {
       console.error(error);
-      window.alert(error instanceof Error ? error.message : 'Datele pentru factura manuală nu au putut fi încărcate.');
+      notify(error instanceof Error ? error.message : 'Datele pentru factura manuală nu au putut fi încărcate.');
     }).finally(() => setLoading(false));
   }, []);
 
@@ -90,16 +91,16 @@ export function BillingManualInvoice() {
   };
 
   const issueInvoice = async () => {
-    if (!isWriter) return window.alert('Factura manuală poate fi emisă numai de pe calculatorul Writer.');
-    if (!company || !selectedStore) return window.alert('Selectează compania și magazinul facturat.');
-    if (!issuer) return window.alert('Compania selectată nu are o societate emitentă atribuită.');
-    if (!invoiceDate) return window.alert('Selectează data facturii.');
-    if (resolvedLines.length === 0) return window.alert('Adaugă cel puțin un produs pe factură.');
+    if (!isWriter) return notify('Factura manuală poate fi emisă numai de pe calculatorul Writer.');
+    if (!company || !selectedStore) return notify('Selectează compania și magazinul facturat.');
+    if (!issuer) return notify('Compania selectată nu are o societate emitentă atribuită.');
+    if (!invoiceDate) return notify('Selectează data facturii.');
+    if (resolvedLines.length === 0) return notify('Adaugă cel puțin un produs pe factură.');
     if (resolvedLines.some((line) => !line.product || line.quantity <= 0 || line.unitPrice < 0 || !Number.isFinite(line.totalPrice))) {
-      return window.alert('Verifică produsele, cantitățile și prețurile introduse.');
+      return notify('Verifică produsele, cantitățile și prețurile introduse.');
     }
     const estimatedReference = issuer.invoice_series ? `${issuer.invoice_series}-${issuer.next_invoice_number}` : 'numărul următor';
-    if (!window.confirm(`Emiți factura ${estimatedReference} pentru ${company.name}, în valoare de £${total.toFixed(2)}?`)) return;
+    if (!(await confirmAction(`Emiți factura ${estimatedReference} pentru ${company.name}, în valoare de £${total.toFixed(2)}?`))) return;
 
     setIssuing(true);
     let created: any;
@@ -115,7 +116,7 @@ export function BillingManualInvoice() {
       });
     } catch (error) {
       setIssuing(false);
-      return window.alert(`Factura nu a fost emisă: ${error instanceof Error ? error.message : 'eroare necunoscută'}`);
+      return notify(`Factura nu a fost emisă: ${error instanceof Error ? error.message : 'eroare necunoscută'}`);
     }
 
     try {
@@ -146,11 +147,11 @@ export function BillingManualInvoice() {
       const localSave = await api.system.savePdfAuto({ buffer, invoiceId: created.invoiceId });
       if (!localSave.success) throw new Error(localSave.error || 'PDF-ul nu a putut fi salvat local.');
       const cloudSave = await api.system.uploadPdfToCloud(created.invoiceId);
-      window.alert(cloudSave.success
+      notify(cloudSave.success
         ? `Factura #${created.invoiceNumber} a fost emisă, salvată local și verificată în Google Drive.`
         : `Factura #${created.invoiceNumber} a fost emisă și salvată local, dar nu a fost confirmată în Google Drive: ${cloudSave.error || 'Eroare necunoscută'}`);
     } catch (error) {
-      window.alert(`Factura #${created.invoiceNumber} a fost emisă, dar PDF-ul nu a putut fi pregătit acum. Îl poți regenera din pagina Facturi. ${error instanceof Error ? error.message : ''}`);
+      notify(`Factura #${created.invoiceNumber} a fost emisă, dar PDF-ul nu a putut fi pregătit acum. Îl poți regenera din pagina Facturi. ${error instanceof Error ? error.message : ''}`);
     } finally {
       setIssuing(false);
       window.location.hash = '/facturare/facturi';

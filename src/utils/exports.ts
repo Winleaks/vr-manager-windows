@@ -1,3 +1,4 @@
+import { notify } from './feedback';
 import ExcelJS from 'exceljs';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -20,7 +21,7 @@ export async function exportToExcel(data: any[], filename: string, sheetName: st
   });
   
   if (res.success) {
-    alert(`Fișier salvat cu succes la:\n${res.filePath}`);
+    notify(`Fișier salvat cu succes la:\n${res.filePath}`);
   }
 }
 
@@ -57,6 +58,6 @@ export async function exportToPDF(
   });
   
   if (res.success) {
-    alert(`Fișier salvat cu succes la:\n${res.filePath}`);
+    notify(`Fișier salvat cu succes la:\n${res.filePath}`);
   }
 }

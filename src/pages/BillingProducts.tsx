@@ -1,3 +1,4 @@
+import { notify } from '../utils/feedback';
 import { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { Package, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
@@ -15,7 +16,7 @@ export function BillingProducts() {
       setProducts(data || []);
     } catch (e) {
       console.error(e);
-      window.alert(e instanceof Error ? e.message : 'Catalogul local nu a putut fi încărcat.');
+      notify(e instanceof Error ? e.message : 'Catalogul local nu a putut fi încărcat.');
     } finally {
       setLoading(false);
     }
@@ -29,7 +30,7 @@ export function BillingProducts() {
       await fetchProducts();
     } catch (e) {
       console.error(e);
-      window.alert(e instanceof Error ? e.message : 'Produsele nu au putut fi sincronizate.');
+      notify(e instanceof Error ? e.message : 'Produsele nu au putut fi sincronizate.');
     } finally {
       setSyncing(false);
     }

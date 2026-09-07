@@ -1,3 +1,4 @@
+import { notify } from '../utils/feedback';
 import React, { useCallback, useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { Plus, BookOpen, X, Trash2, RefreshCw, CloudDownload } from 'lucide-react';
@@ -38,7 +39,7 @@ export default function FinishedProducts() {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Produsele nu au putut fi actualizate.';
       setSyncError(message);
-      if (showSuccess) window.alert(message);
+      if (showSuccess) notify(message);
     } finally {
       setSyncing(false);
     }
@@ -90,7 +91,7 @@ export default function FinishedProducts() {
       );
       setIsRecipeModalOpen(false);
     } catch (err) {
-      alert("Eroare la salvarea rețetei.");
+      notify("Eroare la salvarea rețetei.");
       console.error(err);
     }
   };
@@ -261,7 +262,7 @@ export default function FinishedProducts() {
                       <div className="w-32">
                         <NumericInput
                           decimalScale={3} required placeholder="Cantitate"
-                          value={item.quantity || ''}
+                          value={item.quantity ?? ''}
                           onValueChange={value => updateRecipeItem(index, 'quantity', value)}
                           className="w-full border border-slate-200 rounded-md p-2 outline-none focus:border-blue-500"
                         />

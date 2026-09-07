@@ -1,3 +1,4 @@
+import { confirmAction, notify } from '../utils/feedback';
 import React, { useEffect, useState } from 'react';
 import { useCashStore } from '../store/cashStore';
 import { DateRangePicker } from '../components/DateRangePicker';
@@ -64,7 +65,7 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
     const amount = Number(editAmount);
     const referenceId = Number(editDriverId);
     if (!Number.isFinite(amount) || amount <= 0 || !/^\d+(\.\d{1,2})?$/.test(editAmount.trim()) || !Number.isInteger(referenceId) || referenceId <= 0) {
-      window.alert('Verifică șoferul și suma introdusă. Suma poate avea maximum două zecimale.');
+      notify('Verifică șoferul și suma introdusă. Suma poate avea maximum două zecimale.');
       return;
     }
     try {
@@ -72,17 +73,17 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
       setEditingReceipt(null);
       await loadData();
     } catch (error: any) {
-      window.alert(error?.message || 'Încasarea nu a putut fi modificată.');
+      notify(error?.message || 'Încasarea nu a putut fi modificată.');
     }
   };
 
   const handleReceiptDelete = async (transaction: any) => {
-    if (!window.confirm(`Ștergi încasarea de £${Number(transaction.amount).toFixed(2)}?`)) return;
+    if (!(await confirmAction(`Ștergi încasarea de £${Number(transaction.amount).toFixed(2)}?`))) return;
     try {
       await api.dailyCash.deleteTransaction(transaction.id);
       await loadData();
     } catch (error: any) {
-      window.alert(error?.message || 'Încasarea nu a putut fi ștearsă.');
+      notify(error?.message || 'Încasarea nu a putut fi ștearsă.');
     }
   };
 

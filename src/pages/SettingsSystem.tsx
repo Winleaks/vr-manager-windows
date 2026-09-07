@@ -1,3 +1,4 @@
+import { confirmAction, notify } from '../utils/feedback';
 import { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { 
@@ -93,18 +94,18 @@ export function SettingsSystem() {
       const res = await api.system.connectGoogleDrive();
       if (res && res.success) {
         if (deviceRole === 'writer' && res.initialSync && !res.initialSync.success) {
-          alert(`Contul Google Drive a fost conectat, dar prima copie nu a fost confirmată:\n${res.initialSync.error || 'Eroare necunoscută'}`);
+          notify(`Contul Google Drive a fost conectat, dar prima copie nu a fost confirmată:\n${res.initialSync.error || 'Eroare necunoscută'}`);
         } else {
-          alert(deviceRole === 'writer'
+          notify(deviceRole === 'writer'
             ? 'Google Drive a fost conectat, iar prima copie a bazei a fost încărcată și verificată.'
             : 'Google Drive a fost conectat, iar verificarea copiei Viewer a fost pornită.');
         }
         await fetchCloudStatus();
       } else {
-        alert('Eroare la conectare: ' + (res?.message || 'Eroare necunoscută'));
+        notify('Eroare la conectare: ' + (res?.message || 'Eroare necunoscută'));
       }
     } catch (e: any) {
-      alert('Eroare: ' + e.message);
+      notify('Eroare: ' + e.message);
     }
   };
 
@@ -113,13 +114,13 @@ export function SettingsSystem() {
     try {
       const res = await api.system.saveToCloud();
       if (res && res.success) {
-        alert('Baza de date a fost încărcată și verificată în Google Drive cu succes.');
+        notify('Baza de date a fost încărcată și verificată în Google Drive cu succes.');
         await fetchCloudStatus();
       } else {
-        alert('Eroare la salvarea în cloud:\n' + (res?.error || 'Eroare necunoscută'));
+        notify('Eroare la salvarea în cloud:\n' + (res?.error || 'Eroare necunoscută'));
       }
     } catch (e: any) {
-      alert('Eroare: ' + e.message);
+      notify('Eroare: ' + e.message);
     } finally {
       setIsSyncingCloud(false);
     }
@@ -130,7 +131,7 @@ export function SettingsSystem() {
     const description = role === 'writer'
       ? 'Acest calculator va putea modifica datele și va publica baza în Google Drive.'
       : 'Acest calculator va deveni doar pentru vizualizare și va prelua automat baza din Google Drive.';
-    if (!window.confirm(`${description}\n\nContinui?`)) return;
+    if (!(await confirmAction(`${description}\n\nContinui?`))) return;
     await api.system.setDeviceRole(role);
     setDeviceRole(role);
     if (role === 'viewer' && cloudStatus.isConnected) {
@@ -146,9 +147,9 @@ export function SettingsSystem() {
       if (result.updated) {
         window.location.reload();
       } else if (!result.success) {
-        alert(result.error || 'Actualizarea din Google Drive a eșuat.');
+        notify(result.error || 'Actualizarea din Google Drive a eșuat.');
       } else {
-        alert('Baza locală este deja la zi.');
+        notify('Baza locală este deja la zi.');
       }
     } finally {
       setIsSyncingCloud(false);
@@ -156,23 +157,23 @@ export function SettingsSystem() {
   };
 
   const handleRestoreFromCloud = async (specificPath?: string) => {
-    if (window.confirm('Ești sigur că vrei să restaurezi baza de date din Cloud? Această acțiune va înlocui baza de date curentă cu cea de pe server/folderul cloud, iar programul se va restarta automat.')) {
+    if ((await confirmAction('Ești sigur că vrei să restaurezi baza de date din Cloud? Această acțiune va înlocui baza de date curentă cu cea de pe server/folderul cloud, iar programul se va restarta automat.'))) {
       try {
         const res = await api.system.restoreFromCloud(specificPath);
         if (res && res.success) {
-          alert(`Restaurare finalizată cu succes din cloud (Scor articole: ${res.totalItems})! Aplicația se va reîncărca.`);
+          notify(`Restaurare finalizată cu succes din cloud (Scor articole: ${res.totalItems})! Aplicația se va reîncărca.`);
           window.location.reload();
         } else {
-          alert('Eroare la restaurarea din cloud:\n' + (res?.error || 'Nu s-a putut restaura fișierul.'));
+          notify('Eroare la restaurarea din cloud:\n' + (res?.error || 'Nu s-a putut restaura fișierul.'));
         }
       } catch (e: any) {
-        alert('Eroare: ' + e.message);
+        notify('Eroare: ' + e.message);
       }
     }
   };
 
   const handleDisconnectCloud = async () => {
-    if (window.confirm('Ești sigur că vrei să deconectezi folderul de sincronizare Cloud? Backu-urile existente în folder nu vor fi șterse.')) {
+    if ((await confirmAction('Ești sigur că vrei să deconectezi folderul de sincronizare Cloud? Backu-urile existente în folder nu vor fi șterse.'))) {
       await api.system.disconnectCloud();
       fetchCloudStatus();
     }
@@ -181,20 +182,20 @@ export function SettingsSystem() {
   const handleManualBackup = async () => {
     const res = await api.system.manualBackup();
     if (res.success) {
-      alert(`Backup creat cu succes la:\n${res.path}`);
+      notify(`Backup creat cu succes la:\n${res.path}`);
       fetchLastBackup();
     } else if (!res.canceled) {
-      alert(`Eroare la creare backup: ${res.error}`);
+      notify(`Eroare la creare backup: ${res.error}`);
     }
   };
 
   const handleRestoreBackup = async () => {
-    if (window.confirm('Ești sigur că vrei să încarci un backup? Această acțiune va suprascrie baza de date curentă pentru TOATE modulele din Hub și programul se va restarta automat.')) {
+    if ((await confirmAction('Ești sigur că vrei să încarci un backup? Această acțiune va suprascrie baza de date curentă pentru TOATE modulele din Hub și programul se va restarta automat.'))) {
       const res = await api.system.restoreBackup();
       if (res.success) {
         window.location.reload();
       } else if (!res.canceled) {
-        alert('A apărut o eroare la restaurarea bazei de date.');
+        notify('A apărut o eroare la restaurarea bazei de date.');
       }
     }
   };
@@ -205,12 +206,12 @@ export function SettingsSystem() {
     try {
       const res = await api.system.checkForUpdates();
       if (!res.success) {
-        alert('Eroare la căutarea update-ului:\n' + res.error);
+        notify('Eroare la căutarea update-ului:\n' + res.error);
       } else if (res.state.status === 'not-available') {
-        alert(`Aplicația este deja la zi (versiunea ${res.state.currentVersion}).`);
+        notify(`Aplicația este deja la zi (versiunea ${res.state.currentVersion}).`);
       }
     } catch (e: any) {
-      alert('Eroare: ' + e.message);
+      notify('Eroare: ' + e.message);
     } finally {
       setIsCheckingUpdate(false);
     }

@@ -1,3 +1,4 @@
+import { confirmAction, notify } from '../utils/feedback';
 import React, { useState, useEffect } from 'react';
 import { api } from './api';
 import { Plus, Edit, Trash2, X, Check, Folder } from 'lucide-react';
@@ -38,7 +39,7 @@ export function CategoryModal({ isOpen, onClose, type, title }: CategoryModalPro
       setNewCategoryName('');
       loadCategories();
     } catch (err) {
-      alert("Eroare la adăugarea categoriei! Posibil nume duplicat.");
+      notify("Eroare la adăugarea categoriei! Posibil nume duplicat.");
       console.error(err);
     }
   };
@@ -51,18 +52,18 @@ export function CategoryModal({ isOpen, onClose, type, title }: CategoryModalPro
       setEditingCategoryName('');
       loadCategories();
     } catch (err) {
-      alert("Eroare la modificarea categoriei! Posibil nume duplicat.");
+      notify("Eroare la modificarea categoriei! Posibil nume duplicat.");
       console.error(err);
     }
   };
 
   const handleDeleteCategory = async (id: number, name: string) => {
-    if (window.confirm(`Sigur doriți să ștergeți categoria "${name}"? Produsele din această categorie vor rămâne neasociate.`)) {
+    if ((await confirmAction(`Sigur doriți să ștergeți categoria "${name}"? Produsele din această categorie vor rămâne neasociate.`))) {
       try {
         await api.categories.delete(id);
         loadCategories();
       } catch (err) {
-        alert("Eroare la ștergerea categoriei!");
+        notify("Eroare la ștergerea categoriei!");
         console.error(err);
       }
     }

@@ -1,3 +1,4 @@
+import { notify } from '../utils/feedback';
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import {
@@ -148,7 +149,7 @@ function DailyCashSidebar() {
         ? error.message
         : 'Vânzarea nu a putut fi încasată. Verifică datele și încearcă din nou.';
       setSaleError(message);
-      window.alert(message);
+      notify(message);
     } finally {
       setIsSaleSubmitting(false);
     }
@@ -507,7 +508,7 @@ export function DailyCashLayout() {
       void loadData();
     });
     const unsubscribeError = api.dailyCash.onDayRolloverError((message) => {
-      window.alert(message);
+      notify(message);
     });
     return () => {
       unsubscribeRollover();

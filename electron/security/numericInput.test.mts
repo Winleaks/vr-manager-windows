@@ -6,6 +6,9 @@ import test from 'node:test';
 import { normalizeNumericInput, normalizePinInput } from '../../src/utils/numericInput.ts';
 
 test('keyboard numeric input accepts whole amounts, decimals and comma separator', () => {
+  assert.equal(normalizeNumericInput(''), '');
+  assert.equal(normalizeNumericInput('0'), '0');
+  assert.equal(normalizeNumericInput('1.'), '1.');
   assert.equal(normalizeNumericInput('1'), '1');
   assert.equal(normalizeNumericInput('10'), '10');
   assert.equal(normalizeNumericInput('578.25'), '578.25');

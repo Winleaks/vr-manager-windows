@@ -1,3 +1,4 @@
+import { confirmAction, notify } from '../utils/feedback';
 import { useState, useEffect, useCallback } from 'react';
 import { 
   Receipt, Search, Edit3, Trash2, FilePlus2,
@@ -128,7 +129,7 @@ export function BillingInvoices() {
           result.deletedCreditApplications ? `${result.deletedCreditApplications} aplicări de credit` : '',
           result.removedReplacementLinks ? `${result.removedReplacementLinks} legături de reemitere` : '',
         ].filter(Boolean).join(', ');
-        alert(`Factura de test #${result.reference} și toate dependențele ei au fost șterse definitiv.${dependencies ? ` Au fost eliminate: ${dependencies}.` : ''}${result.counterRewound ? ' Contorul emitentului a fost readus la numărul liber.' : ' Contorul nu a fost modificat.'}`);
+        notify(`Factura de test #${result.reference} și toate dependențele ei au fost șterse definitiv.${dependencies ? ` Au fost eliminate: ${dependencies}.` : ''}${result.counterRewound ? ' Contorul emitentului a fost readus la numărul liber.' : ' Contorul nu a fost modificat.'}`);
       } catch (e: any) {
         throw new Error('Eroare la ștergerea facturii de test: ' + e.message);
       }
@@ -138,21 +139,21 @@ export function BillingInvoices() {
       await api.billing.cancelInvoice(inv.id, value);
       await loadInvoices();
       setPendingInvoiceAction(null);
-      alert(`Factura #${inv.invoice_number} a fost anulată și păstrată în registru. Anularea nu înlocuiește o notă de credit VAT.`);
+      notify(`Factura #${inv.invoice_number} a fost anulată și păstrată în registru. Anularea nu înlocuiește o notă de credit VAT.`);
     } catch (e: any) {
       throw new Error('Eroare la anularea facturii: ' + e.message);
     }
   };
 
   const handleReissue = async (inv: Invoice) => {
-    if (!window.confirm(`Reemitem factura anulată #${inv.invoice_number} cu emitentul atribuit acum clientului și cu un număr nou?`)) return;
+    if (!(await confirmAction(`Reemitem factura anulată #${inv.invoice_number} cu emitentul atribuit acum clientului și cu un număr nou?`))) return;
     try {
       const result = await api.billing.reissueCancelledInvoice(inv.id);
       await loadInvoices();
       const replacement = (await api.billing.getInvoices()).find((item: Invoice) => item.id === result.invoiceId);
       if (replacement) await handlePrintPdf(replacement, true);
-      alert(`Factura a fost reemisă cu numărul ${result.invoiceNumber}.`);
-    } catch (e: any) { alert('Eroare la reemitere: ' + e.message); }
+      notify(`Factura a fost reemisă cu numărul ${result.invoiceNumber}.`);
+    } catch (e: any) { notify('Eroare la reemitere: ' + e.message); }
   };
 
   const prepareInvoicePdf = async (inv: Invoice, uploadCloud = false) => {
@@ -165,11 +166,11 @@ export function BillingInvoices() {
     try {
       await prepareInvoicePdf(inv, true);
       if (!isQuiet) {
-        alert(`Factura #${inv.invoice_number} a fost actualizată pe calculator și verificată în Google Drive.`);
+        notify(`Factura #${inv.invoice_number} a fost actualizată pe calculator și verificată în Google Drive.`);
       }
     } catch (e: any) {
       if (isQuiet) throw e;
-      alert('Eroare la generarea PDF: ' + e.message);
+      notify('Eroare la generarea PDF: ' + e.message);
     } finally {
       setGeneratingPdfId(null);
     }

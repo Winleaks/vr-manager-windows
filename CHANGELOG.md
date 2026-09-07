@@ -1,5 +1,7 @@
 ### În lucru
 
+- Câmpurile de cantitate și preț din Credit Notes permit ștergerea completă și rescrierea valorii; registrul separat nu mai reintroduce automat valoarea inițială. Valorile incomplete sunt semnalate la emitere, fără blocarea tastării.
+- Alertele și confirmările rendererului sunt afișate în hub, fără ferestrele native Chromium care pot afecta focusul pe Windows. Confirmările financiare și distructive rămân explicite, cu anulare implicită; mesajele registrului separat dispar la blocarea acestuia.
 - Butonul „Sincronizează Comenzi” oferă repararea confirmată și cu backup a asocierilor istorice, apoi reîncarcă aceeași săptămână. Nu mai necesită mutarea în pagina „Clienți & Entități” pentru acest pas; emiterea facturilor rămâne separată și protejată împotriva duplicatelor.
 
 ### VR - Hub Management v0.1.101

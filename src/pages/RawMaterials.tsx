@@ -1,3 +1,4 @@
+import { notify } from '../utils/feedback';
 import React, { useCallback, useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { Plus, Edit, X, Folder } from 'lucide-react';
@@ -92,7 +93,7 @@ export default function RawMaterials() {
       setIsModalOpen(false);
       await loadData();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Materia primă nu a putut fi salvată.');
+      notify(err instanceof Error ? err.message : 'Materia primă nu a putut fi salvată.');
       console.error(err);
     }
   };

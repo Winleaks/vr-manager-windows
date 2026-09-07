@@ -1,3 +1,4 @@
+import { notify } from '../utils/feedback';
 import React, { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { Plus, Check, Factory } from 'lucide-react';
@@ -27,7 +28,7 @@ export default function Production() {
     e.preventDefault();
     const validItems = items.filter(i => i.finished_product_id);
     if (validItems.length === 0) {
-      alert("Selectați cel puțin un produs finit!");
+      notify("Selectați cel puțin un produs finit!");
       return;
     }
 
@@ -42,9 +43,9 @@ export default function Production() {
       }
       setIsModalOpen(false);
       loadData();
-      alert("Producție înregistrată cu succes! Materiile prime au fost scăzute automat.");
+      notify("Producție înregistrată cu succes! Materiile prime au fost scăzute automat.");
     } catch (err: any) {
-      alert(`Eroare: ${err.message || "A apărut o problemă la înregistrare."}`);
+      notify(`Eroare: ${err.message || "A apărut o problemă la înregistrare."}`);
       console.error(err);
     }
   };

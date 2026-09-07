@@ -14,6 +14,7 @@ import { BillingSettings } from './pages/BillingSettings';
 import { SettingsEntities } from './pages/SettingsEntities';
 import { DailyCashLayout } from './pages/DailyCashLayout';
 import { ProtectedRegistry, ProtectedRegistryHotspot } from './pages/ProtectedRegistry';
+import { FeedbackHost } from './components/FeedbackHost';
 
 function Sidebar() {
   const location = useLocation();
@@ -99,6 +100,7 @@ export default function App() {
         </Routes>
       </HashRouter>
       <UpdateModal />
+      <FeedbackHost />
       <ProtectedRegistryHotspot />
     </>
   );

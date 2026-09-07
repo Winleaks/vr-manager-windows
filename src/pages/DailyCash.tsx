@@ -1,3 +1,4 @@
+import { confirmAction, notify } from '../utils/feedback';
 import { useCallback, useEffect, useState } from 'react';
 import { 
   Wallet, 
@@ -49,14 +50,14 @@ export function DailyCash() {
 
   const handleInitializeBalance = async () => {
     if (!activeDay) return;
-    if (!window.confirm('Confirmi că numerarul fizic existent acum este £578.25? Această inițializare se poate face o singură dată.')) return;
+    if (!(await confirmAction('Confirmi că numerarul fizic existent acum este £578.25? Această inițializare se poate face o singură dată.'))) return;
     setInitializingBalance(true);
     try {
       await api.dailyCash.initializeBalance(activeDay.id, 578.25);
       await loadData();
       await reloadData();
     } catch (error: any) {
-      window.alert(error?.message || 'Soldul inițial nu a putut fi configurat.');
+      notify(error?.message || 'Soldul inițial nu a putut fi configurat.');
     } finally {
       setInitializingBalance(false);
     }
@@ -67,13 +68,13 @@ export function DailyCash() {
   }, [reloadData, storeTransactions]);
 
   const handleDeleteTransaction = async (id: number) => {
-    if (window.confirm('Ești sigur că vrei să ștergi această tranzacție din registru?')) {
+    if ((await confirmAction('Ești sigur că vrei să ștergi această tranzacție din registru?'))) {
       try {
         await api.dailyCash.deleteTransaction(id);
         await loadData();
         await reloadData();
       } catch (error: any) {
-        window.alert(error?.message || 'Tranzacția nu a putut fi ștearsă.');
+        notify(error?.message || 'Tranzacția nu a putut fi ștearsă.');
       }
     }
   };
@@ -85,13 +86,13 @@ export function DailyCash() {
 
   const handleCloseDay = async () => {
     if (!selectedReport || selectedReport.isClosed) return;
-    if (!window.confirm(`Închizi ziua ${selectedReport.date} cu soldul calculat de £${Number(selectedReport.balance).toFixed(2)}? Tranzacțiile vor fi blocate.`)) return;
+    if (!(await confirmAction(`Închizi ziua ${selectedReport.date} cu soldul calculat de £${Number(selectedReport.balance).toFixed(2)}? Tranzacțiile vor fi blocate.`))) return;
     setReportAction('close');
     try {
       await api.dailyCash.closeDay(selectedReport.dayId);
       await refreshCashState();
     } catch (error: any) {
-      window.alert(error?.message || 'Ziua de casă nu a putut fi închisă.');
+      notify(error?.message || 'Ziua de casă nu a putut fi închisă.');
     } finally {
       setReportAction(null);
     }
@@ -99,13 +100,13 @@ export function DailyCash() {
 
   const handleReopenDay = async () => {
     if (!selectedReport?.canReopen) return;
-    if (!window.confirm('Redeschizi ziua curentă? Orice raport pregătit anterior trebuie regenerat și retrimis.')) return;
+    if (!(await confirmAction('Redeschizi ziua curentă? Orice raport pregătit anterior trebuie regenerat și retrimis.'))) return;
     setReportAction('reopen');
     try {
       await api.dailyCash.reopenDay(selectedReport.dayId);
       await refreshCashState();
     } catch (error: any) {
-      window.alert(error?.message || 'Ziua de casă nu a putut fi redeschisă.');
+      notify(error?.message || 'Ziua de casă nu a putut fi redeschisă.');
     } finally {
       setReportAction(null);
     }
@@ -119,9 +120,9 @@ export function DailyCash() {
       const instructions = result.deliveryMethod === 'windows-share'
         ? 'Alege WhatsApp din fereastra Windows, apoi selectează destinatarul și apasă Trimite. PDF-ul este deja inclus.'
         : 'WhatsApp a fost deschis, iar PDF-ul este selectat în Explorer. Atașează-l, alege destinatarul și apasă Trimite.';
-      window.alert(`PDF-ul a fost pregătit la:\n${result.filePath}\n\n${instructions}`);
+      notify(`PDF-ul a fost pregătit la:\n${result.filePath}\n\n${instructions}`);
     } catch (error: any) {
-      window.alert(error?.message || 'Raportul WhatsApp nu a putut fi pregătit.');
+      notify(error?.message || 'Raportul WhatsApp nu a putut fi pregătit.');
     } finally {
       setReportAction(null);
     }

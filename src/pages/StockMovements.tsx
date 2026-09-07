@@ -1,3 +1,4 @@
+import { notify } from '../utils/feedback';
 import { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { NumericInput } from '../components/NumericInput';
@@ -32,7 +33,7 @@ export default function StockMovements() {
   const handleAdjustSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.raw_material_id || !formData.new_stock || !formData.reason) {
-      alert("Completati toate campurile");
+      notify("Completati toate campurile");
       return;
     }
 
@@ -46,7 +47,7 @@ export default function StockMovements() {
       setFormData({ raw_material_id: '', new_stock: '', reason: '' });
       loadData();
     } catch (err) {
-      alert("Eroare la ajustare!");
+      notify("Eroare la ajustare!");
       console.error(err);
     }
   };

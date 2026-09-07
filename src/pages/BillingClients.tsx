@@ -1,3 +1,4 @@
+import { notify } from '../utils/feedback';
 import React, { useState, useEffect } from 'react';
 import { api } from '../shared/api';
 import { 
@@ -172,7 +173,7 @@ export function BillingClients() {
     try {
       await api.billing.applyCompanyCredit({ companyId: profileData.company.id, issuerId: creditInvoice.issuer_id, invoiceId: creditInvoice.id, amount: Number(creditAmount), reason: creditReason });
       setCreditInvoice(null); setCreditAmount(''); setCreditReason(''); await loadCompanyProfile(profileData.company.id); await fetchCompanies();
-    } catch (error: any) { alert(error.message || 'Creditul nu a putut fi aplicat.'); }
+    } catch (error: any) { notify(error.message || 'Creditul nu a putut fi aplicat.'); }
   };
 
   const reverseCredit = async (application: any) => {
@@ -205,7 +206,7 @@ export function BillingClients() {
     if (!editingPayment || !profileData?.company?.id) return;
     const amount = Number(paymentEditForm.amount);
     if (!Number.isFinite(amount) || amount <= 0 || !paymentEditForm.reason.trim()) {
-      alert('Introdu o sumă validă și motivul modificării.');
+      notify('Introdu o sumă validă și motivul modificării.');
       return;
     }
     setIsUpdatingPayment(true);
@@ -220,7 +221,7 @@ export function BillingClients() {
       setEditingPayment(null);
       await Promise.all([loadCompanyProfile(profileData.company.id), fetchCompanies()]);
     } catch (error: any) {
-      alert('Încasarea nu a putut fi modificată: ' + (error.message || error));
+      notify('Încasarea nu a putut fi modificată: ' + (error.message || error));
     } finally {
       setIsUpdatingPayment(false);
     }
@@ -232,16 +233,16 @@ export function BillingClients() {
 
     const numericAmount = parseFloat(paymentForm.amount);
     if (isNaN(numericAmount) || numericAmount <= 0) {
-      alert('Te rugăm să introduci o sumă validă mai mare decât 0!');
+      notify('Te rugăm să introduci o sumă validă mai mare decât 0!');
       return;
     }
     if (!Number.isSafeInteger(Number(paymentForm.issuerId)) || Number(paymentForm.issuerId) <= 0) {
-      alert('Selectează societatea emitentă pentru această încasare.');
+      notify('Selectează societatea emitentă pentru această încasare.');
       return;
     }
 
     if (paymentForm.method === 'transfer' && !paymentForm.bankName) {
-      alert('Te rugăm să selectezi banca unde s-a primit transferul bancar (Barclays sau Virgin)!');
+      notify('Te rugăm să selectezi banca unde s-a primit transferul bancar (Barclays sau Virgin)!');
       return;
     }
 
@@ -258,12 +259,12 @@ export function BillingClients() {
         notes: paymentForm.notes.trim()
       });
 
-      alert('Plata a fost înregistrată cu succes!');
+      notify('Plata a fost înregistrată cu succes!');
       setShowPaymentModal(false);
       await loadCompanyProfile(profileData.company.id);
       await fetchCompanies();
     } catch (err: any) {
-      alert('Eroare la procesarea plății: ' + err.message);
+      notify('Eroare la procesarea plății: ' + err.message);
     } finally {
       setIsSubmittingPayment(false);
     }

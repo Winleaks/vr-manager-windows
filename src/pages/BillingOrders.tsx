@@ -1,3 +1,4 @@
+import { confirmAction, notify } from '../utils/feedback';
 import { useEffect, useState } from 'react';
 import { Calendar, Loader2, FileText, Printer, Building2, Trash2, ShoppingBag, RefreshCw, ChevronLeft, ChevronRight, MapPin, Truck } from 'lucide-react';
 import { api } from '../shared/api';
@@ -143,11 +144,11 @@ export function BillingOrders() {
 
       const cloudSuccess = await prepareOrderInvoicePdf(currentOrder, true);
       if (!cloudSuccess && !isRegenerate) {
-        alert(`Factura #${currentOrder.assignedInvoiceNumber} a fost emisă și salvată local, dar nu a fost confirmată în Google Drive.`);
+        notify(`Factura #${currentOrder.assignedInvoiceNumber} a fost emisă și salvată local, dar nu a fost confirmată în Google Drive.`);
       }
       return cloudSuccess;
     } catch (e: any) {
-      alert('Eroare la generare: ' + e.message);
+      notify('Eroare la generare: ' + e.message);
       return false;
     }
   };
@@ -155,7 +156,7 @@ export function BillingOrders() {
   const handleGenerateAll = async () => {
     const pendingOrders = syncResult.ordersByStore.filter((o: any) => o.billingState === 'ready');
     if (pendingOrders.length === 0) {
-      alert('Toate facturile sunt deja generate!');
+      notify('Toate facturile sunt deja generate!');
       return;
     }
     
@@ -173,12 +174,12 @@ export function BillingOrders() {
       }
       setSyncResult((prev: any) => ({ ...prev, ordersByStore: prev.ordersByStore.map((old: any) => res.updatedOrders.find((next: any) => next.store.id === old.store.id) || old) }));
     } catch (e: any) {
-      alert('Eroare la emiterea lotului: ' + e.message);
+      notify('Eroare la emiterea lotului: ' + e.message);
     }
     
     setIsGeneratingAll(false);
     if (issuedCount > 0) {
-      alert(successCount === issuedCount
+      notify(successCount === issuedCount
         ? `Au fost emise și pregătite cu succes ${issuedCount} facturi noi în registrele emitentelor și în Google Drive.`
         : `Au fost emise ${issuedCount} facturi. PDF-uri pregătite: ${successCount}. Documentele lipsă pot fi regenerate din lista facturilor.`);
     }
@@ -187,7 +188,7 @@ export function BillingOrders() {
   const handleGenerateZone = async (zone: any) => {
     const pendingOrders = zone.orders.filter((order: any) => order.billingState === 'ready');
     if (pendingOrders.length === 0) {
-      alert('Zona selectată nu are facturi pregătite pentru emitere.');
+      notify('Zona selectată nu are facturi pregătite pentru emitere.');
       return;
     }
     const issuers = Object.values(pendingOrders.reduce((groups: any, order: any) => {
@@ -196,13 +197,13 @@ export function BillingOrders() {
       groups[key].count += 1;
       return groups;
     }, {})).map((issuer: any) => `${issuer.name}: ${issuer.count}`).join('\n');
-    const confirmed = window.confirm(
+    const confirmed = (await confirmAction(
       `Generezi facturile pentru zona „${zone.name}”?\n\n` +
       `Șofer: ${zone.driver?.name || 'Nealocat'}\n` +
       `Facturi noi: ${pendingOrders.length}\n` +
       `Total: £${pendingOrders.reduce((sum: number, order: any) => sum + order.items.reduce((itemSum: number, item: any) => itemSum + item.totalPrice, 0), 0).toFixed(2)}\n\n` +
       issuers,
-    );
+    ));
     if (!confirmed) return;
 
     setGeneratingZoneKey(zone.key);
@@ -225,11 +226,11 @@ export function BillingOrders() {
         ...prev,
         ordersByStore: prev.ordersByStore.map((old: any) => res.updatedOrders.find((next: any) => next.store.id === old.store.id) || old),
       }));
-      alert(successCount === issuedCount
+      notify(successCount === issuedCount
         ? `Au fost emise și pregătite ${issuedCount} facturi pentru zona „${zone.name}”.`
         : `Au fost emise ${issuedCount} facturi pentru zona „${zone.name}”. PDF-uri pregătite: ${successCount}. Documentele lipsă pot fi regenerate din lista facturilor.`);
     } catch (e: any) {
-      alert('Eroare la emiterea facturilor pe zonă: ' + e.message);
+      notify('Eroare la emiterea facturilor pe zonă: ' + e.message);
     } finally {
       setGeneratingZoneKey(null);
     }
@@ -268,7 +269,7 @@ export function BillingOrders() {
           result.deletedCreditApplications ? `${result.deletedCreditApplications} aplicări de credit` : '',
           result.removedReplacementLinks ? `${result.removedReplacementLinks} legături de reemitere` : '',
         ].filter(Boolean).join(', ');
-        alert(`Factura de test #${order.assignedInvoiceNumber} și toate dependențele ei au fost șterse definitiv.${dependencies ? ` Au fost eliminate: ${dependencies}.` : ''}`);
+        notify(`Factura de test #${order.assignedInvoiceNumber} și toate dependențele ei au fost șterse definitiv.${dependencies ? ` Au fost eliminate: ${dependencies}.` : ''}`);
       } catch (error: any) {
         throw new Error('Eroare la ștergerea facturii de test: ' + error.message);
       }
@@ -286,7 +287,7 @@ export function BillingOrders() {
       }));
 
       setPendingOrderAction(null);
-      alert(`Factura #${order.assignedInvoiceNumber} a fost anulată și păstrată în registru. Anularea nu înlocuiește o notă de credit VAT.`);
+      notify(`Factura #${order.assignedInvoiceNumber} a fost anulată și păstrată în registru. Anularea nu înlocuiește o notă de credit VAT.`);
     } catch (error: any) {
       throw new Error('Eroare la anulare: ' + error.message);
     }
