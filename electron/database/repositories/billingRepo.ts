@@ -40,6 +40,7 @@ import {
   type CreateCreditNoteInput,
 } from '../creditNotes';
 import { requirePositiveInteger } from '../businessValidation';
+import { assertEntitySyncSafe, reconcileEntityPresence, flagPossibleCompanyDuplicates } from '../entitySync';
 
 // Settings
 export function getAppSetting(key: string): string | null {
@@ -147,10 +148,7 @@ export function updateStore(id: number, name: string, address: string | null, su
 }
 
 export function upsertClientFromSupabase(clientData: { id: string, name: string }) {
-  let localClient = db.prepare('SELECT id FROM clients WHERE supabase_client_id = ?').get(clientData.id) as any;
-  if (!localClient && clientData.name) {
-    localClient = db.prepare('SELECT id FROM clients WHERE LOWER(name) = LOWER(?)').get(clientData.name) as any;
-  }
+  const localClient = db.prepare('SELECT id FROM clients WHERE supabase_client_id = ? COLLATE NOCASE').get(clientData.id) as any;
 
   if (localClient) {
     db.prepare(`
@@ -169,7 +167,7 @@ export function upsertClientFromSupabase(clientData: { id: string, name: string 
 }
 
 export function upsertCompanyFromSupabase(companyData: { id: string, name: string, registration_number?: string, vat_number?: string, address?: string, cui?: string, reg_com?: string, client_id?: string }, localClientId?: number) {
-  let localCompany = db.prepare('SELECT id FROM companies WHERE supabase_company_id = ?').get(companyData.id) as any;
+  let localCompany = db.prepare('SELECT id FROM companies WHERE supabase_company_id = ? COLLATE NOCASE').get(companyData.id) as any;
   
   const cuiVal = companyData.vat_number || companyData.cui || null;
   const regComVal = companyData.registration_number || companyData.reg_com || null;
@@ -212,7 +210,7 @@ export function upsertCompanyFromSupabase(companyData: { id: string, name: strin
 }
 
 export function upsertStoreFromSupabase(storeData: { id: string, name: string, address?: string, postcode?: string, client_company_id: string }, localCompanyId?: number) {
-  let localStore = db.prepare('SELECT id, company_id FROM stores WHERE supabase_store_id = ?').get(storeData.id) as any;
+  let localStore = db.prepare('SELECT id, company_id FROM stores WHERE supabase_store_id = ? COLLATE NOCASE').get(storeData.id) as any;
 
   let companyId = localCompanyId;
   if (!companyId && storeData.client_company_id) {
@@ -251,19 +249,7 @@ export function upsertStoreFromSupabase(storeData: { id: string, name: string, a
   }
 }
 
-export function cleanupOrphanCompanies() {
-  try {
-    db.prepare(`
-      DELETE FROM companies 
-      WHERE id NOT IN (SELECT DISTINCT company_id FROM stores)
-        AND (cui IS NULL OR cui = '')
-        AND (reg_com IS NULL OR reg_com = '')
-    `).run();
-  } catch {}
-}
-
 export function getAllCompaniesAndStores() {
-  cleanupOrphanCompanies();
   const companies = db.prepare(`
     SELECT c.*, bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color,
            bi.is_default AS issuer_is_default
@@ -272,7 +258,7 @@ export function getAllCompaniesAndStores() {
   `).all() as any[];
   const stores = db.prepare('SELECT * FROM stores ORDER BY name').all() as any[];
 
-  return companies.map(c => {
+  return flagPossibleCompanyDuplicates(companies).map(c => {
     const compStores = stores.filter(s => s.company_id === c.id);
     const storeIds = compStores.map(s => s.id);
     let unpaidInvoicesCount = 0;
@@ -633,8 +619,9 @@ export function syncProductsFromVrBaker(products: VrBakerProduct[]) {
   })();
 }
 
-export function syncEntitiesFromVrBaker(companies: VrBakerCompany[], stores: VrBakerStore[]) {
+export function syncEntitiesFromVrBaker(companies: VrBakerCompany[], stores: VrBakerStore[], options: {complete?:boolean} = {}) {
   return db.transaction(() => {
+    assertEntitySyncSafe(db,companies,stores,options.complete === true);
     const companyIds = new Map<string, number>();
     for (const company of companies) {
       const clientId = upsertClientFromSupabase({ id: company.id, name: company.name });
@@ -645,11 +632,11 @@ export function syncEntitiesFromVrBaker(companies: VrBakerCompany[], stores: VrB
         registration_number: company.registrationNumber,
         address: company.address,
       }, clientId);
-      companyIds.set(company.id, companyId);
+      companyIds.set(company.id.toLowerCase(), companyId);
     }
     let unassignedCompanyId: number | undefined;
     for (const store of stores) {
-      let companyId = store.company ? companyIds.get(store.company.id) : undefined;
+      let companyId = store.company ? companyIds.get(store.company.id.toLowerCase()) : undefined;
       if (!companyId) {
         const clientId = upsertClientFromSupabase({ id: 'vrbaker-unassigned-client', name: 'Magazine fără companie mamă' });
         unassignedCompanyId ||= upsertCompanyFromSupabase({ id: 'vrbaker-unassigned-company', name: 'Magazine neasociate' }, clientId);
@@ -658,7 +645,11 @@ export function syncEntitiesFromVrBaker(companies: VrBakerCompany[], stores: VrB
       upsertStoreFromSupabase({ id: store.id, name: store.name, address: store.address, postcode: store.postcode, client_company_id: store.company?.id || '' }, companyId);
       db.prepare('UPDATE stores SET phone = ? WHERE supabase_store_id = ?').run(store.phone || null, store.id);
     }
-    return { companies: companies.length, stores: stores.length };
+    // Weekly billing/protected previews pass partial lists. Only the counted full
+    // entity export may infer absence; partial imports never mark other clients missing.
+    const presence = options.complete === true ? reconcileEntityPresence(db,companies,stores) : {missingCompanies:0,missingStores:0,inactiveStores:0};
+    const duplicates = flagPossibleCompanyDuplicates(db.prepare('SELECT name FROM companies').all() as {name:string}[]).filter(row=>row.possible_duplicate).length;
+    return { companies: companies.length, stores: stores.length, ...presence, possibleDuplicates:duplicates };
   })();
 }
 

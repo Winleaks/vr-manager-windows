@@ -1,4 +1,5 @@
 import {installBillingPublication} from './billingPublication';
+import {installEntitySyncState} from './entitySync';
 import Database from 'better-sqlite3'
 import path from 'path'
 import { app } from 'electron'
@@ -165,7 +166,7 @@ export function initDb() {
 
   // Preserve a verified copy before adding the persistent billing publication queue.
   // This also covers older Credit Notes migrations during a direct upgrade.
-  createPreMigrationSnapshotIfNeeded(17)
+  createPreMigrationSnapshotIfNeeded(18)
   
   // 2. Rularea migrărilor de schemă
   runMigrations()
@@ -383,6 +384,7 @@ function runMigrations() {
         }
       }
       ,{version:17,description:'Publicare financiară VR Baker',up:()=>installBillingPublication(db)}
+      ,{version:18,description:'Prezența entităților VR Baker separată de accesul clientului',up:()=>installEntitySyncState(db)}
     ];
 
     for (const migration of migrations) {

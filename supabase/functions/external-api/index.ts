@@ -288,12 +288,13 @@ const actions: Record<string, ActionDefinition> = {
     mutates: false,
     handler: async (payload) => {
       const limit = parseBoundedInteger(payload.limit, 1000, 1, 5000, "limit");
-      const { data, error } = await supabaseAdmin
+      const { data, error, count } = await supabaseAdmin
         .from("client_company")
-        .select("id, name, address, vat_number, registration_number")
+        .select("id, name, address, vat_number, registration_number", { count: "exact" })
         .order("name", { ascending: true })
         .limit(limit);
       ensureDatabaseSuccess(error);
+      if (payload.include_meta === true) return { version: 1, rows: data ?? [], count, complete: count !== null && count === data?.length };
       return data ?? [];
     },
   },
@@ -304,14 +305,16 @@ const actions: Record<string, ActionDefinition> = {
     mutates: false,
     handler: async (payload) => {
       const limit = parseBoundedInteger(payload.limit, 1000, 1, 5000, "limit");
-      const { data, error } = await supabaseAdmin
+      const { data, error, count } = await supabaseAdmin
         .from("client_store")
         .select(
           "id, name, address, postcode, owner_id, zone_id, route_order, phone, google_maps_url, active, client_company_id, client_company:client_company_id(id, name, address, vat_number, registration_number)",
+          { count: "exact" },
         )
         .order("route_order", { ascending: true })
         .limit(limit);
       ensureDatabaseSuccess(error);
+      if (payload.include_meta === true) return { version: 1, rows: data ?? [], count, complete: count !== null && count === data?.length };
       return data ?? [];
     },
   },

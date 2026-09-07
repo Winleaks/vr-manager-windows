@@ -1,5 +1,13 @@
 ### În lucru
 
+### VR - Hub Management v0.1.100
+
+- Editarea facturii actualizează PDF-ul de lucru existent în Drive și îl mută din structura veche în folderul clientului, păstrând ID-ul și linkul. Copiile tehnice ale platformei rămân separate; duplicatele ambigue nu sunt suprascrise automat.
+- Sincronizarea completă verifică numărul de companii și magazine înainte de reconciliere. Magazinele inactive și clienții fără acces propriu își păstrează asocierile și facturarea comenzilor introduse de admin, agent sau standing orders.
+- Entitățile care nu mai apar în VR Baker sunt marcate separat, fără ștergerea istoricului. Publicarea companiilor dispărute este oprită; numele duplicate sunt semnalate fără unire automată.
+- Rezultatul și erorile sincronizării sunt afișate în interfață. Panoul de publicare se actualizează automat, iar ID-urile PostgreSQL istorice valide nu mai sunt respinse de validatorul facturării.
+- Migrarea locală 18 păstrează datele și creează o copie verificată înainte de upgrade. Necesită API-ul compatibil cu exportul complet; nu activează accesul clienților și nu înlocuiește verificarea facturilor/PDF-urilor rămase.
+
 ### VR - Hub Management v0.1.99
 
 - Include integral corecțiile din v0.1.98 și modificările din ramura de publicare a facturilor clienților, fără revenire la o versiune mai veche.

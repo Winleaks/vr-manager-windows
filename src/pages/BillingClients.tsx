@@ -23,12 +23,17 @@ interface Company {
   stores?: any[];
   unpaidInvoicesCount?: number;
   unpaidTotal?: number;
+  supabase_company_id?: string;
+  vrbaker_missing?: number;
+  possible_duplicate?: boolean;
 }
 
 export function BillingClients() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [syncNotice, setSyncNotice] = useState('');
+  const [syncError, setSyncError] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Profil companie selectat
@@ -111,15 +116,21 @@ export function BillingClients() {
   };
 
   const handleSyncWithServer = async () => {
+    if (syncing) return;
     try {
       setSyncing(true);
-      await api.billing.syncEntities();
+      setSyncNotice('');
+      setSyncError(false);
+      const result = await api.billing.syncEntities();
+      if (!result.success) throw new Error(result.message || 'Sincronizarea a eșuat. Datele locale au fost păstrate.');
+      setSyncNotice(`Sincronizare finalizată: ${result.companies} companii, ${result.stores} magazine. ${result.inactiveStores || 0} magazine inactive în platformă, cu asocierile păstrate. ${result.missingCompanies || 0} companii și ${result.missingStores || 0} magazine nu mai apar în platformă; istoricul este păstrat. ${result.possibleDuplicates || 0} înregistrări cu nume repetat necesită verificare, fără unire automată.`);
       await fetchCompanies();
       if (selectedCompanyId) {
         await loadCompanyProfile(selectedCompanyId);
       }
     } catch (e) {
-      console.error(e);
+      setSyncError(true);
+      setSyncNotice(e instanceof Error ? e.message : 'Sincronizarea a eșuat. Datele locale au fost păstrate.');
     } finally {
       setSyncing(false);
     }
@@ -642,6 +653,7 @@ export function BillingClients() {
                     </div>
                     <div>
                       <h4 className="font-bold text-slate-900">{s.name}</h4>
+                      {s.vrbaker_missing ? <p className="text-xs text-amber-800">Nu mai apare în VR Baker · istoric păstrat</p> : s.platform_active === 0 ? <p className="text-xs text-slate-600">Inactiv în platformă · asocierea și facturarea sunt păstrate</p> : null}
                       {s.address && <p className="text-xs text-slate-500 mt-1">{s.address}</p>}
                     </div>
                   </div>
@@ -883,6 +895,7 @@ export function BillingClients() {
       </div>
 
       {/* Bară de căutare */}
+      {syncNotice && <p role={syncError ? 'alert' : 'status'} className={`mb-4 rounded-xl p-4 text-sm ${syncError ? 'bg-rose-50 text-rose-800' : 'bg-indigo-50 text-indigo-800'}`}>{syncNotice}</p>}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm mb-8">
         <div className="relative">
           <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -927,6 +940,8 @@ export function BillingClients() {
                       </div>
                       <div>
                         <h3 className="font-bold text-slate-900 text-lg leading-tight group-hover:text-indigo-600 transition-colors">{company.name}</h3>
+                        <p className="text-xs text-slate-600 mt-1">{company.vrbaker_missing ? 'Nu mai apare în VR Baker · istoric păstrat' : /^[0-9a-f-]{36}$/i.test(company.supabase_company_id || '') ? 'Asociată cu VR Baker' : 'Înregistrare locală / neasociată'}</p>
+                        {company.possible_duplicate && <p className="text-xs text-amber-800 mt-1">Nume repetat · verifică înregistrările înainte de asociere</p>}
                         <div className="text-xs text-slate-500 mt-1 space-y-0.5">
                           {company.cui && <div>VAT No: <span className="font-mono text-slate-700 font-medium">{company.cui}</span></div>}
                           {company.reg_com && <div>CRN: <span className="font-mono text-slate-700 font-medium">{company.reg_com}</span></div>}

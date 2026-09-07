@@ -1,4 +1,5 @@
 import * as billingRepo from '../database/repositories/billingRepo';
+import { isBillingPublishing } from '../integrations/billingPublisher';
 import { handleTrustedIpc } from './trustedHandler';
 import { aggregateWeeklyOrders } from '../integrations/weeklyInvoiceImport';
 import { createVrBakerClient, syncVrBakerCatalog, syncVrBakerEntities } from '../integrations/vrBakerIntegration';
@@ -269,8 +270,10 @@ export function registerBillingHandlers() {
   });
 
   handleTrustedIpc('billing:publicationStatus', () => ({
+    publishing:isBillingPublishing(),
     identity:db.prepare('SELECT source_id FROM billing_publication_identity WHERE id=1').get(),
-    pending:db.prepare('SELECT q.*,c.name FROM billing_publication_queue q JOIN companies c ON c.id=q.company_id WHERE q.revision>q.published_revision').all(),
+    pending:db.prepare('SELECT q.*,c.name FROM billing_publication_queue q JOIN companies c ON c.id=q.company_id WHERE q.revision>q.published_revision AND c.vrbaker_missing=0').all(),
+    excluded:db.prepare('SELECT c.id,c.name FROM companies c WHERE c.vrbaker_missing=1').all(),
     invoiceCount:(db.prepare('SELECT count(*) AS n FROM invoices').get() as {n:number}).n,
     folderId:billingRepo.getAppSetting('invoice_drive_folder_id')||'',
   }));
@@ -365,7 +368,7 @@ export function registerBillingHandlers() {
   handleTrustedIpc('billing:syncEntities', async () => {
     try {
       const result = await syncVrBakerEntities();
-      return { success: true, message: `${result.companies} companii și ${result.stores} magazine au fost sincronizate.` };
+      return { success: true, ...result, message: `${result.companies} companii și ${result.stores} magazine au fost sincronizate.` };
     } catch (error) { return { success: false, message: message(error) }; }
   });
 }

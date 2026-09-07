@@ -77,7 +77,7 @@ export function installBillingPublication(db: Database.Database) {
   );
 }
 const uuid =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function moneyInPence(value: number) {
   if (!Number.isFinite(value) || value < 0 || value > 1e9) {
     throw new Error("Suma financiară este invalidă.");
@@ -89,6 +89,8 @@ export function prepareBillingDelivery(
   companyId: number,
 ) {
   return db.transaction(() => {
+    const presence = db.prepare('SELECT * FROM companies WHERE id=?').get(companyId) as {vrbaker_missing?:number}|undefined;
+    if (presence?.vrbaker_missing) throw new Error('Compania nu mai apare în VR Baker; istoricul local este păstrat.');
     const existing = db.prepare(
       "SELECT payload FROM billing_publication_delivery WHERE company_id=?",
     ).get(companyId) as { payload: string } | undefined;

@@ -1,4 +1,5 @@
 import {resolveExistingInvoiceFolder,resolveCompanyInvoiceFolder,listInvoiceTree,legacyInvoiceFilenames} from '../integrations/invoiceDriveFolder';
+import { InvoiceDriveDocumentError, updateInvoiceDriveDocument, withInvoiceDriveLock } from '../integrations/invoiceDriveDocument';
 import fs from 'fs';
 import path from 'path';
 import { app, shell } from 'electron';
@@ -922,8 +923,12 @@ export function syncViewerFromCloud() {
 }
 
 export async function uploadInvoicePdf(invoiceId: number): Promise<{success:boolean; fileId?:string; error?:string}> {
-  if (getDeviceRole() !== 'writer') return {success:false,error:'Doar Writer poate publica PDF-uri.'};
   if (!Number.isSafeInteger(invoiceId) || invoiceId <= 0) throw new Error('Factura este invalidă.');
+  return withInvoiceDriveLock(invoiceId, () => uploadCurrentInvoicePdf(invoiceId));
+}
+
+async function uploadCurrentInvoicePdf(invoiceId: number): Promise<{success:boolean; fileId?:string; error?:string}> {
+  if (getDeviceRole() !== 'writer') return {success:false,error:'Doar Writer poate publica PDF-uri.'};
   if (!loadTokens()) return {success:false,error:'Google Drive nu este conectat.'};
   const connection = db;
   try {
@@ -931,6 +936,13 @@ export async function uploadInvoicePdf(invoiceId: number): Promise<{success:bool
     const {generateInvoicePDF} = await import('../../src/utils/pdfGenerator');
     const inv=getInvoiceById(invoiceId);
     if(inv.status==='cancelled' || !inv.issuer_settings) throw new Error('Factura nu poate fi publicată.');
+    const assertCurrent = () => {
+      if (getDeviceRole() !== 'writer' || connection !== db) throw new InvoiceDriveDocumentError('Calculatorul Writer sau baza de date s-a schimbat.');
+      const current = db.prepare('SELECT document_revision,status FROM invoices WHERE id=?').get(invoiceId) as {document_revision:number;status:string}|undefined;
+      if (!current || current.status === 'cancelled' || current.document_revision !== inv.document_revision) {
+        throw new InvoiceDriveDocumentError('Factura s-a modificat în timpul încărcării. Reîncearcă pentru versiunea curentă.');
+      }
+    };
     const buffer=generateInvoicePDF({...inv.issuer_settings,invoiceLogo:getAppSetting('invoice_logo')||''},{
       invoiceNumber:inv.invoice_number,invoiceDate:inv.invoice_date,
       client:{name:inv.company_name,cui:inv.company_cui,regCom:inv.company_reg_com,address:inv.company_address||inv.store_address},
@@ -939,7 +951,15 @@ export async function uploadInvoicePdf(invoiceId: number): Promise<{success:bool
     });
     const drive = google.drive({version:'v3',auth:oauth2Client});
     const facturiFolderId = await resolveExistingInvoiceFolder(drive,(db.prepare("SELECT value FROM app_settings WHERE key='invoice_drive_folder_id'").get() as {value:string}|undefined)?.value);
+    assertCurrent();
     const companyFolderId = await resolveCompanyInvoiceFolder(drive,facturiFolderId,inv.company_name);
+    // Restore the existing operator-facing file (and link), including legacy locations.
+    // The platform's revision snapshots below remain separate from this working copy.
+    await updateInvoiceDriveDocument(drive, {
+      rootId: facturiFolderId, parentId: companyFolderId,
+      filenames: legacyInvoiceFilenames(inv.invoice_number, inv.issuer_settings.invoiceSeries || ''),
+      buffer, assertCurrent,
+    });
     const {Readable} = await import('node:stream');
     // New document revisions get a new private file, so an already-published row never points to changed bytes.
     const {source_id} = db.prepare('SELECT source_id FROM billing_publication_identity WHERE id=1').get() as {source_id:string};
@@ -951,6 +971,7 @@ export async function uploadInvoicePdf(invoiceId: number): Promise<{success:bool
     if ((match.data.files?.length || 0)>1) throw new Error('Documente duplicate în Drive.');
     let fileId = match.data.files?.[0]?.id;
     if (!fileId) {
+      assertCurrent();
       const result = await drive.files.create({requestBody:{name,parents:[companyFolderId]},media:{mimeType:'application/pdf',body:Readable.from([Buffer.from(buffer)])},fields:'id'});
       fileId=result.data.id;
     }
@@ -958,11 +979,11 @@ export async function uploadInvoicePdf(invoiceId: number): Promise<{success:bool
     assertUploadedFileMatches(await fetchUploadedMetadata(drive,fileId),{
       name,parentId:companyFolderId,md5Checksum:createHash('md5').update(Buffer.from(buffer)).digest('hex'),size:buffer.byteLength,
     });
-    if(getDeviceRole()!=='writer' || connection!==db) throw new Error('Writer s-a schimbat.');
+    assertCurrent();
     const saved = db.prepare('UPDATE invoices SET drive_file_id=? WHERE id=? AND document_revision=?').run(fileId,invoiceId,inv.document_revision);
     if (!saved.changes) throw new Error('Factura s-a modificat; regenerează PDF-ul.');
     return {success:true,fileId};
-  } catch { return {success:false,error:'PDF-ul nu a putut fi publicat în Drive. Reîncearcă.'}; }
+  } catch (error) { return {success:false,error:error instanceof InvoiceDriveDocumentError ? error.message : 'PDF-ul nu a putut fi publicat în Drive. Reîncearcă.'}; }
 }
 
 export async function reconcileInvoicePdfs() {

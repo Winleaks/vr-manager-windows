@@ -6,6 +6,7 @@ import {
   prepareBillingDelivery,
 } from "../database/billingPublication";
 let running = false;
+export function isBillingPublishing() { return running; }
 export async function publishBilling() {
   if (running || getDeviceRole() !== "writer") return;
   running = true;
@@ -25,11 +26,12 @@ export async function publishBilling() {
     if(control.sync_enabled && control.protocol_version !== 2) throw new Error('Platforma necesită actualizarea protocolului financiar.');
     if (!control.sync_enabled || getDeviceRole() !== "writer") return;
     const queue = db.prepare(
-      "SELECT company_id FROM billing_publication_queue WHERE revision>published_revision AND retry_at<=? ORDER BY company_id",
+      "SELECT q.company_id FROM billing_publication_queue q JOIN companies c ON c.id=q.company_id WHERE q.revision>q.published_revision AND q.retry_at<=? AND c.vrbaker_missing=0 ORDER BY q.company_id",
     ).all(Date.now()) as { company_id: number }[];
     for (const { company_id } of queue) {
       try {
         if (getDeviceRole() !== "writer" || db !== connection) return;
+        if ((db.prepare('SELECT vrbaker_missing FROM companies WHERE id=?').get(company_id) as {vrbaker_missing:number}|undefined)?.vrbaker_missing) continue;
         const data = prepareBillingDelivery(db, company_id);
         const parts = Math.max(
           1,
@@ -37,6 +39,7 @@ export async function publishBilling() {
         );
         for (let part = 0; part < parts; part++) {
           if (getDeviceRole() !== "writer" || db !== connection) return;
+          if ((db.prepare('SELECT vrbaker_missing FROM companies WHERE id=?').get(company_id) as {vrbaker_missing:number}|undefined)?.vrbaker_missing) throw new Error('Compania nu mai apare în VR Baker.');
           await client.request("billing.stage", {
             ...data,
             invoices: data.invoices.slice(part * 50, (part + 1) * 50),
@@ -46,6 +49,7 @@ export async function publishBilling() {
           }, `${data.source_id}:${company_id}:${data.revision}:part:${part}`);
         }
         if (getDeviceRole() !== "writer" || db !== connection) return;
+        if ((db.prepare('SELECT vrbaker_missing FROM companies WHERE id=?').get(company_id) as {vrbaker_missing:number}|undefined)?.vrbaker_missing) continue;
         await client.request("billing.commit", {
           source_id: data.source_id,
           company_id: data.company_id,

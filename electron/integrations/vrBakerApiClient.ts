@@ -31,6 +31,7 @@ export interface VrBakerStore {
   routeOrder: number | null;
   zone: VrBakerZone | null;
   company: VrBakerCompany | null;
+  platformActive?: boolean;
 }
 
 export interface VrBakerOrderItem {
@@ -192,6 +193,7 @@ function parseStore(value: unknown): VrBakerStore {
     routeOrder: optionalRouteOrder(store.route_order),
     zone: parseZone(store.zone),
     company: parseCompany(store.client_company),
+    platformActive: typeof store.active === 'boolean' ? store.active : undefined,
   };
 }
 
@@ -380,6 +382,39 @@ export class VrBakerApiClient {
       if (!company) throw new Error('Compania VR Baker este invalidă.');
       return company;
     });
+  }
+
+  async fetchEntitySnapshot() {
+    const results = await Promise.all(['companies.list', 'stores.list'].map(action =>
+      this.request<unknown>(action, { limit: 5000, include_meta: true })));
+    const rows = results.map(value => {
+      const envelope = requireRecord(value, 'Exportul complet de entități (necesită API actualizat)');
+      if (envelope.version !== 1 || envelope.complete !== true || !Array.isArray(envelope.rows) ||
+          !Number.isSafeInteger(envelope.count) || envelope.count !== envelope.rows.length || envelope.count <= 0) {
+        throw new Error('Exportul de clienți/magazine este gol sau incomplet. Datele locale au fost păstrate; verifică API-ul VR Baker.');
+      }
+      return envelope.rows;
+    });
+    const companies = rows[0].map(value => {
+      const company = parseCompany(value);
+      if (!company) throw new Error('Compania VR Baker este invalidă.');
+      return company;
+    });
+    const stores = rows[1].map(value => {
+      const store = parseStore(value);
+      if (typeof store.platformActive !== 'boolean') throw new Error('Statutul magazinului VR Baker lipsește. Datele locale au fost păstrate.');
+      const raw = requireRecord(value, 'Magazinul');
+      if ((raw.client_company_id == null ? null : requireUuid(raw.client_company_id, 'Compania magazinului').toLowerCase()) !== (store.company?.id.toLowerCase() ?? null)) {
+        throw new Error('Asocierea magazinului nu poate fi verificată în exportul VR Baker.');
+      }
+      return store;
+    });
+    const companyIds = new Set(companies.map(row => row.id.toLowerCase()));
+    if (companyIds.size !== companies.length || new Set(stores.map(row => row.id.toLowerCase())).size !== stores.length ||
+        stores.some(row => row.company && !companyIds.has(row.company.id.toLowerCase()))) {
+      throw new Error('Exportul VR Baker conține asocieri inconsistente sau ID-uri duplicate. Reîncearcă sincronizarea.');
+    }
+    return { companies, stores };
   }
 
   async fetchStores() {
