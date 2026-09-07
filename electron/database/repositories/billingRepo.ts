@@ -502,6 +502,14 @@ export function updateInvoiceWithItems(
   return updateInvoiceTransaction(db, id, invoice.invoice_number, invoiceDate, items);
 }
 
+export function getInvoiceProductContext(invoiceIdInput: number) {
+  const invoiceId = requirePositiveInteger(invoiceIdInput, 'Factura');
+  const row = db.prepare(`SELECT s.supabase_store_id FROM invoices i
+    JOIN stores s ON s.id = i.store_id WHERE i.id = ? AND i.status != 'cancelled'`).get(invoiceId) as { supabase_store_id: string | null } | undefined;
+  if (!row) throw new Error('Factura nu există sau este anulată.');
+  return { storeExternalId: row.supabase_store_id, products: getCloudProducts().filter((product: any) => Boolean(product.available)) };
+}
+
 
 // Dashboard calculations
 export function getBillingStats(issuerId?: number) {

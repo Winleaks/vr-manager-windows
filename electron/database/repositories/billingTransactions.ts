@@ -33,6 +33,7 @@ function ensureInvoiceProductColumns(connection: SqliteDatabase) {
 
 export interface InvoiceItemInput {
   id?: number;
+  productId?: number;
   productName: string;
   name_ro?: string;
   variant_label?: string;
@@ -229,6 +230,20 @@ function validateInvoiceItems(connection: SqliteDatabase, itemsInput: InvoiceIte
   const totalAmount = items.reduce((sum, item) => sum + item.totalPrice, 0);
   if (!Number.isFinite(totalAmount)) throw new Error('Totalul facturii nu este valid.');
   return { items, totalAmount };
+}
+
+function resolveAddedCatalogItem(connection: SqliteDatabase, item: InvoiceItemInput): InvoiceItemInput {
+  const productId = requirePositiveInteger(item.productId, 'Produsul din catalog');
+  const product = connection.prepare('SELECT * FROM cloud_products WHERE id = ?').get(productId) as {
+    name: string; name_ro: string | null; variant_label: string | null; unit: string | null;
+    available: number; supabase_product_id: string | null; display_order: number | null;
+  } | undefined;
+  if (!product || !product.available) throw new Error('Produsul selectat nu mai este disponibil în catalog.');
+  // Names/identity come from SQLite. The operator may override this invoice's price.
+  return { productName: product.name, name_ro: product.name_ro || undefined,
+    variant_label: product.variant_label || undefined, unit: product.unit || undefined,
+    externalProductId: product.supabase_product_id || undefined, productOrder: product.display_order,
+    quantity: item.quantity, unitPrice: item.unitPrice };
 }
 
 export function createInvoiceBatchTransaction(
@@ -642,12 +657,15 @@ export function updateInvoiceTransaction(
       id: number; product_name: string; quantity: number; unit_price: number; total_price: number;
     }>;
     let importedItems: Array<{ id: number; quantity: number; unitPrice: number; totalPrice: number }> = [];
+    if (!Array.isArray(itemsInput) || !itemsInput.length || itemsInput.length > 1000) {
+      throw new Error('Factura trebuie să conțină între 1 și 1000 de poziții.');
+    }
+    let addedItems: ReturnType<typeof validateInvoiceItems>['items'] = [];
     if (imported) {
-      if (!Array.isArray(itemsInput) || itemsInput.length !== previousItems.length) {
-        throw new Error('Păstrează pozițiile facturii importate; poți modifica doar cantitățile și prețurile.');
-      }
       const existingIds = new Set(previousItems.map((item) => item.id));
-      importedItems = itemsInput.map((item) => {
+      const additions = itemsInput.filter((item) => item.id === undefined);
+      if (additions.length) addedItems = validateInvoiceItems(connection, additions.map((item) => resolveAddedCatalogItem(connection, item))).items;
+      importedItems = itemsInput.filter((item) => item.id !== undefined).map((item) => {
         const id = requirePositiveInteger(item.id, 'Poziția facturii');
         if (!existingIds.delete(id)) throw new Error('Poziție invalidă sau duplicată în factura importată.');
         const quantity = requireFinitePositive(item.quantity, 'Cantitatea');
@@ -656,10 +674,12 @@ export function updateInvoiceTransaction(
         if (!Number.isFinite(totalPrice)) throw new Error('Totalul poziției nu este valid.');
         return { id, quantity, unitPrice, totalPrice };
       });
+      if (existingIds.size) throw new Error('Păstrează pozițiile existente ale facturii importate; poți adăuga produse și modifica cantitățile și prețurile.');
     }
-    const validated = imported ? null : validateInvoiceItems(connection, itemsInput);
+    const validated = imported ? null : validateInvoiceItems(connection, itemsInput.map((item) =>
+      item.productId !== undefined ? resolveAddedCatalogItem(connection, item) : item));
     const totalAmount = imported
-      ? importedItems.reduce((sum, item) => sum + item.totalPrice, 0)
+      ? [...importedItems, ...addedItems].reduce((sum, item) => sum + item.totalPrice, 0)
       : validated!.totalAmount;
     if (!Number.isFinite(totalAmount)) throw new Error('Totalul facturii nu este valid.');
     const paidAmount = requireFiniteNonNegative(existing.paid_amount, 'Suma achitată a facturii');
@@ -682,11 +702,13 @@ export function updateInvoiceTransaction(
       }
     } else {
       connection.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
+    }
+    if (!imported || addedItems.length) {
       const insertItem = connection.prepare(`
         INSERT INTO invoice_items (invoice_id, product_name, product_name_ro, variant_label, unit, quantity, unit_price, total_price, product_order, external_product_id, finished_product_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT id FROM finished_products WHERE external_product_id = ? LIMIT 1))
       `);
-      for (const item of validated!.items) {
+      for (const item of imported ? addedItems : validated!.items) {
         insertItem.run(invoiceId, item.productName, item.name_ro, item.variant_label, item.unit, item.quantity, item.unitPrice, item.totalPrice, item.productOrder, item.externalProductId, item.externalProductId);
       }
     }

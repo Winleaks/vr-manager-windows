@@ -356,6 +356,22 @@ export class VrBakerApiClient {
     return data.map(parseProduct);
   }
 
+  async fetchInvoicePrices(storeIdInput: string) {
+    const storeId = requireUuid(storeIdInput, 'Magazinul').toLowerCase();
+    const data = await this.request<{ store_id: unknown; prices: unknown[] }>('products.invoice_prices', { store_id: storeId });
+    if (!data || requireUuid(data.store_id, 'Magazinul din răspuns').toLowerCase() !== storeId || !Array.isArray(data.prices) || data.prices.length >= 1000) {
+      throw new Error('Tarifele VR Baker nu corespund magazinului facturat sau sunt incomplete.');
+    }
+    const prices = new Map<string, number>();
+    for (const value of data.prices) {
+      const row = requireRecord(value, 'Tariful');
+      const productId = requireUuid(row.product_id, 'Produsul').toLowerCase();
+      if (prices.has(productId) || typeof row.unit_price !== 'number') throw new Error('Tarif VR Baker invalid sau duplicat.');
+      prices.set(productId, finiteNonNegative(row.unit_price, 'Prețul clientului'));
+    }
+    return prices;
+  }
+
   async fetchCompanies() {
     const data = await this.request<unknown[]>('companies.list', { limit: 5000 });
     if (!Array.isArray(data)) throw new Error('Lista companiilor VR Baker este invalidă.');

@@ -1,5 +1,12 @@
 ### În lucru
 
+### VR - Hub Management v0.1.98
+
+- Editorul facturii permite adăugarea produselor din catalog inclusiv pe facturile importate. Cantitatea și prețul unitar pot fi ajustate manual, iar numărul facturii, încasările și comenzile originale sunt păstrate.
+- Produsele adăugate preiau tariful clientului din VR Baker, inclusiv reducerile pe produs, categorie sau client; în lipsa reducerilor se aplică prețul standard. Dacă tarifele nu pot fi verificate online, adăugarea este blocată cu explicație, fără a împiedica editarea pozițiilor existente.
+- Iconul „Deschide factura” este disponibil din nou alături de WhatsApp și printare. Erorile deschiderii PDF-ului sunt afișate corect.
+- Componenta Windows de printare și partajare nu mai este lansată cu fereastra ascunsă. Printarea are limite de așteptare și mesaje explicite pentru blocaje; anularea rămâne distinctă de eroare, iar după o trimitere neconfirmată operatorul este avertizat să verifice coada imprimantei înainte de reîncercare.
+
 ### VR - Hub Management v0.1.97
 
 - Corectarea manuală a cantităților și prețurilor funcționează și pentru facturile importate; totalurile și statusul plății se recalculează, păstrând încasările, identitatea emitentului și legăturile cu importul original. Modificările sunt auditate.
