@@ -1,3 +1,6 @@
+import { db } from '../database/db';
+import { publishBilling } from '../integrations/billingPublisher';
+import { getInvoiceSettings } from '../database/invoiceSettings';
 import * as billingRepo from '../database/repositories/billingRepo';
 import { handleTrustedIpc } from './trustedHandler';
 import { aggregateWeeklyOrders } from '../integrations/weeklyInvoiceImport';
@@ -31,6 +34,8 @@ async function prepareWeeklyPreview(startDate: string, endDate: string) {
 }
 
 export function registerBillingHandlers() {
+  handleTrustedIpc('billing:publicationStatus', () => ({identity:db.prepare('SELECT source_id FROM billing_publication_identity WHERE id=1').get(),pending:db.prepare(`SELECT q.company_id,c.name,q.revision,q.published_revision,q.last_error FROM billing_publication_queue q LEFT JOIN companies c ON c.id=q.company_id WHERE q.revision>q.published_revision`).all()}));
+  handleTrustedIpc('billing:publishNow', async () => { db.prepare('UPDATE billing_publication_queue SET retry_at=0').run(); await publishBilling(); return true; });
   handleTrustedIpc('billing:getClients', () => billingRepo.getClients());
   handleTrustedIpc('billing:createClient', (_, data) => billingRepo.createClient(data.name, data.supabaseClientId));
   handleTrustedIpc('billing:updateClient', (_, data) => {
@@ -58,27 +63,14 @@ export function registerBillingHandlers() {
   handleTrustedIpc('billing:getStats', () => billingRepo.getBillingStats());
   handleTrustedIpc('billing:getProducts', () => billingRepo.getCloudProducts());
 
-  handleTrustedIpc('billing:getSettings', () => ({
-    invoiceSeries: billingRepo.getAppSetting('invoice_series') || 'FACT',
-    invoiceStartNumber: billingRepo.getAppSetting('invoice_start_number') || '1',
-    issuerName: billingRepo.getAppSetting('issuer_name') || '',
-    issuerAddress: billingRepo.getAppSetting('issuer_address') || '',
-    issuerCrn: billingRepo.getAppSetting('issuer_crn') || '',
-    issuerVat: billingRepo.getAppSetting('issuer_vat') || '',
-    invoiceBankName1: billingRepo.getAppSetting('invoice_bank_name_1') || billingRepo.getAppSetting('invoice_bank_name') || '',
-    invoiceAccountNumber: billingRepo.getAppSetting('invoice_account_number') || '',
-    invoiceSortCode: billingRepo.getAppSetting('invoice_sort_code') || '',
-    invoiceBankName2: billingRepo.getAppSetting('invoice_bank_name_2') || '',
-    invoiceAccountNumber2: billingRepo.getAppSetting('invoice_account_number_2') || '',
-    invoiceSortCode2: billingRepo.getAppSetting('invoice_sort_code_2') || '',
-    invoiceFooter: billingRepo.getAppSetting('invoice_footer') || '',
-    invoiceColor: billingRepo.getAppSetting('invoice_color') || '#4F46E5',
-    invoiceAlternateRowColor: billingRepo.getAppSetting('invoice_alternate_row_color') || '#4F46E5',
-    invoiceAlternateRowOpacity: Number(billingRepo.getAppSetting('invoice_alternate_row_opacity') || 5),
-    invoiceLogo: billingRepo.getAppSetting('invoice_logo') || '',
-  }));
+  handleTrustedIpc('billing:getSettings', () => getInvoiceSettings());
 
   handleTrustedIpc('billing:saveSettings', (_, data) => {
+    if (data.invoiceDriveFolderId !== undefined) {
+      const folder = String(data.invoiceDriveFolderId).trim();
+      if (folder && !/^[A-Za-z0-9_-]{10,200}$/.test(folder)) throw new Error('ID-ul folderului Drive este invalid.');
+      setting('invoice_drive_folder_id', folder);
+    }
     setting('invoice_series', data.invoiceSeries);
     setting('invoice_start_number', data.invoiceStartNumber);
     setting('issuer_name', data.issuerName);

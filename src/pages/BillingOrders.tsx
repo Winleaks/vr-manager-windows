@@ -113,7 +113,11 @@ export function BillingOrders() {
       const filename = `Factura_${settings.invoiceSeries || 'FACT'}_${currentOrder.assignedInvoiceNumber}.pdf`;
 
       await api.system.savePdfAuto({ buffer, filename });
-      api.system.uploadPdfToCloud(filename, buffer).catch(console.error);
+      const device = await api.system.getDeviceRole();
+      if (device.role === 'writer') {
+        const upload = await api.system.uploadPdfToCloud(currentOrder.assignedInvoiceId);
+        if (!upload.success) throw new Error(upload.error);
+      }
       
       return true;
     } catch (e: any) {

@@ -1,3 +1,4 @@
+import { startBillingPublisher } from './integrations/billingPublisher'
 import { app, BrowserWindow, dialog, session } from 'electron'
 import { execFileSync } from 'child_process'
 import path from 'path'
@@ -129,6 +130,7 @@ app.whenReady().then(() => {
     callback(false)
   })
   initDb()
+  startBillingPublisher()
   // Writer publică snapshot-uri; Viewer descarcă doar versiuni Drive mai noi.
   const runAutomaticBackup = async () => {
     if (getDeviceRole() !== 'writer') return

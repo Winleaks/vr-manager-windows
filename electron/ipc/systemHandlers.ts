@@ -192,9 +192,13 @@ export function registerSystemHandlers() {
     return await disconnectCloud();
   });
 
-  handleTrustedIpc('upload-pdf-to-cloud', async (_event, filename: string, buffer: Uint8Array) => {
-    const { uploadPdfToCloud } = require('../database/cloudSync');
-    return await uploadPdfToCloud(validatePdfFilename(filename), toValidatedPdfBuffer(buffer));
+  handleTrustedIpc('upload-pdf-to-cloud', async (_event, invoiceId: number) => {
+    const { uploadInvoicePdf } = await import('../database/cloudSync');
+    return uploadInvoicePdf(invoiceId);
+  });
+  handleTrustedIpc('billing:reconcilePdfs', async () => {
+    const {reconcileInvoicePdfs} = await import('../database/cloudSync');
+    return reconcileInvoicePdfs();
   });
 
   handleTrustedIpc('get-device-role', () => {

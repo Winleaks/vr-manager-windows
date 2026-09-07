@@ -42,6 +42,7 @@ const VIEWER_ALLOWED_CHANNELS = new Set([
   'billing:getSettings',
   'billing:getProducts',
   'billing:getVrBakerStatus',
+  'billing:publicationStatus',
 ]);
 
 export function isChannelAllowedForRole(role: DeviceRole, channel: string) {

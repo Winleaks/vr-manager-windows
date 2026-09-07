@@ -199,7 +199,7 @@ export class VrBakerApiClient {
     this.wait = options.wait || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   }
 
-  async request<T>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
+  async request<T>(action: string, payload: Record<string, unknown> = {}, idempotencyKey?: string): Promise<T> {
     let lastError = new Error('VR Baker Platform nu este disponibilă.');
     for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
       const controller = new AbortController();
@@ -211,6 +211,7 @@ export class VrBakerApiClient {
             'Content-Type': 'application/json',
             'X-API-Key': this.token,
             'X-Request-ID': randomUUID(),
+            ...(idempotencyKey ? {'Idempotency-Key': idempotencyKey} : {}),
           },
           body: JSON.stringify({ action, ...payload }),
           signal: controller.signal,

@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { installBillingPublication } from './billingPublication'
 import path from 'path'
 import { app } from 'electron'
 import fs from 'fs'
@@ -265,7 +266,8 @@ function runMigrations() {
             CREATE INDEX IF NOT EXISTS idx_invoice_source_batch ON invoice_source_orders(batch_id);
           `);
         }
-      }
+      },
+      { version: 7, description: "Publicare financiară VR Baker", up: () => installBillingPublication(db) }
     ];
 
     for (const migration of migrations) {

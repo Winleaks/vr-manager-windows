@@ -1,7 +1,8 @@
+import {resolveExistingInvoiceFolder,resolveCompanyInvoiceFolder,listInvoiceTree,legacyInvoiceFilenames} from '../integrations/invoiceDriveFolder';
 import fs from 'fs';
 import path from 'path';
 import { app, shell } from 'electron';
-import { dbPath, restoreDb } from './db';
+import { db, dbPath, restoreDb } from './db';
 import { google } from 'googleapis';
 import { CodeChallengeMethod } from 'google-auth-library';
 import http from 'http';
@@ -267,9 +268,8 @@ async function getOrCreateFolder(drive: any, folderName: string, parentId?: stri
 
 async function getDriveStructure(drive: any) {
   const rootFolderId = await getOrCreateFolder(drive, 'VR - Hub Management');
-  const facturiFolderId = await getOrCreateFolder(drive, 'Facturi', rootFolderId);
   const dbFolderId = await getOrCreateFolder(drive, 'Baza de date', rootFolderId);
-  return { rootFolderId, facturiFolderId, dbFolderId };
+  return { rootFolderId, dbFolderId };
 }
 
 export async function getCloudStatus(): Promise<CloudSyncStatus> {
@@ -544,56 +544,82 @@ export function syncViewerFromCloud() {
   return viewerSyncInFlight;
 }
 
-export async function uploadPdfToCloud(filename: string, buffer: Uint8Array): Promise<{ success: boolean; error?: string }> {
-  if (getDeviceRole() !== 'writer') {
-    return { success: false, error: 'Calculatorul Viewer nu poate publica documente.' };
-  }
-  if (!loadTokens()) {
-    return { success: false, error: 'Nu ești conectat la Google Drive.' };
-  }
+export async function uploadInvoicePdf(invoiceId: number): Promise<{success:boolean; fileId?:string; error?:string}> {
+  if (getDeviceRole() !== 'writer') return {success:false,error:'Doar Writer poate publica PDF-uri.'};
+  if (!Number.isSafeInteger(invoiceId) || invoiceId <= 0) throw new Error('Factura este invalidă.');
+  if (!loadTokens()) return {success:false,error:'Google Drive nu este conectat.'};
+  const connection = db;
+  const inv = connection.prepare(`SELECT i.*, c.name AS company_name,c.cui,c.reg_com,c.address AS company_address,
+    s.name AS store_name,s.address AS store_address FROM invoices i JOIN stores s ON s.id=i.store_id
+    JOIN companies c ON c.id=s.company_id WHERE i.id=?`).get(invoiceId) as any;
+  if (!inv) throw new Error('Factura nu există.');
   try {
-    const drive = google.drive({ version: 'v3', auth: oauth2Client });
-    const { facturiFolderId } = await getDriveStructure(drive);
+    const {generateInvoicePDF} = await import('../../src/utils/pdfGenerator');
+    const {getInvoiceSettings} = await import('./invoiceSettings');
+    if (connection !== db) throw new Error('Baza de date s-a schimbat.');
+    const settings = getInvoiceSettings();
+    const items = (db.prepare('SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id').all(invoiceId) as any[])
+      .map(i=>({productName:i.product_name,quantity:i.quantity,unitPrice:i.unit_price,totalPrice:i.total_price}));
+    const buffer = generateInvoicePDF(settings,{invoiceNumber:inv.invoice_number,invoiceDate:inv.invoice_date,
+      client:{name:inv.company_name,cui:inv.cui,regCom:inv.reg_com,address:inv.company_address},
+      store:{name:inv.store_name,address:inv.store_address},items,totalAmount:inv.total_amount});
+    const drive = google.drive({version:'v3',auth:oauth2Client});
+    const facturiFolderId = await resolveExistingInvoiceFolder(drive,(db.prepare("SELECT value FROM app_settings WHERE key='invoice_drive_folder_id'").get() as {value:string}|undefined)?.value);
+    const companyFolderId = await resolveCompanyInvoiceFolder(drive,facturiFolderId,inv.company_name);
+    const {Readable} = await import('node:stream');
+    // New document revisions get a new private file, so an already-published row never points to changed bytes.
+    const {source_id} = db.prepare('SELECT source_id FROM billing_publication_identity WHERE id=1').get() as {source_id:string};
+    if (connection !== db) throw new Error('Baza de date s-a schimbat.');
+    const {createHash} = await import('node:crypto');
+    const hash = createHash('sha256').update(Buffer.from(buffer)).digest('hex').slice(0,16);
+    const name = `Invoice_${source_id}_${invoiceId}_${inv.document_revision}_${hash}.pdf`;
+    const match = await drive.files.list({q:`'${companyFolderId}' in parents and name='${name}' and trashed=false`,fields:'files(id)',pageSize:2});
+    if ((match.data.files?.length || 0)>1) throw new Error('Documente duplicate în Drive.');
+    let fileId = match.data.files?.[0]?.id;
+    if (!fileId) {
+      const result = await drive.files.create({requestBody:{name,parents:[companyFolderId]},media:{mimeType:'application/pdf',body:Readable.from([Buffer.from(buffer)])},fields:'id'});
+      fileId=result.data.id;
+    }
+    if (!fileId || getDeviceRole() !== 'writer' || connection !== db) throw new Error('Publicarea PDF nu a fost finalizată.');
+    const saved = db.prepare('UPDATE invoices SET drive_file_id=? WHERE id=? AND document_revision=?').run(fileId,invoiceId,inv.document_revision);
+    if (!saved.changes) throw new Error('Factura s-a modificat; regenerează PDF-ul.');
+    return {success:true,fileId};
+  } catch { return {success:false,error:'PDF-ul nu a putut fi publicat în Drive. Reîncearcă.'}; }
+}
 
-    const { Readable } = require('stream');
-    const stream = new Readable();
-    stream.push(buffer);
-    stream.push(null);
-
-    // Căutăm dacă fișierul PDF există deja în subfolderul 'Facturi' din VR - Management
-    let fileSearch = await drive.files.list({
-      q: `name='${filename}' and '${facturiFolderId}' in parents and trashed=false`,
-      fields: 'files(id)'
+export async function reconcileInvoicePdfs() {
+  const connection = db;
+  if (getDeviceRole() !== 'writer' || !loadTokens()) throw new Error('Este necesar un Writer conectat la Drive.');
+  const {getInvoiceSettings} = await import('./invoiceSettings');
+  const series = getInvoiceSettings().invoiceSeries;
+  const drive = google.drive({version:'v3',auth:oauth2Client});
+  const facturiFolderId = await resolveExistingInvoiceFolder(drive,(db.prepare("SELECT value FROM app_settings WHERE key='invoice_drive_folder_id'").get() as {value:string}|undefined)?.value);
+  const files = new Map<string,string[]>();
+  for (const file of await listInvoiceTree(drive,facturiFolderId)) files.set(file.name,[...(files.get(file.name)||[]),file.id]);
+  if(connection !== db) throw new Error('Baza de date s-a schimbat.');
+  let linked=0; const unresolved:number[]=[];
+  for (const row of db.prepare(`SELECT i.id,i.invoice_number,i.document_revision,c.name AS company_name FROM invoices i JOIN stores s ON s.id=i.store_id JOIN companies c ON c.id=s.company_id WHERE i.drive_file_id IS NULL`).all() as any[]) {
+    const names=legacyInvoiceFilenames(row.invoice_number,series);
+    const candidates=names.flatMap(name=>(files.get(name)||[]).map(id=>({name,id})));
+    if(candidates.length!==1){unresolved.push(row.id);continue;}
+    const match=candidates[0];
+    const {resolvePdfPath} = await import('../security/fileValidation');
+    const {localClientDocumentDirectory} = await import('../reports/clientDocumentStorage');
+    const localPaths=[
+      resolvePdfPath(localClientDocumentDirectory(app.getPath('documents'),row.company_name,'Facturi'),match.name),
+      resolvePdfPath(path.join(app.getPath('documents'),'Facturi Vatra Romaneasca'),match.name),
+    ];
+    const {createHash} = await import('node:crypto');
+    const metadata = await drive.files.get({fileId:match.id,fields:'md5Checksum,size'});
+    const verified=localPaths.some(localPath=>{
+      if(!fs.existsSync(localPath) || fs.statSync(localPath).size>25*1024*1024) return false;
+      return createHash('md5').update(fs.readFileSync(localPath)).digest('hex')===metadata.data.md5Checksum;
     });
-
-    if (!fileSearch.data.files || fileSearch.data.files.length === 0) {
-      fileSearch = await drive.files.list({
-        q: `name='${filename}' and trashed=false`,
-        fields: 'files(id)'
-      });
-    }
-
-    if (fileSearch.data.files && fileSearch.data.files.length > 0) {
-      // Suprascriere fișier existent
-      const existingFile = fileSearch.data.files[0];
-      await drive.files.update({
-        fileId: existingFile.id!,
-        media: { mimeType: 'application/pdf', body: stream }
-      });
-    } else {
-      // Creare fișier nou în subfolderul Facturi din VR - Management
-      await drive.files.create({
-        requestBody: { name: filename, parents: [facturiFolderId] },
-        media: { mimeType: 'application/pdf', body: stream },
-        fields: 'id'
-      });
-    }
-
-    return { success: true };
-  } catch (e: any) {
-    console.error('Upload PDF error:', e);
-    return { success: false, error: e.message };
+    if(!verified){unresolved.push(row.id);continue;}
+    if(getDeviceRole()!=='writer' || connection !== db) throw new Error('Baza de date sau rolul s-a schimbat. Reia asocierea.');
+    linked += db.prepare('UPDATE invoices SET drive_file_id=? WHERE id=? AND document_revision=? AND drive_file_id IS NULL').run(match.id,row.id,row.document_revision).changes;
   }
+  return {linked,unresolved};
 }
 
 export async function deletePdfFromCloud(filename: string): Promise<{ success: boolean; error?: string }> {
@@ -605,19 +631,14 @@ export async function deletePdfFromCloud(filename: string): Promise<{ success: b
   }
   try {
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
-    const { facturiFolderId } = await getDriveStructure(drive);
+    const facturiFolderId = await resolveExistingInvoiceFolder(drive,(db.prepare("SELECT value FROM app_settings WHERE key='invoice_drive_folder_id'").get() as {value:string}|undefined)?.value);
 
-    let fileSearch = await drive.files.list({
-      q: `name='${filename}' and '${facturiFolderId}' in parents and trashed=false`,
+    const {validatePdfFilename} = await import('../security/fileValidation');
+    const safeName = validatePdfFilename(filename).replace(/'/g, "\\'");
+    const fileSearch = await drive.files.list({
+      q: `name='${safeName}' and '${facturiFolderId}' in parents and trashed=false`,
       fields: 'files(id)'
     });
-
-    if (!fileSearch.data.files || fileSearch.data.files.length === 0) {
-      fileSearch = await drive.files.list({
-        q: `name='${filename}' and trashed=false`,
-        fields: 'files(id)'
-      });
-    }
 
     if (fileSearch.data.files && fileSearch.data.files.length > 0) {
       for (const file of fileSearch.data.files) {

@@ -227,10 +227,14 @@ export function BillingInvoices() {
       const filename = `Factura_${settings.invoiceSeries || 'FACT'}_${inv.invoice_number}.pdf`;
 
       await api.system.savePdfAuto({ buffer, filename });
-      api.system.uploadPdfToCloud(filename, buffer).catch(console.error);
+      const device = await api.system.getDeviceRole();
+      if (device.role === 'writer') {
+        const upload = await api.system.uploadPdfToCloud(inv.id);
+        if (!upload.success) throw new Error(upload.error);
+      }
 
       if (!isQuiet) {
-        alert(`Factura #${inv.invoice_number} a fost actualizată pe calculator și în Google Drive!`);
+        alert(`Factura #${inv.invoice_number} a fost actualizată pe calculator${device.role === 'writer' ? ' și în Google Drive' : ''}!`);
       }
     } catch (e: any) {
       if (!isQuiet) alert('Eroare la generarea PDF: ' + e.message);

@@ -6,6 +6,7 @@ import { NumericInput } from '../components/NumericInput';
 export function BillingSettings() {
   const [settings, setSettings] = useState({
     invoiceSeries: 'INV',
+    invoiceDriveFolderId: '',
     invoiceStartNumber: '1',
     issuerName: '',
     issuerAddress: '',
@@ -27,6 +28,8 @@ export function BillingSettings() {
   const [showSaved, setShowSaved] = useState(false);
   const [vrBaker, setVrBaker] = useState({ endpoint: '', hasToken: false });
   const [vrBakerToken, setVrBakerToken] = useState('');
+  const [publication,setPublication]=useState<{identity?:{source_id:string};pending:{company_id:number;name:string;last_error:string|null}[]}>({pending:[]});
+  const [publicationBusy,setPublicationBusy]=useState(false);
   const [connectionMessage, setConnectionMessage] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -39,6 +42,7 @@ export function BillingSettings() {
       const data = await api.billing.getSettings();
       setSettings(prev => ({ ...prev, ...data }));
       setVrBaker(await api.billing.getVrBakerStatus());
+      setPublication(await api.billing.getPublicationStatus());
     } catch (e) {
       console.error(e);
     }
@@ -327,6 +331,20 @@ export function BillingSettings() {
             <button onClick={async () => { const result = await api.billing.configureVrBakerToken(vrBakerToken); setConnectionMessage(result.message); if (result.success) { setVrBakerToken(''); setVrBaker(await api.billing.getVrBakerStatus()); } }} disabled={!vrBakerToken} className="bg-indigo-600 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-sm font-semibold">Verifică și salvează / rotește tokenul</button>
             <button onClick={async () => setConnectionMessage((await api.billing.testVrBakerConnection()).message)} disabled={!vrBaker.hasToken} className="bg-slate-100 disabled:opacity-50 text-slate-700 px-4 py-2 rounded-xl text-sm font-semibold">Testează conexiunea</button>
             <span className={`text-sm font-medium ${vrBaker.hasToken ? 'text-emerald-700' : 'text-amber-700'}`}>{vrBaker.hasToken ? 'Token configurat' : 'Token neconfigurat'}</span>
+          </div>
+          <div className="md:col-span-2 space-y-2 rounded-xl border p-4">
+            <h3 className="font-semibold">Publicare facturi în platforma clienților</h3>
+            <label className="block text-sm">ID-ul folderului de facturi existent în Google Drive
+              <input value={settings.invoiceDriveFolderId} onChange={event=>setSettings(prev=>({...prev,invoiceDriveFolderId:event.target.value}))} placeholder="ID din linkul folderului Facturi" className="mt-1 w-full rounded-lg border px-3 py-2" />
+            </label>
+            <p className="text-xs text-slate-500">Se folosește conexiunea Google Drive existentă. Nu se creează un folder nou. Salvează setările după modificare.</p>
+            <p className="text-sm">Companii în așteptare: {publication.pending.length}. Activarea publicării se controlează din backend.</p>
+            <p className="break-all text-xs text-slate-500">Identificator Writer: {publication.identity?.source_id || 'Indisponibil'}</p>
+            <div className="flex flex-wrap gap-2">
+              <button disabled={publicationBusy} className="rounded-lg bg-slate-100 px-3 py-2 text-sm disabled:opacity-50" onClick={async()=>{setPublicationBusy(true);try{await api.billing.publishNow();setPublication(await api.billing.getPublicationStatus());}catch{setConnectionMessage('Publicarea nu a putut fi verificată.');}finally{setPublicationBusy(false);}}}>Reîncearcă sincronizarea</button>
+              <button disabled={publicationBusy} className="rounded-lg bg-slate-100 px-3 py-2 text-sm disabled:opacity-50" onClick={async()=>{setPublicationBusy(true);try{const result=await api.billing.reconcilePdfs();setConnectionMessage(`PDF-uri asociate: ${result.linked}. Necesită verificare: ${result.unresolved.join(', ') || 'niciuna'}.`);}catch{setConnectionMessage('Asocierea PDF-urilor a eșuat. Verifică accesul la Drive.');}finally{setPublicationBusy(false);}}}>Asociază PDF-urile existente din Drive</button>
+            </div>
+            {publication.pending.filter(row=>row.last_error).map(row=><p key={row.company_id} className="text-sm text-amber-700">{row.name}: {row.last_error}</p>)}
           </div>
           {connectionMessage && <p className="md:col-span-2 text-sm text-slate-600">{connectionMessage}</p>}
         </div>

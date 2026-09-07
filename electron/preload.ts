@@ -69,8 +69,8 @@ export const desktopApi = {
     saveToCloud: () => ipcRenderer.invoke('save-to-cloud'),
     restoreFromCloud: (fileId?: string) => ipcRenderer.invoke('restore-from-cloud', fileId),
     disconnectCloud: () => ipcRenderer.invoke('disconnect-cloud'),
-    uploadPdfToCloud: (filename: string, buffer: Uint8Array) =>
-      ipcRenderer.invoke('upload-pdf-to-cloud', filename, buffer),
+    uploadPdfToCloud: (invoiceId: number) =>
+      ipcRenderer.invoke('upload-pdf-to-cloud', invoiceId),
     getSyncStatus: () => ipcRenderer.invoke('get-sync-status'),
     getDeviceRole: () => ipcRenderer.invoke('get-device-role'),
     setDeviceRole: (role: 'writer' | 'viewer') => ipcRenderer.invoke('set-device-role', role),
@@ -128,6 +128,9 @@ export const desktopApi = {
     getStats: () => ipcRenderer.invoke('billing:getStats'),
     getSettings: () => ipcRenderer.invoke('billing:getSettings'),
     saveSettings: (data: any) => ipcRenderer.invoke('billing:saveSettings', data),
+    getPublicationStatus: () => ipcRenderer.invoke('billing:publicationStatus'),
+    publishNow: () => ipcRenderer.invoke('billing:publishNow'),
+    reconcilePdfs: () => ipcRenderer.invoke('billing:reconcilePdfs'),
     getVrBakerStatus: () => ipcRenderer.invoke('billing:getVrBakerStatus'),
     configureVrBakerToken: (token: string) => ipcRenderer.invoke('billing:configureVrBakerToken', token),
     testVrBakerConnection: () => ipcRenderer.invoke('billing:testVrBakerConnection'),
