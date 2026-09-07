@@ -1,4 +1,4 @@
-### În lucru
+### VR - Hub Management v0.1.102
 
 - Trimiterea din registrul normal pregătește o copie locală verificată a PDF-ului, cu numele și extensia păstrate. Transferul Windows folosește această copie, fără acces de scriere la factura originală, și păstrează sursa disponibilă după predarea către WhatsApp. Copia este eliminată la închidere, blocare sau expirare; resturile unei opriri neașteptate sunt curățate la următoarea pornire. Confirmarea pregătirii nu este prezentată drept confirmare a livrării către destinatar.
 - Printarea deschide mai întâi previzualizarea PDF-ului în hub, cu navigare între pagini și anulare fără imprimare. Alegerea imprimantei rămâne în dialogul Windows existent; acesta nu este folosit pentru previzualizare. Paginile sunt randate individual, fără încărcarea întregii facturi în memorie ca imagini.
