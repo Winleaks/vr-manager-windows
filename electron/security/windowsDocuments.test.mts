@@ -152,6 +152,50 @@ test('stalled print selection cannot leave the invoice loading indefinitely', as
   }
 });
 
+test('preview keeps a bounded watchdog and never claims that printing occurred', async () => {
+  const fixture = childFixture();
+  const pending = monitorWindowsDocumentProcess(fixture.child, 'print', 1000, { previewMs: 5 });
+  fixture.emit('previewing');
+  fixture.emit('previewing');
+  const result = await pending;
+  assert.equal(result.success, false);
+  assert.match(result.error!, /Previzualizarea/);
+  assert.match(result.error!, /Nu s-a trimis nimic/);
+  assert.equal(fixture.child.killed, true);
+});
+
+test('preview cancellation is not an error and selecting a printer replaces the preview deadline', async () => {
+  const canceled = childFixture();
+  const cancellation = monitorWindowsDocumentProcess(canceled.child, 'print', 1000, { previewMs: 5 });
+  canceled.emit('previewing');
+  canceled.emit('canceled');
+  assert.deepEqual(await cancellation, { success: false, canceled: true });
+  canceled.close();
+  const fixture = childFixture();
+  const pending = monitorWindowsDocumentProcess(fixture.child, 'print', 1000, { previewMs: 5, dialogMs: 30 });
+  fixture.emit('previewing');
+  fixture.emit('selecting');
+  fixture.emit('previewing');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(fixture.child.killed, false);
+  fixture.emit('printing');
+  fixture.emit('printed');
+  assert.deepEqual(await pending, { success: true });
+  fixture.close();
+});
+
+test('native print starts with an actual PDF preview and printing remains an explicit action', () => {
+  const native = readFileSync(new URL('../../native/windows-documents/Program.cs', import.meta.url), 'utf8');
+  assert.match(native, /else await ShowPrintPreviewAsync\(pdf\)/);
+  assert.match(native, /SizeMode = PictureBoxSizeMode.Zoom/);
+  assert.match(native, /var bitmap = await RenderPageAsync\(pdf, index\)/);
+  assert.match(native, /old\?\.Dispose\(\)/);
+  assert.match(native, /print.Click \+=[\s\S]*await PrintAsync\(pdf\)/);
+  assert.match(native, /cancel.Focus\(\)/);
+  assert.match(native, /ShowPageAsync\(pdf.PageCount - 1\)/);
+  assert.match(native, /Program.Reply\("preview-validated"/);
+});
+
 test('stalled submission warns about possible printed pages instead of promising a safe retry', async () => {
   const fixture = childFixture();
   const pending = monitorWindowsDocumentProcess(fixture.child, 'print', 1000, { dialogMs: 5, printingMs: 15 });
@@ -203,7 +247,7 @@ test('GUI launch and Windows smoke test must not hide the native window', () => 
   assert.match(native, /Program.Reply\("printing"\);\s*document.Print\(\);/);
 });
 
-test('native implementation uses WinRT file sharing and native print without PDF preview', () => {
+test('native implementation uses WinRT file sharing and native print without Chromium PDF plugins', () => {
   const native = readFileSync(new URL('../../native/windows-documents/Program.cs', import.meta.url), 'utf8');
   const system = readFileSync(new URL('../ipc/systemHandlers.ts', import.meta.url), 'utf8');
   assert.match(native, /DataTransferManagerInterop.GetForWindow/);

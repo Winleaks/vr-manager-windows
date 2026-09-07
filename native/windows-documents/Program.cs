@@ -15,7 +15,7 @@ internal static class Program
         ApplicationConfiguration.Initialize();
         try
         {
-            if (args.Length != 2 || args[0] is not ("share" or "print" or "validate"))
+            if (args.Length != 2 || args[0] is not ("share" or "print" or "validate" or "validate-preview"))
                 throw new ArgumentException("Invalid document operation.");
             var pdfPath = ValidatePath(args[1]);
             using var form = new DocumentWindow(args[0], pdfPath);
@@ -63,6 +63,7 @@ internal sealed class DocumentWindow : Form
     private readonly System.Windows.Forms.Timer lifetime = new() { Interval = 600_000 };
     private DataTransferManager? shareManager;
     private bool completed;
+    private readonly Label statusLabel = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Text = "Se pregătește PDF-ul..." };
 
     internal DocumentWindow(string operation, string pdfPath)
     {
@@ -75,7 +76,7 @@ internal sealed class DocumentWindow : Form
         MaximizeBox = false;
         MinimizeBox = false;
         ShowInTaskbar = true;
-        Controls.Add(new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Text = "Se pregătește PDF-ul..." });
+        Controls.Add(statusLabel);
         Shown += async (_, _) => await StartAsync();
         lifetime.Tick += (_, _) => Close();
         FormClosed += (_, _) => {
@@ -104,7 +105,7 @@ internal sealed class DocumentWindow : Form
             }
             lifetime.Start();
             if (operation == "share") StartShare(storageFile);
-            else await PrintAsync(pdf);
+            else await ShowPrintPreviewAsync(pdf);
         }
         catch (Exception error)
         {
@@ -116,7 +117,7 @@ internal sealed class DocumentWindow : Form
 
     private void StartShare(StorageFile file)
     {
-        Controls[0].Text = "Alege WhatsApp în fereastra Windows Share, apoi contactul.\nPoți închide această fereastră pentru a anula.";
+        statusLabel.Text = "Alege WhatsApp în fereastra Windows Share, apoi contactul.\nPoți închide această fereastră pentru a anula.";
         // Own a real STA window and keep its loop alive during deferred transfers.
         shareManager = DataTransferManagerInterop.GetForWindow(Handle);
         shareManager.DataRequested += (_, args) => {
@@ -139,6 +140,94 @@ internal sealed class DocumentWindow : Form
         };
         DataTransferManagerInterop.ShowShareUIForWindow(Handle);
         Program.Reply("opened");
+    }
+
+    private async Task ShowPrintPreviewAsync(PdfDocument pdf)
+    {
+        Text = $"Previzualizare — {Path.GetFileNameWithoutExtension(pdfPath)} — VR Hub";
+        FormBorderStyle = FormBorderStyle.Sizable;
+        MaximizeBox = true;
+        MinimumSize = new Size(580, 420);
+        var area = Screen.FromControl(this).WorkingArea;
+        ClientSize = new Size(Math.Min(960, area.Width - 60), Math.Min(820, area.Height - 80));
+        CenterToScreen();
+        Controls.Clear();
+        var image = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.FromArgb(225, 228, 233), AccessibleName = "Pagina facturii" };
+        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8), WrapContents = true };
+        var previous = new Button { Text = "◀ Anterior", AutoSize = true, Enabled = false };
+        var next = new Button { Text = "Următor ▶", AutoSize = true, Enabled = false };
+        var pageLabel = new Label { AutoSize = true, Margin = new Padding(12, 8, 12, 0) };
+        var print = new Button { Text = "Alege imprimanta…", AutoSize = true, Enabled = false };
+        var cancel = new Button { Text = "Renunță", AutoSize = true };
+        toolbar.Controls.AddRange(new Control[] { previous, pageLabel, next, print, cancel });
+        statusLabel.Dock = DockStyle.Bottom;
+        statusLabel.Height = 48;
+        Controls.Add(image);
+        Controls.Add(statusLabel);
+        Controls.Add(toolbar);
+        CancelButton = cancel;
+        cancel.Click += (_, _) => Close();
+        FormClosed += (_, _) => { image.Image?.Dispose(); image.Image = null; };
+        uint currentPage = 0;
+        bool busy = false;
+        bool choosingPrinter = false;
+
+        async Task ShowPageAsync(uint index)
+        {
+            if (busy || choosingPrinter || IsDisposed || index >= pdf.PageCount) return;
+            busy = true;
+            previous.Enabled = next.Enabled = print.Enabled = false;
+            try
+            {
+                var bitmap = await RenderPageAsync(pdf, index);
+                if (IsDisposed) { bitmap.Dispose(); return; }
+                var old = image.Image;
+                image.Image = bitmap;
+                old?.Dispose();
+                currentPage = index;
+                pageLabel.Text = $"Pagina {index + 1} din {pdf.PageCount}";
+                statusLabel.Text = "Acesta este PDF-ul facturii. Verifică paginile, apoi alege imprimanta.\nDialogul Windows poate să nu afișeze o previzualizare proprie.";
+            }
+            catch (Exception error) { completed = true; Program.Fail(error); Close(); }
+            finally
+            {
+                busy = false;
+                if (!IsDisposed)
+                {
+                    previous.Enabled = currentPage > 0;
+                    next.Enabled = currentPage + 1 < pdf.PageCount;
+                    print.Enabled = image.Image is not null;
+                }
+            }
+        }
+
+        previous.Click += async (_, _) => { if (currentPage > 0) await ShowPageAsync(currentPage - 1); };
+        next.Click += async (_, _) => await ShowPageAsync(currentPage + 1);
+        print.Click += async (_, _) => {
+            if (busy || choosingPrinter || image.Image is null) return;
+            choosingPrinter = true;
+            toolbar.Enabled = false;
+            try { await PrintAsync(pdf); }
+            catch (Exception error) { completed = true; Program.Fail(error); Close(); }
+        };
+        await ShowPageAsync(0);
+        if (IsDisposed || image.Image is null) return;
+        cancel.Focus(); // Enter must not submit a print job by default.
+        Program.Reply("previewing", pages: (int)pdf.PageCount, windowVisible: IsWindowVisible(Handle));
+        if (operation == "validate-preview")
+        {
+            // Exercise the real preview and page navigation without opening a
+            // printer dialog, contacting a printer, or creating a spool job.
+            await ShowPageAsync(pdf.PageCount - 1);
+            if (IsDisposed) return;
+            if (image.Image is null || currentPage != pdf.PageCount - 1) throw new InvalidDataException("Preview page unavailable.");
+            await ShowPageAsync(0);
+            if (IsDisposed) return;
+            if (image.Image is null || currentPage != 0 || !image.Visible || !print.Enabled) throw new InvalidDataException("Preview unavailable.");
+            completed = true;
+            Program.Reply("preview-validated", pages: (int)pdf.PageCount, windowVisible: IsWindowVisible(Handle));
+            Close();
+        }
     }
 
     private static async Task<Bitmap> RenderPageAsync(PdfDocument pdf, uint pageIndex)
@@ -177,7 +266,7 @@ internal sealed class DocumentWindow : Form
             Document = document, UseEXDialog = true, AllowSomePages = true,
             AllowSelection = false, AllowCurrentPage = false,
         };
-        Controls[0].Text = "Alege imprimanta și paginile în dialogul Windows.";
+        statusLabel.Text = "Alege imprimanta și paginile în dialogul Windows.";
         BringToFront();
         Activate();
         // This marks selection starting, not proof that the OS dialog opened.
@@ -200,7 +289,7 @@ internal sealed class DocumentWindow : Form
                 area.Y - e.PageSettings.HardMarginY + (area.Height - height) / 2, width, height);
             e.HasMorePages = ++index < last;
         };
-        Controls[0].Text = "Se trimit paginile la imprimantă...";
+        statusLabel.Text = "Se trimit paginile la imprimantă...";
         await Task.Yield();
         if (IsDisposed) return;
         Program.Reply("printing");

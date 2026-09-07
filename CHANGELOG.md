@@ -1,5 +1,6 @@
 ### În lucru
 
+- Printarea deschide mai întâi previzualizarea PDF-ului în hub, cu navigare între pagini și anulare fără imprimare. Alegerea imprimantei rămâne în dialogul Windows existent; acesta nu este folosit pentru previzualizare. Paginile sunt randate individual, fără încărcarea întregii facturi în memorie ca imagini.
 - Trimiterea facturilor și Credit Notes din registrul separat folosește aceeași componentă nativă ca facturile obișnuite, cu PDF validat și proces păstrat pentru citirea atașamentului. Metoda veche PowerShell nu mai este folosită pentru aceste documente; blocarea registrului oprește transferurile sale, fără a închide dialogurile altor facturi.
 - Câmpurile de cantitate și preț din Credit Notes permit ștergerea completă și rescrierea valorii; registrul separat nu mai reintroduce automat valoarea inițială. Valorile incomplete sunt semnalate la emitere, fără blocarea tastării.
 - Alertele și confirmările rendererului sunt afișate în hub, fără ferestrele native Chromium care pot afecta focusul pe Windows. Confirmările financiare și distructive rămân explicite, cu anulare implicită; mesajele registrului separat dispar la blocarea acestuia.

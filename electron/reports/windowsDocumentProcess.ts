@@ -28,7 +28,7 @@ export function buildWindowsDocumentCommand(helperPath: string, operation: Nativ
 
 export function parseWindowsDocumentEvent(line: string): { status: string; message?: string } {
   const event = JSON.parse(line);
-  if (event?.protocol !== 1 || !['opened', 'selecting', 'printing', 'attached', 'printed', 'canceled', 'error'].includes(event.status)) throw new Error('Răspuns invalid de la componenta Windows.');
+  if (event?.protocol !== 1 || !['opened', 'previewing', 'selecting', 'printing', 'attached', 'printed', 'canceled', 'error'].includes(event.status)) throw new Error('Răspuns invalid de la componenta Windows.');
   return { status: event.status, message: typeof event.message === 'string' ? event.message.slice(0, 300) : undefined };
 }
 
@@ -45,7 +45,7 @@ export async function runWindowsDocumentProcess(helperPath: string, operation: N
   return monitorWindowsDocumentProcess(child, operation, 30_000, { sourcePath: filePath });
 }
 
-export function monitorWindowsDocumentProcess(child: ChildProcess, operation: NativeDocumentOperation, startupTimeoutMs = 30_000, timeouts: { dialogMs?: number; printingMs?: number; sourcePath?: string } = {}): Promise<NativeDocumentResult> {
+export function monitorWindowsDocumentProcess(child: ChildProcess, operation: NativeDocumentOperation, startupTimeoutMs = 30_000, timeouts: { previewMs?: number; dialogMs?: number; printingMs?: number; sourcePath?: string } = {}): Promise<NativeDocumentResult> {
   return new Promise((resolve) => {
     activeChildren.set(child, timeouts.sourcePath);
     let buffer = '';
@@ -53,6 +53,7 @@ export function monitorWindowsDocumentProcess(child: ChildProcess, operation: Na
     let opened = false;
     let attached = false;
     let selecting = false;
+    let previewing = false;
     let printing = false;
     let timer: ReturnType<typeof setTimeout>;
     const submissionWarning = 'Verifică documentele și coada imprimantei înainte să reimprimi: unele pagini pot fi deja trimise.';
@@ -86,6 +87,10 @@ export function monitorWindowsDocumentProcess(child: ChildProcess, operation: Na
         try {
           const event = parseWindowsDocumentEvent(line);
           if (event.status === 'opened') opened = true;
+          if (operation === 'print' && event.status === 'previewing' && !previewing && !selecting && !printing) {
+            previewing = true;
+            deadline(timeouts.previewMs ?? 300_000, 'Previzualizarea a fost închisă după 5 minute. Nu s-a trimis nimic la imprimantă.');
+          }
           // Do not remove the watchdog merely because a dialog is about to open.
           // Also handle "opened" from an older bundled print helper safely.
           if (operation === 'print' && !selecting && !printing && ['selecting', 'opened'].includes(event.status)) {
