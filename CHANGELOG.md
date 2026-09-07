@@ -1,5 +1,13 @@
 ### În lucru
 
+### VR - Hub Management v0.1.101
+
+- Repară eroarea „db is not defined” la asocierea PDF-urilor existente și încărcarea facturilor în Drive.
+- Sincronizarea completă poate repara asocierile istorice cu o companie verificată și poate prelua unirile de magazine aprobate în platformă. Writer-ul cere confirmare și creează un backup verificat înainte de modificare.
+- Facturile, produsele, sumele și comenzile originale sunt păstrate. Legătura importului se mută pe magazinul păstrat, fără facturare dublă; conflictele de perioadă, plăți sau credite opresc repararea.
+- Înregistrările virtuale vechi, fără istoric financiar și deja înlocuite printr-o asociere exactă, nu mai aglomerează lista companiilor și coada de publicare. Datele istorice nu sunt șterse.
+- Include toate modificările din v0.1.100. După actualizare, rulează sincronizarea din „Clienți & Entități”, verifică lista și confirmă repararea, apoi reîncearcă asocierea PDF-urilor și publicarea facturilor.
+
 ### VR - Hub Management v0.1.100
 
 - Editarea facturii actualizează PDF-ul de lucru existent în Drive și îl mută din structura veche în folderul clientului, păstrând ID-ul și linkul. Copiile tehnice ale platformei rămân separate; duplicatele ambigue nu sunt suprascrise automat.
