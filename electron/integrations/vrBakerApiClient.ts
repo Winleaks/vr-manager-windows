@@ -34,6 +34,8 @@ export interface VrBakerStore {
   platformActive?: boolean;
 }
 
+export interface VrBakerStoreMerge { oldStoreId: string; storeId: string }
+
 export interface VrBakerOrderItem {
   id: string;
   productId: string;
@@ -414,7 +416,21 @@ export class VrBakerApiClient {
         stores.some(row => row.company && !companyIds.has(row.company.id.toLowerCase()))) {
       throw new Error('Exportul VR Baker conține asocieri inconsistente sau ID-uri duplicate. Reîncearcă sincronizarea.');
     }
-    return { companies, stores };
+    const metadata = requireRecord(results[1], 'Exportul magazinelor');
+    const merges: VrBakerStoreMerge[] = [];
+    if (metadata.merges !== undefined) {
+      if (!Array.isArray(metadata.merges) || metadata.merges_complete !== true) throw new Error('Lista unirilor de magazine este incompletă.');
+      const seen = new Set<string>();
+      const current = new Set(stores.map(row=>row.id.toLowerCase()));
+      for (const value of metadata.merges) {
+        const row = requireRecord(value, 'Unirea magazinului');
+        const oldStoreId = requireUuid(row.old_store_id, 'Magazinul anterior').toLowerCase();
+        const storeId = requireUuid(row.store_id, 'Magazinul păstrat').toLowerCase();
+        if (seen.has(oldStoreId) || current.has(oldStoreId) || !current.has(storeId)) throw new Error('Asociere de magazine unite invalidă.');
+        seen.add(oldStoreId); merges.push({oldStoreId,storeId});
+      }
+    }
+    return { companies, stores, merges };
   }
 
   async fetchStores() {

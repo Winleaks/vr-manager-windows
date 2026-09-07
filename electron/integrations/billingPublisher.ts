@@ -1,6 +1,7 @@
 import { db, waitForDatabaseReady } from "../database/db";
 import { getDeviceRole } from "../device/deviceRole";
 import { createVrBakerClient } from "./vrBakerIntegration";
+import { retiredLegacyCompanyIds } from '../database/legacyEntityRepair';
 import {
   acknowledgeBillingDelivery,
   prepareBillingDelivery,
@@ -28,7 +29,8 @@ export async function publishBilling() {
     const queue = db.prepare(
       "SELECT q.company_id FROM billing_publication_queue q JOIN companies c ON c.id=q.company_id WHERE q.revision>q.published_revision AND q.retry_at<=? AND c.vrbaker_missing=0 ORDER BY q.company_id",
     ).all(Date.now()) as { company_id: number }[];
-    for (const { company_id } of queue) {
+    const retired = retiredLegacyCompanyIds(db);
+    for (const { company_id } of queue.filter(row=>!retired.has(row.company_id))) {
       try {
         if (getDeviceRole() !== "writer" || db !== connection) return;
         if ((db.prepare('SELECT vrbaker_missing FROM companies WHERE id=?').get(company_id) as {vrbaker_missing:number}|undefined)?.vrbaker_missing) continue;

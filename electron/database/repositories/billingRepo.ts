@@ -41,6 +41,7 @@ import {
 } from '../creditNotes';
 import { requirePositiveInteger } from '../businessValidation';
 import { assertEntitySyncSafe, reconcileEntityPresence, flagPossibleCompanyDuplicates } from '../entitySync';
+import { retiredLegacyCompanyIds } from '../legacyEntityRepair';
 
 // Settings
 export function getAppSetting(key: string): string | null {
@@ -258,7 +259,8 @@ export function getAllCompaniesAndStores() {
   `).all() as any[];
   const stores = db.prepare('SELECT * FROM stores ORDER BY name').all() as any[];
 
-  return flagPossibleCompanyDuplicates(companies).map(c => {
+  const retired = retiredLegacyCompanyIds(db);
+  return flagPossibleCompanyDuplicates(companies.filter(c=>!retired.has(c.id))).map(c => {
     const compStores = stores.filter(s => s.company_id === c.id);
     const storeIds = compStores.map(s => s.id);
     let unpaidInvoicesCount = 0;

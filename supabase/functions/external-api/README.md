@@ -45,3 +45,19 @@ Recovery: retain original function definition/privileges before deployment. Pref
 a compatible forward fix. Restoring the previous direct-only predicate/API would
 again hide owner-linked stores and reject their invoice publication; do not erase
 stored invoices, reassign stores, downgrade the desktop or alter flags as rollback.
+
+## Approved store merges
+
+Apply `hub_store_merges` before deploying this API. The counted `stores.list`
+envelope additionally returns `merges` and `merges_complete`; legacy array callers
+are unchanged. Only service-side reads can access the merge ledger. Operational
+merges require explicit approval, exact IDs, backup, dependency/period conflict
+checks and a single transaction; this API cannot create a merge.
+
+The updated Writer asks for confirmation and creates a fresh verified backup
+before moving unpaid placeholder history to a verified company or canonical
+store. It retains local tombstones, invoice numbers, line items, issuer identities
+and source-order IDs. Duplicate billed periods and payment/credit conflicts fail
+closed. A later source revision remains a manual review, never automatic rebilling.
+Older installed Writers retain their conflict/duplicate guards but cannot perform
+this repair. Do not replace a current Writer database with an old support backup.

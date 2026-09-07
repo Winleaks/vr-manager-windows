@@ -316,7 +316,12 @@ const actions: Record<string, ActionDefinition> = {
         .limit(limit);
       ensureDatabaseSuccess(error);
       const rows = (data ?? []).map(resolveStoreCompany);
-      if (payload.include_meta === true) return { version: 1, rows, count, complete: count !== null && count === rows.length };
+      if (payload.include_meta === true) {
+        const aliases = await supabaseAdmin.from('hub_store_merges').select('old_store_id, store_id', {count:'exact'}).order('old_store_id').limit(5000);
+        ensureDatabaseSuccess(aliases.error);
+        return { version: 1, rows, count, complete: count !== null && count === rows.length,
+          merges: aliases.data ?? [], merges_complete: aliases.count !== null && aliases.count === aliases.data?.length };
+      }
       return rows;
     },
   },

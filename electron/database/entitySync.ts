@@ -11,7 +11,7 @@ export function installEntitySyncState(db: Database.Database) {
   db.exec('ALTER TABLE stores ADD COLUMN platform_active INTEGER CHECK(platform_active IN (0,1))');
 }
 
-export function assertEntitySyncSafe(db: Database.Database, companies: VrBakerCompany[], stores: VrBakerStore[], complete = true) {
+export function assertEntitySnapshotIdentifiers(db: Database.Database, companies: VrBakerCompany[], stores: VrBakerStore[], complete = true) {
   const ids = new Set(companies.map(row => row.id.toLowerCase()));
   if ((complete && (!companies.length || !stores.length)) || ids.size !== companies.length || new Set(stores.map(row => row.id.toLowerCase())).size !== stores.length ||
       companies.some(row => !externalEntityId.test(row.id)) || stores.some(row => !externalEntityId.test(row.id) || (complete && typeof row.platformActive !== 'boolean') || (row.company && !ids.has(row.company.id.toLowerCase())))) {
@@ -21,6 +21,10 @@ export function assertEntitySyncSafe(db: Database.Database, companies: VrBakerCo
     const duplicates = db.prepare(`SELECT ${column} FROM ${table} WHERE ${column} IS NOT NULL GROUP BY lower(${column}) HAVING COUNT(*)>1`).all();
     if (duplicates.length) throw new Error('Există ID-uri VR Baker asociate mai multor înregistrări locale. Este necesară verificarea duplicatelor înainte de sincronizare.');
   }
+}
+
+export function assertEntitySyncSafe(db: Database.Database, companies: VrBakerCompany[], stores: VrBakerStore[], complete = true) {
+  assertEntitySnapshotIdentifiers(db, companies, stores, complete);
   for (const store of stores) {
     const local = db.prepare(`SELECT c.supabase_company_id AS company_external_id FROM stores s JOIN companies c ON c.id=s.company_id
       WHERE s.supabase_store_id=? COLLATE NOCASE AND EXISTS(SELECT 1 FROM invoices i WHERE i.store_id=s.id)`).get(store.id) as {company_external_id:string|null}|undefined;

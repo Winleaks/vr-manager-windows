@@ -35,6 +35,17 @@ test('API count envelope is opt-in, read-only and does not filter inactive store
   assert.match(endpoints,/return data \?\? \[\]/);
 });
 
+test('explicit merge metadata is counted and rejects duplicate, missing and still-live source identities',async()=>{
+  const oldStore='33333333-3333-3333-3333-333333333333';
+  const merge={old_store_id:oldStore,store_id:store.id};
+  const metadata={...envelope([store]),merges:[merge],merges_complete:true};
+  assert.deepEqual((await client(undefined,metadata).fetchEntitySnapshot()).merges,[{oldStoreId:oldStore,storeId:store.id}]);
+  for(const bad of [{...metadata,merges_complete:false},{...metadata,merges:[merge,merge]},
+    {...metadata,merges:[{...merge,store_id:oldStore}]},{...metadata,merges:[{...merge,old_store_id:store.id}]}]){
+    await assert.rejects(client(undefined,bad).fetchEntitySnapshot());
+  }
+});
+
 test('entity sync UI checks resolved IPC failures and shows numeric success counts',()=>{
   const page=readFileSync(new URL('../../src/pages/BillingClients.tsx',import.meta.url),'utf8');
   const handler=readFileSync(new URL('../ipc/billingHandlers.ts',import.meta.url),'utf8');

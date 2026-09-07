@@ -18,6 +18,7 @@ import {
   uploadCreditNotePdfToCloud,
 } from '../database/cloudSync';
 import { db, backupDb } from '../database/db';
+import { retiredLegacyCompanyIds } from '../database/legacyEntityRepair';
 import { selectReadyGroupsForZone } from '../integrations/weeklyZoneBilling';
 import {
   assertNormalStoreAllowed,
@@ -269,14 +270,16 @@ export function registerBillingHandlers() {
     return error ? { success: false, message: error } : { success: true, filePath };
   });
 
-  handleTrustedIpc('billing:publicationStatus', () => ({
+  handleTrustedIpc('billing:publicationStatus', () => {
+    const retired = retiredLegacyCompanyIds(db);
+    return {
     publishing:isBillingPublishing(),
     identity:db.prepare('SELECT source_id FROM billing_publication_identity WHERE id=1').get(),
-    pending:db.prepare('SELECT q.*,c.name FROM billing_publication_queue q JOIN companies c ON c.id=q.company_id WHERE q.revision>q.published_revision AND c.vrbaker_missing=0').all(),
+    pending:db.prepare('SELECT q.*,c.name FROM billing_publication_queue q JOIN companies c ON c.id=q.company_id WHERE q.revision>q.published_revision AND c.vrbaker_missing=0').all().filter((row:any)=>!retired.has(row.company_id)),
     excluded:db.prepare('SELECT c.id,c.name FROM companies c WHERE c.vrbaker_missing=1').all(),
     invoiceCount:(db.prepare('SELECT count(*) AS n FROM invoices').get() as {n:number}).n,
     folderId:billingRepo.getAppSetting('invoice_drive_folder_id')||'',
-  }));
+  }; });
   handleTrustedIpc('billing:publishNow', async () => {
     db.prepare('UPDATE billing_publication_queue SET retry_at=0').run();
     const {publishBilling}=await import('../integrations/billingPublisher');

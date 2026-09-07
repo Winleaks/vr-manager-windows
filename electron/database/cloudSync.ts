@@ -3,7 +3,7 @@ import { InvoiceDriveDocumentError, updateInvoiceDriveDocument, withInvoiceDrive
 import fs from 'fs';
 import path from 'path';
 import { app, shell } from 'electron';
-import { dbPath, restoreDb } from './db';
+import { db, dbPath, restoreDb } from './db';
 import { google } from 'googleapis';
 import { CodeChallengeMethod } from 'google-auth-library';
 import http from 'http';
