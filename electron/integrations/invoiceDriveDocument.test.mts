@@ -101,7 +101,7 @@ test('new invoice creates one readable PDF; subsequent save updates the same ID'
   const first=await updateInvoiceDriveDocument(f.drive,f.input);
   const second=await updateInvoiceDriveDocument(f.drive,f.input);
   assert.equal(first.fileId,second.fileId);
-  assert.deepEqual(f.writes.map(row=>row.kind),['create','update']);
+  assert.deepEqual(f.writes.map(row=>row.kind),['create']);
   assert.equal(f.writes[0].args.requestBody.name,name);
 });
 
@@ -154,7 +154,7 @@ test('response loss after provider create or update recovers without duplicate f
     await assert.rejects(updateInvoiceDriveDocument(f.drive,f.input),/response lost/);
     const result=await updateInvoiceDriveDocument(f.drive,f.input);
     assert.ok(result.fileId);
-    assert.equal(f.writes[1].kind,'update');
+    assert.equal(f.writes.length,1);
     assert.equal([...f.records.values()].filter(row=>row.name===name).length,1);
   }
 });
@@ -173,13 +173,13 @@ test('invoice uploads serialize including authoritative reads and recover after 
   assert.deepEqual(order,['first read','unrelated','first write','second read','second write']);
 });
 
-test('main keeps current document checks, verified working copy, and separate platform revision references',()=>{
+test('main keeps current document checks and publishes the single verified PDF ID',()=>{
   const source=readFileSync(new URL('../database/cloudSync.ts',import.meta.url),'utf8');
   const upload=source.slice(source.indexOf('export async function uploadInvoicePdf'),source.indexOf('export async function reconcileInvoicePdfs'));
   assert.match(upload,/withInvoiceDriveLock\(invoiceId, \(\) => trackDocumentUpload/);
   assert.match(upload,/\(\) => uploadCurrentInvoicePdf\(invoiceId\)/);
   assert.match(upload,/getDeviceRole\(\) !== 'writer'/);
   assert.match(upload,/current.document_revision !== inv.document_revision/);
-  assert.ok(upload.indexOf('await updateInvoiceDriveDocument') < upload.indexOf('UPDATE invoices SET drive_file_id'));
-  assert.match(upload,/Invoice_\$\{source_id\}_\$\{invoiceId\}_\$\{inv.document_revision\}_\$\{hash\}/);
+  assert.ok(upload.indexOf('await syncSingleInvoicePdf') < upload.indexOf('UPDATE invoices SET drive_file_id'));
+  assert.doesNotMatch(upload,/const name = `Invoice_\$\{source_id\}/);
 });

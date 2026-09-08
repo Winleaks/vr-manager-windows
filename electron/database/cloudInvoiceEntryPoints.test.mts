@@ -8,6 +8,9 @@ import ts from 'typescript';
 import { legacyInvoiceFilenames } from '../integrations/invoiceDriveFolder.ts';
 import { generateInvoicePDF } from '../../src/utils/pdfGenerator.ts';
 import { assertUploadedFileMatches } from './cloudSyncPolicy.ts';
+import * as singleInvoice from '../integrations/singleInvoiceDriveDocument.ts';
+import Database from 'better-sqlite3';
+import {installInvoiceDriveIdentity,invoiceCopyCleanupError,retryInvoiceCopyCleanup} from './invoiceDriveIdentity.ts';
 
 const requireBuiltin = createRequire(import.meta.url);
 const source = readFileSync(new URL('./cloudSync.ts', import.meta.url), 'utf8');
@@ -36,6 +39,7 @@ function fixture() {
   }) };
   const databaseModule = { db: connection, dbPath: '/test/fixture.db' };
   const mocks: Record<string, unknown> = {
+    '../integrations/singleInvoiceDriveDocument': singleInvoice,
     './db': databaseModule,
     '../integrations/driveFolderLock': { withDriveFolderLock: async (_parent: unknown, _name: unknown, action: () => unknown) => action() },
     './documentSyncQueue': { trackDocumentUpload: async (_db: unknown, _kind: unknown, _id: number, current: () => boolean, action: () => unknown) => current() ? action() : {success:false} },
@@ -71,12 +75,18 @@ function fixture() {
     },
   });
   return { api: exports, writes, row,
+    configureCleanup:(database:Database.Database,drive:unknown)=>{databaseModule.db=database as any;(mocks.googleapis as any).google.drive=()=>drive;Object.assign(mocks['./cloudSyncPolicy'] as object,{assertUploadedFileMatches})},
     enableValidUpload: () => {
-      let snapshot: any; let loseResponse = true; let created = 0; let workingWrites = 0;
+      let snapshot: any; let identity:any; let loseResponse = true; let created = 0;
       const originalPrepare = connection.prepare;
       connection.prepare = ((sql: string) => {
         if(sql.includes('app_settings')) return {get:()=>({value:'invoice_root_123'})};
-        if(sql.includes('source_id')) return {get:()=>({source_id:'synthetic-source'})};
+        if(sql.includes('source_id')) return {get:()=>({source_id:'11111111-1111-4111-8111-111111111111'})};
+        if(sql.startsWith('SELECT s.id AS store_id')) return {get:()=>({store_id:1,company_id:1,external_company_id:'fixture'})};
+        if(sql.startsWith('SELECT * FROM invoice_drive_identity')) return {get:()=>identity};
+        if(sql.startsWith('SELECT 1 FROM invoice_drive_identity')) return {get:()=>undefined};
+        if(sql.startsWith('UPDATE invoice_drive_identity SET verified_name')) return {run:()=>({changes:1})};
+        if(sql.startsWith('INSERT INTO invoice_drive_identity')) return {run:(_invoiceId:number,file_id:string,company_id:number,store_id:number,external_company_id:string,cleanup:string)=>{identity={file_id,company_id,store_id,external_company_id,cleanup}}};
         if(sql.startsWith('SELECT document_revision')) return {get:()=>({...row,status:'issued'})};
         if(sql.startsWith('UPDATE invoices SET drive_file_id')) return {run:(id: string)=>{row.drive_file_id=id;return {changes:1}}};
         return originalPrepare(sql);
@@ -84,17 +94,16 @@ function fixture() {
       mocks['./repositories/billingRepo']={getInvoiceById:()=>({...row,status:'issued',invoice_date:'2026-09-08',issuer_settings:{invoiceSeries:'FIX'},items:[{productName:'Bread',quantity:1,unitPrice:2,totalPrice:2}],total_amount:2}),getAppSetting:()=>''};
       mocks['../../src/utils/pdfGenerator']={generateInvoicePDF:(...args: Parameters<typeof generateInvoicePDF>)=>{buffer=Buffer.from(generateInvoicePDF(...args));return buffer}};
       Object.assign(mocks['../integrations/invoiceDriveFolder'] as object,{resolveCompanyInvoiceFolder:async()=> 'company_folder_123'});
-      Object.assign(mocks['../integrations/invoiceDriveDocument'] as object,{updateInvoiceDriveDocument:async()=>{workingWrites++}});
       // Imported module objects must retain identity; the production adapter reads
       // these fields after its async imports, just as in the real process.
       Object.assign(mocks['./cloudSyncPolicy'] as object,{assertUploadedFileMatches});
       const google=(mocks.googleapis as any).google;
       google.drive=()=>({files:{
-        list:async({q}:any)=>({data:{files:snapshot && q.includes(snapshot.name)?[{id:snapshot.id}]:[]}}),
-        create:async(input:any)=>{created++;snapshot={id:'snapshot_file_123',name:input.requestBody.name,parents:input.requestBody.parents,md5Checksum:createHash('md5').update(buffer).digest('hex'),size:String(buffer.length)};if(loseResponse){loseResponse=false;throw new Error('response lost')}return {data:{id:snapshot.id}}},
-        get:async()=>({data:snapshot}),
+        list:async({q}:any)=>({data:{files:q.includes("'invoice_root_123' in parents")?[{id:'company_folder_123',name:'Facturi',mimeType:'application/vnd.google-apps.folder'}]:snapshot && (q.includes("'company_folder_123' in parents")||q.includes(snapshot.name))?[snapshot]:[]}}),
+        create:async(input:any)=>{created++;snapshot={id:'canonical_file_123',mimeType:'application/pdf',name:input.requestBody.name,parents:input.requestBody.parents,md5Checksum:createHash('md5').update(buffer).digest('hex'),size:String(buffer.length)};if(loseResponse){loseResponse=false;throw new Error('response lost')}return {data:{id:snapshot.id}}},
+        get:async({fileId}:any)=>({data:fileId==='company_folder_123'?{id:fileId,parents:['invoice_root_123'],mimeType:'application/vnd.google-apps.folder'}:snapshot}),
       }});
-      return { counts:()=>({created,workingWrites}) };
+      return { counts:()=>({created}), name:()=>snapshot.name };
     },
     setRole: (value: string) => { role = value; }, disconnect: () => { tokens = false; },
     corrupt: () => { corrupt = true; }, duplicate: () => { files = [...files, { ...files[0], id: 'duplicate_pdf_123' }]; },
@@ -112,13 +121,60 @@ test('real PDF reconciliation entry point imports db, associates verified existi
   assert.equal(f.writes.length, 1);
 });
 
-test('real valid upload retries response loss using the identical revision snapshot and confirms metadata', async () => {
+test('real cleanup waits for publication, verifies the active PDF, trashes only duplicates and bounds retries',async()=>{
+  for(const mode of ['success','changed-active','role-change']){
+    const f=fixture();const db=new Database(':memory:');try{
+      db.exec(`CREATE TABLE companies(id INTEGER PRIMARY KEY,supabase_company_id TEXT,vrbaker_missing INTEGER);
+        CREATE TABLE stores(id INTEGER PRIMARY KEY,company_id INTEGER);
+        CREATE TABLE invoices(id INTEGER PRIMARY KEY,store_id INTEGER,status TEXT,drive_file_id TEXT);
+        CREATE TABLE billing_publication_queue(company_id INTEGER,revision INTEGER,published_revision INTEGER);
+        CREATE TABLE billing_publication_delivery(company_id INTEGER);
+        CREATE TABLE document_sync_queue(kind TEXT,document_id INTEGER,state TEXT);
+        CREATE TABLE app_settings(key TEXT,value TEXT);
+        INSERT INTO companies VALUES(1,'fixture',0);INSERT INTO stores VALUES(1,1);
+        INSERT INTO invoices VALUES(1,1,'unpaid','canonical_file_123');
+        INSERT INTO billing_publication_queue VALUES(1,2,1);
+        INSERT INTO document_sync_queue VALUES('invoice',1,'ready');
+        INSERT INTO app_settings VALUES('invoice_drive_folder_id','invoice_root_123');`);
+      installInvoiceDriveIdentity(db);
+      const md5='a'.repeat(32);
+      const copy={id:'old_copy_123',name:'Factura_TGB-42.pdf',parents:['invoice_root_123'],mimeType:'application/pdf',size:'10',md5Checksum:md5,trashed:false};
+      const active={...copy,id:'canonical_file_123',name:'Invoice_TGB-42.pdf',md5Checksum:mode==='changed-active'?'b'.repeat(32):md5};
+      db.prepare('UPDATE invoice_drive_identity SET cleanup=?,verified_name=?,verified_parent=?,verified_checksum=?,verified_size=10').run(JSON.stringify([copy]),active.name,'invoice_root_123',md5);
+      let calls=0;let writes=0;
+      f.configureCleanup(db,{files:{
+        get:async({fileId}:any)=>{calls++;if(mode==='role-change')f.setRole('viewer');return {data:{...(fileId===active.id?active:copy)}}},
+        list:async()=>({data:{files:[active,copy]}}),
+        update:async({fileId,requestBody}:any)=>{assert.equal(fileId,copy.id);assert.equal(requestBody.trashed,true);writes++;copy.trashed=true;return {data:copy}},
+      }});
+      await f.api.cleanupPublishedInvoiceCopies();assert.equal(calls,0);
+      db.exec('UPDATE billing_publication_queue SET published_revision=2');
+      // A pending upload or cached delivery also prevents cleanup.
+      db.exec("UPDATE document_sync_queue SET state='pending'");await f.api.cleanupPublishedInvoiceCopies();assert.equal(calls,0);
+      db.exec("UPDATE document_sync_queue SET state='ready';INSERT INTO billing_publication_delivery VALUES(1)");await f.api.cleanupPublishedInvoiceCopies();assert.equal(calls,0);
+      db.exec('DELETE FROM billing_publication_delivery');await f.api.cleanupPublishedInvoiceCopies();
+      assert.equal(writes,mode==='success'?1:0);
+      if(mode==='success'){
+        assert.equal((db.prepare('SELECT cleanup FROM invoice_drive_identity').get() as any).cleanup,'[]');
+        assert.equal(active.trashed,false);
+      }else if(mode==='changed-active'){
+        assert.ok(invoiceCopyCleanupError(db));
+        for(let i=1;i<8;i++){db.exec('UPDATE invoice_drive_identity SET cleanup_retry_at=0');await f.api.cleanupPublishedInvoiceCopies()}
+        const before=calls;db.exec('UPDATE invoice_drive_identity SET cleanup_retry_at=0');await f.api.cleanupPublishedInvoiceCopies();assert.equal(calls,before);
+        retryInvoiceCopyCleanup(db);assert.equal(invoiceCopyCleanupError(db),null);await f.api.cleanupPublishedInvoiceCopies();assert.ok(calls>before);
+      }
+    }finally{db.close()}
+  }
+});
+
+test('real valid upload retries response loss without creating a second PDF and publishes its short-name ID', async () => {
   const f=fixture();const upload=f.enableValidUpload();
   assert.equal((await f.api.uploadInvoicePdf(1)).success,false);
   const result=await f.api.uploadInvoicePdf(1);
   assert.equal(result.success,true);
-  assert.equal(f.row.drive_file_id,'snapshot_file_123');
-  assert.deepEqual(upload.counts(),{created:1,workingWrites:2});
+  assert.equal(f.row.drive_file_id,'canonical_file_123');
+  assert.equal(upload.name(),'Invoice_TGB-42.pdf');
+  assert.deepEqual(upload.counts(),{created:1});
 });
 
 test('real upload entry point has a db binding and returns a controlled failure for cancelled invoice', async () => {

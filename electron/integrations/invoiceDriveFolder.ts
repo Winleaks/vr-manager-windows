@@ -5,6 +5,7 @@ const requestOptions = { timeout: 30_000, retry: false };
 export function legacyInvoiceFilenames(number: string, series: string) {
   // Historical desktop versions used both a complete number and a separate series.
   return [...new Set([
+    `Invoice_${number}.pdf`,
     `Factura_${number}.pdf`,
     `Factura_${series}_${number}.pdf`,
     `Factura_${series}-${number}.pdf`,
@@ -68,7 +69,7 @@ export async function listInvoiceTree(drive: any, rootId: string) {
     let pageToken: string|undefined;
     do {
       if(++requests>1000) throw new Error('Prea multe documente pentru asocierea automată.');
-      const res=await drive.files.list({q:`'${folder.id}' in parents and trashed=false and (mimeType='application/pdf' or mimeType='application/vnd.google-apps.folder')`,fields:'files(id,name,mimeType),nextPageToken',pageSize:1000,pageToken});
+      const res=await drive.files.list({q:`'${folder.id}' in parents and trashed=false and (mimeType='application/pdf' or mimeType='application/vnd.google-apps.folder')`,fields:'files(id,name,mimeType),nextPageToken',pageSize:1000,pageToken},requestOptions);
       for(const file of res.data.files || []) {
         if(!/^[A-Za-z0-9_-]{10,200}$/.test(file.id || '') || !file.name) continue;
         if(file.mimeType==='application/vnd.google-apps.folder') {

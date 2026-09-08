@@ -30,6 +30,8 @@ Verification: fixture tests cover inactive stores with billable invoices, absent
 
 ### Updating an existing Drive invoice
 
+**Superseded for the unreleased single-file implementation:** the historical two-file behavior below describes v0.1.102. The current contract, migration 20, recoverable cleanup, eventual consistency and acceptance requirements are documented in [document-drive-sync.md](document-drive-sync.md#single-invoice-pdf-contract-migration-20). New Drive PDFs use `Invoice_<number>.pdf`; no new technical snapshot is created.
+
 - SQLite owns invoice identity, content and destination. Only the Writer may upload; the renderer supplies an invoice ID, never a Drive path or ID.
 - Exact historical filenames are searched, then their folder ancestry is verified against the configured `Facturi` root. PDFs directly in that root or in older subfolders are eligible. An unrelated same-name file outside that tree is never modified. Multiple eligible copies, shortcuts, inaccessible ancestry and truncated results stop the operation with no replacement PDF created.
 - The existing PDF is updated using [Drive v3 `files.update`](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update), with `addParents`/`removeParents` when relocation is necessary. The file ID and link survive. A new readable file is created only when no eligible historical file exists. No old PDFs are deleted automatically.

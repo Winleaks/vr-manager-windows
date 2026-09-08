@@ -4,17 +4,18 @@ import path from 'node:path';
 import { db, waitForDatabaseReady } from '../database/db';
 import { getDeviceRole } from '../device/deviceRole';
 import { documentSyncStatus, dueDocuments, retryDocumentSync, trackDocumentUpload } from '../database/documentSyncQueue';
-import { isDocumentDriveConnected, uploadInvoicePdf, uploadCreditNotePdfToCloud } from '../database/cloudSync';
+import { isDocumentDriveConnected, uploadInvoicePdf, uploadCreditNotePdfToCloud, cleanupPublishedInvoiceCopies } from '../database/cloudSync';
 import { readCreditNote, setCreditNotePdfState } from '../database/repositories/billingRepo';
 import { generateCreditNotePdf } from '../reports/creditNotePdf';
 import { saveCreditNotePdf } from '../reports/creditNoteDelivery';
 import { withInvoiceDriveLock } from './invoiceDriveDocument';
+import { invoiceCopyCleanupError, retryInvoiceCopyCleanup } from '../database/invoiceDriveIdentity';
 
 let running = false;
 let workerError: string | null = null;
 
 export function getDocumentSyncStatus() {
-  return { ...documentSyncStatus(db), running, workerError,
+  return { ...documentSyncStatus(db), running, workerError:workerError||invoiceCopyCleanupError(db),
     canRetry: getDeviceRole() === 'writer', connected: Boolean(isDocumentDriveConnected()) };
 }
 
@@ -64,6 +65,7 @@ export async function syncPendingDocuments() {
       if (item.kind === 'invoice') await uploadInvoicePdf(item.document_id);
       else await syncCreditNoteDocument(item.document_id);
     }
+    if(getDeviceRole()==='writer' && connection===db && connection.open) await cleanupPublishedInvoiceCopies();
   } catch {
     workerError = 'Sincronizarea documentelor nu s-a finalizat. Documentele rămân în așteptare; reîncearcă din acest panou.';
   } finally { running = false; }
@@ -72,6 +74,7 @@ export async function syncPendingDocuments() {
 export function retryPendingDocuments() {
   if (getDeviceRole() !== 'writer') throw new Error('Doar Writer poate relua încărcările.');
   retryDocumentSync(db);
+  retryInvoiceCopyCleanup(db);
   workerError = null;
   void syncPendingDocuments();
   return getDocumentSyncStatus();

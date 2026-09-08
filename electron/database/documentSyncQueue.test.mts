@@ -32,7 +32,7 @@ test('migration queues missing invoices and credits, preserves finances and roll
     assert.equal(documentSyncStatus(db).pending,2);
     assert.deepEqual(dueDocuments(db).map(x=>[x.kind,x.document_id]),[['credit_note',1],['invoice',1]]);
     const source=readFileSync(new URL('./db.ts',import.meta.url),'utf8');
-    assert.match(source,/createPreMigrationSnapshotIfNeeded\(19\)/);
+    assert.match(source,/createPreMigrationSnapshotIfNeeded\(20\)/);
     assert.match(source,/version:19.*installDocumentSyncQueue/);
   } finally {db.close()}
 });

@@ -647,14 +647,15 @@ export function updateInvoiceTransaction(
       if (credited || applied) throw new Error('Factura cu Credit Notes sau credit aplicat nu mai poate fi editată.');
     }
     const existing = connection.prepare(
-      `SELECT i.invoice_date, i.total_amount, i.paid_amount, i.status, s.company_id
+      `SELECT i.invoice_number, i.invoice_date, i.total_amount, i.paid_amount, i.status, s.company_id
        FROM invoices i JOIN stores s ON s.id = i.store_id WHERE i.id = ?`,
-    ).get(invoiceId) as { invoice_date: string; total_amount: number; paid_amount: number; status: string; company_id: number } | undefined;
+    ).get(invoiceId) as { invoice_number: string; invoice_date: string; total_amount: number; paid_amount: number; status: string; company_id: number } | undefined;
     if (!existing) throw new Error('Factura nu există.');
     if (existing.status === 'cancelled') throw new Error('O factură anulată nu poate fi modificată.');
 
     const previousItems = connection.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id').all(invoiceId) as Array<{
       id: number; product_name: string; quantity: number; unit_price: number; total_price: number;
+      product_name_ro?:string|null;variant_label?:string|null;unit?:string|null;product_order?:number|null;external_product_id?:string|null;
     }>;
     let importedItems: Array<{ id: number; quantity: number; unitPrice: number; totalPrice: number }> = [];
     if (!Array.isArray(itemsInput) || !itemsInput.length || itemsInput.length > 1000) {
@@ -685,6 +686,15 @@ export function updateInvoiceTransaction(
     const paidAmount = requireFiniteNonNegative(existing.paid_amount, 'Suma achitată a facturii');
     if (paidAmount > totalAmount + 0.01) {
       throw new Error('Totalul facturii nu poate fi mai mic decât suma deja achitată.');
+    }
+    const sameItems=imported
+      ? addedItems.length===0 && importedItems.every(item=>previousItems.some(old=>old.id===item.id&&old.quantity===item.quantity&&old.unit_price===item.unitPrice&&old.total_price===item.totalPrice))
+      : JSON.stringify(previousItems.map(item=>[item.product_name,item.product_name_ro||null,item.variant_label||null,item.unit||null,item.quantity,item.unit_price,item.total_price,item.product_order??null,item.external_product_id||null]).sort())===
+        JSON.stringify(validated!.items.map(item=>[item.productName,item.name_ro||null,item.variant_label||null,item.unit||null,item.quantity,item.unitPrice,item.totalPrice,item.productOrder??null,item.externalProductId||null]).sort());
+    // A save used to force migration/regeneration must not reissue line IDs,
+    // invalidate a published PDF or create a new financial/document revision.
+    if(existing.invoice_number===invoiceNumber&&existing.invoice_date===invoiceDate&&existing.total_amount===totalAmount&&sameItems) {
+      return {invoiceId,totalAmount,paidAmount,status:existing.status};
     }
     const status = paidAmount <= 0.000001
       ? 'unpaid'

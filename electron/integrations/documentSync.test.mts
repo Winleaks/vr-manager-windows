@@ -22,10 +22,12 @@ function fixture() {
   const calls:string[]=[];
   const databaseModule={db,waitForDatabaseReady:async()=>{}};
   const mocks:any={
+    '../database/invoiceDriveIdentity':{invoiceCopyCleanupError:()=>null,retryInvoiceCopyCleanup:()=>{}},
     electron:{app:{getPath:()=>'/synthetic',once:()=>{}}},'node:fs':{existsSync:()=>false},
     '../database/db':databaseModule,'../device/deviceRole':{getDeviceRole:()=>role},'../database/documentSyncQueue':queue,
     './invoiceDriveDocument':{withInvoiceDriveLock},
     '../database/cloudSync':{
+      cleanupPublishedInvoiceCopies:async()=>{},
       isDocumentDriveConnected:()=>connected,
       uploadInvoicePdf:async(id:number)=>queue.trackDocumentUpload(db,'invoice',id,()=>role==='writer'&&databaseModule.db===db,async()=>{calls.push('invoice');await beforeUpload();return result}),
       uploadCreditNotePdfToCloud:async()=>{calls.push('credit_note');await beforeUpload();return result},

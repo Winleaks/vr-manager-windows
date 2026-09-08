@@ -1,8 +1,11 @@
 ### În lucru
 
+- Facturile din Drive folosesc un singur PDF, `Invoice_<număr>.pdf`, atât în folderul clientului, cât și în platformă. Fișierele vechi sunt redenumite/actualizate păstrând ID-ul; copiile confirmate sunt mutate recuperabil în coș doar după confirmarea publicării. Asocierile ambigue sau schimbate opresc unificarea.
+- Salvarea unei facturi fără modificări păstrează pozițiile și revizia documentului. Reîncercarea unui PDF cu aceleași date nu creează fișiere sau versiuni Drive suplimentare.
+- Migrarea 20 păstrează separat identitatea fișierului Drive, inclusiv când o editare invalidează temporar PDF-ul publicabil. Backupul verificat precede migrarea; nu se face rescriere automată a tuturor facturilor istorice.
 - Facturile și Credit Notes au o listă persistentă de încărcări în Drive, separată de backupul bazei de date. Writer-ul reia documentele neconfirmate după repornire/reconectare; erorile de permisiuni, duplicatele și încercările epuizate sunt afișate cu posibilitate de reluare explicită.
 - Hubul afișează „Salvat local — PDF-uri neconfirmate în Drive”, numărul documentelor și explicația blocajului. Regenerarea pentru deschidere/print/WhatsApp păstrează documentul în așteptare pe Writer, fără încărcări din Viewer.
-- Încărcările păstrează fișierul existent și linkul inclusiv pentru Credit Notes din structura veche. Copiile tehnice ale aceleiași versiuni de factură au conținut determinist la reîncercare. Crearea folderelor concurente este serializată.
+- Încărcările păstrează fișierul existent și linkul inclusiv pentru Credit Notes din structura veche. PDF-urile au conținut determinist la reîncercare. Crearea folderelor concurente este serializată.
 - Migrarea 19 creează un backup verificat înainte de adăugarea listei de sincronizare și preia facturile fără confirmare Drive și Credit Notes în așteptare/eroare. Nu schimbă numere, produse, sume, plăți sau documente din registrul separat.
 
 ### VR - Hub Management v0.1.102
