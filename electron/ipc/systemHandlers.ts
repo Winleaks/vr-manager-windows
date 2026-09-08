@@ -2,7 +2,8 @@ import { dialog, BrowserWindow, shell, app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { createVerifiedSnapshot, restoreDb, lastBackupTime } from '../database/db';
+import { db, createVerifiedSnapshot, restoreDb, lastBackupTime } from '../database/db';
+import { queueInvoiceDocument } from '../database/documentSyncQueue';
 import { getCloudStatus, connectGoogleDrive, saveToCloud, restoreFromCloud, disconnectCloud, syncViewerFromCloud } from '../database/cloudSync';
 import { handleTrustedIpc } from './trustedHandler';
 import { getDeviceRole, getDeviceState, setDeviceRole, type DeviceRole } from '../device/deviceRole';
@@ -17,6 +18,7 @@ import { checkForUpdates, downloadUpdate, getUpdateState, installUpdate } from '
 import * as billingRepo from '../database/repositories/billingRepo';
 import { localClientDocumentDirectory } from '../reports/clientDocumentStorage';
 import { openWindowsDocument } from '../reports/windowsDocuments';
+import { getDocumentSyncStatus, retryPendingDocuments } from '../integrations/documentSync';
 
 async function createAndSaveCloudSnapshot(isAutomatic = false) {
   const snapshotPath = path.join(app.getPath('temp'), `vr-hub-management-cloud-${randomUUID()}.db`);
@@ -31,6 +33,8 @@ async function createAndSaveCloudSnapshot(isAutomatic = false) {
 }
 
 export function registerSystemHandlers() {
+  handleTrustedIpc('system:documentSyncStatus', () => getDocumentSyncStatus());
+  handleTrustedIpc('system:retryDocumentSync', () => retryPendingDocuments());
   handleTrustedIpc('system:getAppVersion', () => {
     return app.getVersion();
   });
@@ -116,6 +120,9 @@ export function registerSystemHandlers() {
       if (legacyPath !== filePath && fs.existsSync(legacyPath)) {
         try { fs.unlinkSync(legacyPath); } catch (error) { console.error('Legacy invoice PDF cleanup failed:', error); }
       }
+      // Print/open/share can regenerate a PDF without changing invoice finances.
+      // Writer still queues that document; Viewer remains strictly local-only.
+      if (getDeviceRole() === 'writer') queueInvoiceDocument(db,options.invoiceId);
       return { success: true, filePath };
     } catch (err: any) {
       console.error('Eroare salvare auto:', err);

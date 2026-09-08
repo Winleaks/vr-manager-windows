@@ -25,7 +25,11 @@ export async function prepareInvoiceDocument(invoiceId: number, uploadCloud = fa
   );
   const local = await api.system.savePdfAuto({ invoiceId, buffer });
   if (!local.success) throw new Error(local.error || 'PDF-ul nu a putut fi salvat local.');
-  if (uploadCloud && (await api.system.getDeviceRole()).role === 'writer') return (await api.system.uploadPdfToCloud(invoiceId)).success;
+  if (uploadCloud && (await api.system.getDeviceRole()).role === 'writer') {
+    const cloud = await api.system.uploadPdfToCloud(invoiceId);
+    if (!cloud.success) throw new Error(cloud.error || 'Salvat local — nesincronizat în Drive. Reîncercarea rămâne în așteptare.');
+    return true;
+  }
   if (uploadCloud) return true;
   return buffer;
 }

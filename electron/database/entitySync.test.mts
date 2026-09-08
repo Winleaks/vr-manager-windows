@@ -105,7 +105,7 @@ test('migration is additive, rollback retains original data and backup precedes 
     db.transaction(()=>installEntitySyncState(db))();
     assert.equal((db.prepare('SELECT name,vrbaker_missing FROM companies').get() as any).name,'Keep me');
     const source=readFileSync(new URL('./db.ts',import.meta.url),'utf8');
-    assert.match(source,/createPreMigrationSnapshotIfNeeded\(18\)/);
+    assert.match(source,/createPreMigrationSnapshotIfNeeded\(19\)/);
     assert.match(source,/version:18.*installEntitySyncState/);
   }finally{db.close();}
 });

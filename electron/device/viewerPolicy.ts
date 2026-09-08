@@ -14,6 +14,7 @@ const VIEWER_ALLOWED_CHANNELS = new Set([
   'start-update-download',
   'install-update',
   'get-cloud-status',
+  'system:documentSyncStatus',
   'connect-google-drive',
   'disconnect-cloud',
   'restore-from-cloud',

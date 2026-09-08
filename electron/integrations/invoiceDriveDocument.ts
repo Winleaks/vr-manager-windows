@@ -28,6 +28,7 @@ export function withInvoiceDriveLock<T>(invoiceId: number, action: () => Promise
 export async function updateInvoiceDriveDocument(drive: any, input: {
   rootId: string; parentId: string; filenames: string[]; buffer: Uint8Array;
   assertCurrent: () => void;
+  legacyRootIds?: string[];
 }) {
   if (!validId(input.rootId) || !validId(input.parentId) || !input.filenames.length) {
     throw new InvoiceDriveDocumentError('Identitatea folderului facturii este invalidă.');
@@ -50,6 +51,12 @@ export async function updateInvoiceDriveDocument(drive: any, input: {
     return result;
   };
   if (!await inInvoiceTree([input.parentId])) throw new InvoiceDriveDocumentError('Destinația nu este în folderul de facturi configurat.');
+  // Credits may have an old, explicitly resolved application-owned issuer folder.
+  // Destination validation above still requires the current invoice root.
+  for (const id of input.legacyRootIds || []) {
+    if (!validId(id)) throw new InvoiceDriveDocumentError('Identitatea folderului vechi este invalidă.');
+    ancestry.set(id,true);
+  }
   const response = await drive.files.list({
     q: `trashed=false and (${names.map(name => `name='${quote(name)}'`).join(' or ')})`,
     fields: `files(${fields}),nextPageToken`, pageSize: 100,

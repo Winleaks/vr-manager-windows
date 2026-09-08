@@ -8,14 +8,12 @@ import { validateWeeklyPeriod, VR_BAKER_API_ENDPOINT, type VrBakerZone } from '.
 import { app, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { generateCreditNotePdf } from '../reports/creditNotePdf';
 import { creditNoteFilename, saveCreditNotePdf } from '../reports/creditNoteDelivery';
 import { localClientDocumentDirectory } from '../reports/clientDocumentStorage';
 import { validatePdfFilename } from '../security/fileValidation';
 import {
   deleteClientFinancialDocumentFromCloud,
   downloadCreditNotePdfFromCloud,
-  uploadCreditNotePdfToCloud,
 } from '../database/cloudSync';
 import { db, backupDb } from '../database/db';
 import { retiredLegacyCompanyIds } from '../database/legacyEntityRepair';
@@ -243,28 +241,8 @@ export function registerBillingHandlers() {
   handleTrustedIpc('billing:applyCompanyCredit', (_, data) => billingRepo.applyCompanyCredit(data));
   handleTrustedIpc('billing:reverseCreditApplication', (_, data) => billingRepo.reverseCreditApplication(data.id, data.reason));
   handleTrustedIpc('billing:prepareCreditNotePdf', async (_, id: number) => {
-    const note = billingRepo.readCreditNote(id);
-    try {
-      const pdf = generateCreditNotePdf(note);
-      const saved = saveCreditNotePdf(app.getPath('documents'), note.company_name, note.reference, pdf);
-      const legacyLocalPath = path.join(
-        app.getPath('documents'),
-        'VR - Hub Management',
-        'Credit Notes',
-        String(note.issuer_code).toLowerCase(),
-        saved.filename,
-      );
-      if (legacyLocalPath !== saved.filePath && fs.existsSync(legacyLocalPath)) {
-        try { fs.unlinkSync(legacyLocalPath); } catch (error) { console.error('Legacy Credit Note PDF cleanup failed:', error); }
-      }
-      billingRepo.setCreditNotePdfState(id, saved.filePath, 'ready', 'pending');
-      const cloud = await uploadCreditNotePdfToCloud(saved.filename, note.company_name, note.issuer_code, pdf);
-      billingRepo.setCreditNotePdfState(id, saved.filePath, 'ready', cloud.success ? 'ready' : 'error');
-      return { success: true, ...saved, cloud };
-    } catch (error) {
-      billingRepo.setCreditNotePdfState(id, null, 'error', 'error');
-      return { success: false, message: message(error) };
-    }
+    const { syncCreditNoteDocument } = await import('../integrations/documentSync');
+    return syncCreditNoteDocument(id);
   });
   handleTrustedIpc('billing:openCreditNotePdf', async (_, id: number) => {
     const note = billingRepo.readCreditNote(id);

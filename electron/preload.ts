@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { DocumentSyncStatus } from '../src/shared/documentSyncTypes'
 
 type EventCallback = (...args: any[]) => void
 
@@ -64,6 +65,8 @@ export const desktopApi = {
     onBackupCompleted: (callback: EventCallback) => subscribe('backup-completed', callback),
     onGoogleAuthUrl: (callback: EventCallback) => subscribe('google-auth-url', callback),
     getCloudStatus: () => ipcRenderer.invoke('get-cloud-status'),
+    getDocumentSyncStatus: (): Promise<DocumentSyncStatus> => ipcRenderer.invoke('system:documentSyncStatus'),
+    retryDocumentSync: (): Promise<DocumentSyncStatus> => ipcRenderer.invoke('system:retryDocumentSync'),
     connectGoogleDrive: () => ipcRenderer.invoke('connect-google-drive'),
     saveToCloud: () => ipcRenderer.invoke('save-to-cloud'),
     restoreFromCloud: (fileId?: string) => ipcRenderer.invoke('restore-from-cloud', fileId),

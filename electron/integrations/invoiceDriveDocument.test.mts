@@ -69,6 +69,17 @@ test('existing legacy root PDF is updated and moved in one request, retaining ID
   assert.equal(f.records.get(result.fileId).name,name);
 });
 
+test('Credit Note in a resolved legacy issuer folder moves without replacing its ID',async()=>{
+  const legacy='legacy_credits_123'; const filename='Credit_Note_CN-1.pdf';
+  const f=fixture([pdf('old_credit_123',legacy,filename)]);
+  const result=await updateInvoiceDriveDocument(f.drive,{...f.input,filenames:[filename],legacyRootIds:[legacy]});
+  assert.equal(result.fileId,'old_credit_123');
+  assert.equal(f.writes.length,1);
+  assert.equal(f.writes[0].kind,'update');
+  assert.equal(f.writes[0].args.addParents,parentId);
+  assert.equal(f.writes[0].args.removeParents,legacy);
+});
+
 test('PDF already in client folder is updated without moving or creating',async()=>{
   const f=fixture([pdf('existing_pdf_123',parentId)]);
   await updateInvoiceDriveDocument(f.drive,f.input);
@@ -165,7 +176,8 @@ test('invoice uploads serialize including authoritative reads and recover after 
 test('main keeps current document checks, verified working copy, and separate platform revision references',()=>{
   const source=readFileSync(new URL('../database/cloudSync.ts',import.meta.url),'utf8');
   const upload=source.slice(source.indexOf('export async function uploadInvoicePdf'),source.indexOf('export async function reconcileInvoicePdfs'));
-  assert.match(upload,/withInvoiceDriveLock\(invoiceId, \(\) => uploadCurrentInvoicePdf\(invoiceId\)\)/);
+  assert.match(upload,/withInvoiceDriveLock\(invoiceId, \(\) => trackDocumentUpload/);
+  assert.match(upload,/\(\) => uploadCurrentInvoicePdf\(invoiceId\)/);
   assert.match(upload,/getDeviceRole\(\) !== 'writer'/);
   assert.match(upload,/current.document_revision !== inv.document_revision/);
   assert.ok(upload.indexOf('await updateInvoiceDriveDocument') < upload.indexOf('UPDATE invoices SET drive_file_id'));

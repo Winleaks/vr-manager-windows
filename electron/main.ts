@@ -1,4 +1,5 @@
 import {startBillingPublisher} from './integrations/billingPublisher';
+import { startDocumentSync } from './integrations/documentSync';
 import { app, BrowserWindow, dialog, session } from 'electron'
 import { execFileSync } from 'child_process'
 import path from 'path'
@@ -140,6 +141,7 @@ app.whenReady().then(async () => {
   })
   initDb()
   startBillingPublisher()
+  startDocumentSync()
   if (getDeviceRole() === 'writer') {
     try {
       const reconciliation = await runStartupCashReconciliation({

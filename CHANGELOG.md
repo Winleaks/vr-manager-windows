@@ -1,3 +1,10 @@
+### În lucru
+
+- Facturile și Credit Notes au o listă persistentă de încărcări în Drive, separată de backupul bazei de date. Writer-ul reia documentele neconfirmate după repornire/reconectare; erorile de permisiuni, duplicatele și încercările epuizate sunt afișate cu posibilitate de reluare explicită.
+- Hubul afișează „Salvat local — PDF-uri neconfirmate în Drive”, numărul documentelor și explicația blocajului. Regenerarea pentru deschidere/print/WhatsApp păstrează documentul în așteptare pe Writer, fără încărcări din Viewer.
+- Încărcările păstrează fișierul existent și linkul inclusiv pentru Credit Notes din structura veche. Copiile tehnice ale aceleiași versiuni de factură au conținut determinist la reîncercare. Crearea folderelor concurente este serializată.
+- Migrarea 19 creează un backup verificat înainte de adăugarea listei de sincronizare și preia facturile fără confirmare Drive și Credit Notes în așteptare/eroare. Nu schimbă numere, produse, sume, plăți sau documente din registrul separat.
+
 ### VR - Hub Management v0.1.102
 
 - Trimiterea din registrul normal pregătește o copie locală verificată a PDF-ului, cu numele și extensia păstrate. Transferul Windows folosește această copie, fără acces de scriere la factura originală, și păstrează sursa disponibilă după predarea către WhatsApp. Copia este eliminată la închidere, blocare sau expirare; resturile unei opriri neașteptate sunt curățate la următoarea pornire. Confirmarea pregătirii nu este prezentată drept confirmare a livrării către destinatar.

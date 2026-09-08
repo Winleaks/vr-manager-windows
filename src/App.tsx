@@ -15,6 +15,7 @@ import { SettingsEntities } from './pages/SettingsEntities';
 import { DailyCashLayout } from './pages/DailyCashLayout';
 import { ProtectedRegistry, ProtectedRegistryHotspot } from './pages/ProtectedRegistry';
 import { FeedbackHost } from './components/FeedbackHost';
+import { DocumentSyncBanner } from './components/DocumentSyncBanner';
 
 function Sidebar() {
   const location = useLocation();
@@ -84,6 +85,7 @@ import { BillingLayout } from './pages/BillingLayout';
 export default function App() {
   return (
     <>
+      <DocumentSyncBanner />
       <HashRouter>
         <Routes>
           <Route path="/" element={<Hub />} />

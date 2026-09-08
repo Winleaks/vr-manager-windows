@@ -57,13 +57,19 @@ export function generateInvoicePDF(
       totalPrice: number;
     }>;
     totalAmount: number;
-  }
+  },
+  metadata?: { fileId: string; creationDate: string },
 ): Uint8Array {
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
     format: 'a4'
   });
+  // Stable bytes for retryable Drive revision snapshots; no visual/layout change.
+  if (metadata) {
+    doc.setFileId(metadata.fileId);
+    doc.setCreationDate(`D:${metadata.creationDate.slice(0,10).replace(/-/g,'')}000000+00'00'`);
+  }
 
   // Înregistrare font Arial cu suport Unicode diacritice limba română (ș, ț, ă, î, â)
   registerFonts(doc);

@@ -55,6 +55,23 @@ if (serveOnly) {
       assert.equal(await field.evaluate((element) => document.activeElement === element), true);
     };
 
+    await open('sync');
+    await page.getByText(/Salvat local — PDF-uri neconfirmate/).waitFor();
+    await page.getByText(/Detalii sincronizare documente/).click();
+    await page.getByText(/Factura TEST-1: Drive refuză/).waitFor();
+    const retryDocuments=page.getByRole('button',{name:'Reîncearcă documentele în Drive'});
+    assert.equal(await retryDocuments.innerText(),'','retry action must be icon-only');
+    await retryDocuments.focus();await page.keyboard.press('Enter');
+    await page.waitForFunction(()=>window.__inputTest.calls.includes('retry-documents'));
+    await edit(page.getByLabel('Cantitate test'),'4.25');
+    await page.evaluate(()=>window.__inputTest.setDocumentStatus({pending:0,blocked:0,items:[]}));
+    await page.getByText(/Salvat local — PDF-uri neconfirmate/).waitFor({state:'hidden',timeout:10000});
+    assert.equal(await page.getByLabel('Cantitate test').evaluate(element=>document.activeElement===element),true,'sync updates must not steal input focus');
+    await open('sync','&role=viewer');
+    await page.getByText(/Salvat local — PDF-uri neconfirmate/).waitFor();
+    assert.equal(await page.getByRole('button',{name:'Reîncearcă documentele în Drive'}).count(),0);
+    console.log('PASS persistent document warning, details, icon keyboard retry, Viewer denial and input focus preservation');
+
     await open('numeric');
     await edit(page.getByLabel('Cantitate test'), '3,125', '3.125');
     await edit(page.getByLabel('Preț test'), '1,75', '1.75');

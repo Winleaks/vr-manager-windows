@@ -1,5 +1,8 @@
 import {resolveExistingInvoiceFolder,resolveCompanyInvoiceFolder,listInvoiceTree,legacyInvoiceFilenames} from '../integrations/invoiceDriveFolder';
 import { InvoiceDriveDocumentError, updateInvoiceDriveDocument, withInvoiceDriveLock } from '../integrations/invoiceDriveDocument';
+import { trackDocumentUpload } from './documentSyncQueue';
+import { documentSyncFailure } from '../integrations/documentSyncErrors';
+import { withDriveFolderLock } from '../integrations/driveFolderLock';
 import fs from 'fs';
 import path from 'path';
 import { app, shell } from 'electron';
@@ -43,6 +46,7 @@ const isDev = !app.isPackaged;
 const baseDir = isDev ? process.cwd() : app.getPath('userData');
 const legacyConfigFilePath = path.join(baseDir, 'config_google_drive.json');
 const GOOGLE_TOKENS_KEY = 'google-drive-oauth-tokens';
+const documentRequestOptions = { timeout: 30_000, retry: false };
 
 declare const __VR_HUB_GOOGLE_CLIENT_ID__: string;
 declare const __VR_HUB_GOOGLE_CLIENT_SECRET__: string;
@@ -392,12 +396,14 @@ async function findFolder(drive: any, folderName: string, parentId?: string): Pr
     orderBy: 'createdTime asc',
     pageSize: 10,
     fields: 'files(id)'
-  });
+  }, documentRequestOptions);
   return search.data.files?.[0]?.id || null;
 }
 
-async function getOrCreateFolder(drive: any, folderName: string, parentId?: string): Promise<string> {
+async function getOrCreateFolder(drive: any, folderName: string, parentId?: string, assertCurrent?: () => void): Promise<string> {
+  return withDriveFolderLock(parentId || 'root',folderName,async()=>{
   const existingId = await findFolder(drive, folderName, parentId);
+  assertCurrent?.();
   if (existingId) return existingId;
 
   const fileMetadata: any = {
@@ -411,9 +417,10 @@ async function getOrCreateFolder(drive: any, folderName: string, parentId?: stri
   const folderRes = await drive.files.create({
     requestBody: fileMetadata,
     fields: 'id'
-  });
+  }, documentRequestOptions);
 
   return folderRes.data.id!;
+  });
 }
 
 async function getDriveStructure(drive: any) {
@@ -538,7 +545,7 @@ async function fetchUploadedMetadata(drive: any, fileId: string): Promise<Upload
   const response = await drive.files.get({
     fileId,
     fields: 'id,name,parents,modifiedTime,md5Checksum,size',
-  });
+  }, documentRequestOptions);
   return response.data;
 }
 
@@ -605,15 +612,15 @@ function validatePrivateCloudPath(folderNames: string[], filename: string) {
   }
 }
 
-async function resolvePrivateCloudFolder(drive: any, folderNames: string[], create: boolean) {
+async function resolvePrivateCloudFolder(drive: any, folderNames: string[], create: boolean, assertCurrent?: () => void) {
   const rootFolderId = create
-    ? await getOrCreateFolder(drive, CLOUD_ROOT_FOLDER_NAME)
+    ? await getOrCreateFolder(drive, CLOUD_ROOT_FOLDER_NAME, undefined, assertCurrent)
     : await findFolder(drive, CLOUD_ROOT_FOLDER_NAME);
   if (!rootFolderId) return null;
   let parentId = rootFolderId;
   for (const folderName of folderNames) {
     const next = create
-      ? await getOrCreateFolder(drive, folderName, parentId)
+      ? await getOrCreateFolder(drive, folderName, parentId, assertCurrent)
       : await findFolder(drive, folderName, parentId);
     if (!next) return null;
     parentId = next;
@@ -626,8 +633,9 @@ async function findExactCloudFile(drive: any, parentId: string, filename: string
     q: `name='${escapeDriveQueryValue(filename)}' and '${parentId}' in parents and trashed=false`,
     orderBy: 'modifiedTime desc',
     pageSize: 2,
-    fields: 'files(id,name,version,modifiedTime,md5Checksum,size,parents)',
+    fields: 'files(id,name,version,modifiedTime,md5Checksum,size,parents),nextPageToken',
   });
+  if ((response.data.files?.length || 0) > 1 || response.data.nextPageToken) throw new InvoiceDriveDocumentError('Există mai multe PDF-uri sau fișiere cu același nume în folderul Drive. Rezolvă duplicatele înainte de încărcare.');
   return response.data.files?.[0] || null;
 }
 
@@ -922,12 +930,17 @@ export function syncViewerFromCloud() {
   return viewerSyncInFlight;
 }
 
-export async function uploadInvoicePdf(invoiceId: number): Promise<{success:boolean; fileId?:string; error?:string}> {
+export function isDocumentDriveConnected() { return loadTokens(); }
+
+export async function uploadInvoicePdf(invoiceId: number): Promise<{success:boolean; fileId?:string; error?:string; retryable?:boolean}> {
   if (!Number.isSafeInteger(invoiceId) || invoiceId <= 0) throw new Error('Factura este invalidă.');
-  return withInvoiceDriveLock(invoiceId, () => uploadCurrentInvoicePdf(invoiceId));
+  const connection = db;
+  return withInvoiceDriveLock(invoiceId, () => trackDocumentUpload(connection,'invoice',invoiceId,
+    () => getDeviceRole() === 'writer' && connection === db && connection.open,
+    () => uploadCurrentInvoicePdf(invoiceId)));
 }
 
-async function uploadCurrentInvoicePdf(invoiceId: number): Promise<{success:boolean; fileId?:string; error?:string}> {
+async function uploadCurrentInvoicePdf(invoiceId: number): Promise<{success:boolean; fileId?:string; error?:string; retryable?:boolean}> {
   if (getDeviceRole() !== 'writer') return {success:false,error:'Doar Writer poate publica PDF-uri.'};
   if (!loadTokens()) return {success:false,error:'Google Drive nu este conectat.'};
   const connection = db;
@@ -943,16 +956,17 @@ async function uploadCurrentInvoicePdf(invoiceId: number): Promise<{success:bool
         throw new InvoiceDriveDocumentError('Factura s-a modificat în timpul încărcării. Reîncearcă pentru versiunea curentă.');
       }
     };
+    const {source_id} = db.prepare('SELECT source_id FROM billing_publication_identity WHERE id=1').get() as {source_id:string};
     const buffer=generateInvoicePDF({...inv.issuer_settings,invoiceLogo:getAppSetting('invoice_logo')||''},{
       invoiceNumber:inv.invoice_number,invoiceDate:inv.invoice_date,
       client:{name:inv.company_name,cui:inv.company_cui,regCom:inv.company_reg_com,address:inv.company_address||inv.store_address},
       store:{name:inv.store_name,address:inv.store_address,postcode:inv.store_postcode,phone:inv.store_phone},
       items:inv.items,totalAmount:inv.total_amount,
-    });
+    }, { fileId: createHash('md5').update(`${source_id}:${invoiceId}:${inv.document_revision}`).digest('hex'), creationDate: inv.invoice_date });
     const drive = google.drive({version:'v3',auth:oauth2Client});
     const facturiFolderId = await resolveExistingInvoiceFolder(drive,(db.prepare("SELECT value FROM app_settings WHERE key='invoice_drive_folder_id'").get() as {value:string}|undefined)?.value);
     assertCurrent();
-    const companyFolderId = await resolveCompanyInvoiceFolder(drive,facturiFolderId,inv.company_name);
+    const companyFolderId = await resolveCompanyInvoiceFolder(drive,facturiFolderId,inv.company_name,assertCurrent);
     // Restore the existing operator-facing file (and link), including legacy locations.
     // The platform's revision snapshots below remain separate from this working copy.
     await updateInvoiceDriveDocument(drive, {
@@ -962,17 +976,15 @@ async function uploadCurrentInvoicePdf(invoiceId: number): Promise<{success:bool
     });
     const {Readable} = await import('node:stream');
     // New document revisions get a new private file, so an already-published row never points to changed bytes.
-    const {source_id} = db.prepare('SELECT source_id FROM billing_publication_identity WHERE id=1').get() as {source_id:string};
     if (connection !== db) throw new Error('Baza de date s-a schimbat.');
-    const {createHash} = await import('node:crypto');
     const hash = createHash('sha256').update(Buffer.from(buffer)).digest('hex').slice(0,16);
     const name = `Invoice_${source_id}_${invoiceId}_${inv.document_revision}_${hash}.pdf`;
-    const match = await drive.files.list({q:`'${companyFolderId}' in parents and name='${name}' and trashed=false`,fields:'files(id)',pageSize:2});
+    const match = await drive.files.list({q:`'${companyFolderId}' in parents and name='${name}' and trashed=false`,fields:'files(id)',pageSize:2},documentRequestOptions);
     if ((match.data.files?.length || 0)>1) throw new Error('Documente duplicate în Drive.');
     let fileId = match.data.files?.[0]?.id;
     if (!fileId) {
       assertCurrent();
-      const result = await drive.files.create({requestBody:{name,parents:[companyFolderId]},media:{mimeType:'application/pdf',body:Readable.from([Buffer.from(buffer)])},fields:'id'});
+      const result = await drive.files.create({requestBody:{name,parents:[companyFolderId]},media:{mimeType:'application/pdf',body:Readable.from([Buffer.from(buffer)])},fields:'id'},documentRequestOptions);
       fileId=result.data.id;
     }
     if (!fileId || getDeviceRole() !== 'writer' || connection !== db) throw new Error('Publicarea PDF nu a fost finalizată.');
@@ -983,7 +995,7 @@ async function uploadCurrentInvoicePdf(invoiceId: number): Promise<{success:bool
     const saved = db.prepare('UPDATE invoices SET drive_file_id=? WHERE id=? AND document_revision=?').run(fileId,invoiceId,inv.document_revision);
     if (!saved.changes) throw new Error('Factura s-a modificat; regenerează PDF-ul.');
     return {success:true,fileId};
-  } catch (error) { return {success:false,error:error instanceof InvoiceDriveDocumentError ? error.message : 'PDF-ul nu a putut fi publicat în Drive. Reîncearcă.'}; }
+  } catch (error) { return documentSyncFailure(error); }
 }
 
 export async function reconcileInvoicePdfs() {
@@ -1022,7 +1034,7 @@ export async function reconcileInvoicePdfs() {
 }
 
 
-export async function uploadCreditNotePdfToCloud(filename: string, companyName: string, issuerCode: string, buffer: Uint8Array): Promise<{ success: boolean; error?: string }> {
+export async function uploadCreditNotePdfToCloud(filename: string, companyName: string, issuerCode: string, buffer: Uint8Array, assertCurrent?: () => void): Promise<{ success: boolean; error?: string; retryable?: boolean }> {
   if (getDeviceRole() !== 'writer') return { success: false, error: 'Calculatorul Viewer nu poate publica documente.' };
   if (!loadTokens()) return { success: false, error: 'Nu ești conectat la Google Drive.' };
   if (!/^Credit_Note_[A-Z0-9-]{1,60}\.pdf$/i.test(filename) || !/^[a-z0-9-]{1,40}$/i.test(issuerCode)) {
@@ -1030,13 +1042,20 @@ export async function uploadCreditNotePdfToCloud(filename: string, companyName: 
   }
   try {
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
-    const parentId = await resolvePrivateCloudFolder(drive, normalCloudDocumentFolders(companyName, 'Credit Notes'), true);
+    const parentId = await resolvePrivateCloudFolder(drive, normalCloudDocumentFolders(companyName, 'Credit Notes'), true, assertCurrent);
     if (!parentId) throw new Error('Folderul clientului nu a putut fi creat în Google Drive.');
-    await uploadVerifiedBuffer(drive, { filename, parentId, mimeType: 'application/pdf', buffer, strictParent: true });
-    await deleteExactCloudFile(drive, ['Credit Notes', issuerCode.toLowerCase()], filename);
+    const rootId = await resolvePrivateCloudFolder(drive,['Facturi'],true,assertCurrent);
+    const legacyRootId = await resolvePrivateCloudFolder(drive,['Credit Notes',issuerCode.toLowerCase()],false);
+    if (!rootId) throw new Error('Folderul de facturi lipsește.');
+    assertCurrent?.();
+    await updateInvoiceDriveDocument(drive, { rootId,parentId,filenames:[filename],buffer,
+      assertCurrent: assertCurrent || (() => { if(getDeviceRole()!=='writer') throw new Error('Calculatorul Writer s-a schimbat.'); }),
+      legacyRootIds: legacyRootId ? [legacyRootId] : [],
+    });
+    assertCurrent?.();
     return { success: true };
   } catch (error) {
-    return { success: false, error: publicGoogleDriveError(error, 'Credit Note-ul nu a putut fi salvat și verificat în Google Drive.') };
+    return documentSyncFailure(error);
   }
 }
 

@@ -16,13 +16,18 @@ const invoice = {
     remainingQuantity: 10, remainingValue: 25, canReturnToStock: true }],
 };
 const company = { id: 1, name: 'Fixture Company', stores: [{ id: 1, name: 'Fixture Store' }] };
+const documentStatus={pending:1,blocked:1,running:false,workerError:null,canRetry:role==='writer',connected:true,
+  items:[{kind:'invoice',document_id:1,state:'blocked',attempts:1,last_error:'Drive refuză accesul la documente.',reference:'TEST-1'}]};
 const protectedInvoice = {
   id: 'fixture-invoice', reference: 'TEST-P1', companyKey: 'fixture-company', issuerCode: 'goodness',
   companyName: 'Fixture Company', storeName: 'Fixture Store',
   items: [{ id: 'fixture-line', productName: 'Fixture Product', quantity: 10, creditedQuantity: 0, unitPrice: 2.5, finishedProductId: 1 }],
 };
 window.desktopApi = {
-  system: { getDeviceRole: async () => ({ role }) },
+  system: { getDeviceRole: async () => ({ role }),
+    getDocumentSyncStatus:async()=>structuredClone(documentStatus),
+    retryDocumentSync:async()=>{calls.push('retry-documents');return structuredClone(documentStatus)},
+  },
   billing: {
     getCreditNotes: async () => [], getCreditNoteDraft: async () => [invoice],
     getIssuers: async () => [{ id: 1, legal_name: 'Fixture Issuer' }],
@@ -40,10 +45,11 @@ window.desktopApi = {
   },
 } as any;
 
-const [{ BillingCreditNotes }, { ProtectedRegistry }, { BillingClients }, { InvoiceEditorModal }, { SettingsEntities }] = await Promise.all([
+const [{ BillingCreditNotes }, { ProtectedRegistry }, { BillingClients }, { InvoiceEditorModal }, { SettingsEntities }, { DocumentSyncBanner }] = await Promise.all([
   import('../../src/pages/BillingCreditNotes'), import('../../src/pages/ProtectedRegistry'),
   import('../../src/pages/BillingClients'), import('../../src/components/InvoiceEditorModal'),
   import('../../src/pages/SettingsEntities'),
+  import('../../src/components/DocumentSyncBanner'),
 ]);
 
 export function Harness() {
@@ -52,6 +58,7 @@ export function Harness() {
   const [confirmation, setConfirmation] = useState('none');
   const testCase = new URLSearchParams(location.search).get('case');
   return <>
+    {testCase === 'sync' ? <DocumentSyncBanner /> : null}
     {testCase !== 'protected' && <>
       <FeedbackHost />
       <div className="flex gap-3 p-3">
@@ -71,5 +78,5 @@ export function Harness() {
               </div>}
   </>;
 }
-(window as any).__inputTest = { calls, notify, confirmAction };
+(window as any).__inputTest = { calls, notify, confirmAction, setDocumentStatus:(value:unknown)=>Object.assign(documentStatus,value) };
 createRoot(document.getElementById('root')!).render(<StrictMode><Harness /></StrictMode>);
