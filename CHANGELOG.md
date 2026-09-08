@@ -1,4 +1,4 @@
-### În lucru
+### VR - Hub Management v0.1.103
 
 - Facturile din Drive folosesc un singur PDF, `Invoice_<număr>.pdf`, atât în folderul clientului, cât și în platformă. Fișierele vechi sunt redenumite/actualizate păstrând ID-ul; copiile confirmate sunt mutate recuperabil în coș doar după confirmarea publicării. Asocierile ambigue sau schimbate opresc unificarea.
 - Salvarea unei facturi fără modificări păstrează pozițiile și revizia documentului. Reîncercarea unui PDF cu aceleași date nu creează fișiere sau versiuni Drive suplimentare.
