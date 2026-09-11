@@ -1,3 +1,11 @@
+### VR - Hub Management v0.1.105
+
+- Facturare manuală: compania se alege direct din rezultatele căutării după companie sau magazin, fără selector separat sau client preselectat automat. Selectorul produsului și butonul icon „+” încap în card inclusiv la ferestre mai înguste.
+- Soldul și lista facturilor neachitate din PDF sunt limitate la magazinul facturat și același emitent, nu la toate magazinele companiei. Factura curentă apare o singură dată dacă este neachitată. PDF-urile existente reflectă corecția la regenerare; Statement-ul și totalurile companiei rămân neschimbate.
+- „Istoric Plăți” înlocuiește „Plăți” și apare între „Facturi” și „Factură manuală”. Designul filtrelor, totalurilor și tabelului este aliniat cu restul facturării.
+- Dashboardul pornește cu luna curentă. Modul săptămânal are calendar pentru săptămâni luni–duminică și navigare între intervale; cardul Credit Notes are icon în stilul celorlalte carduri. Restul de plată rămâne soldul actual din tot istoricul.
+- Păstrează modificările din v0.1.104, fără migrare nouă sau modificarea contului clientului.
+
 ### VR - Hub Management v0.1.104
 
 - Statement PDF în profilul companiei pe Writer, filtrat după emitent și perioadă, cu deschidere, print și trimitere. Nu adaugă Statement în contul clientului.

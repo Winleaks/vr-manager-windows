@@ -458,7 +458,7 @@ export function getInvoiceById(invoiceIdInput: number) {
   const invoiceId = requirePositiveInteger(invoiceIdInput, 'Factura');
   const invoice = db.prepare(`${invoiceSelect} WHERE i.id = ?`).get(invoiceId) as any;
   if (!invoice) throw new Error('Factura nu există.');
-  return { ...hydrateInvoice(invoice), accountOutstanding: invoice.issuer_id ? outstandingReport(db, invoice.company_id, invoice.issuer_id) : undefined };
+  return { ...hydrateInvoice(invoice), accountOutstanding: invoice.issuer_id ? outstandingReport(db, invoice.company_id, invoice.issuer_id, invoice.store_id) : undefined };
 }
 
 export function getPaymentReport(from: string, to: string) { return paymentReport(db, from, to); }

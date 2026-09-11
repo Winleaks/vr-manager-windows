@@ -1,5 +1,5 @@
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, FileText, Settings, ArrowLeft, Users, Receipt, Package, ShoppingBag, FileMinus2, FilePlus2 } from 'lucide-react';
+import { LayoutDashboard, FileText, Settings, ArrowLeft, Users, Receipt, Package, ShoppingBag, FileMinus2, FilePlus2, History } from 'lucide-react';
 import { BillingDashboard } from './BillingDashboard';
 import { BillingClients } from './BillingClients';
 import { BillingInvoices } from './BillingInvoices';
@@ -23,7 +23,6 @@ function Sidebar() {
         Facturare
       </div>
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-        <Link to="/facturare/plati" className={`flex items-center gap-3 p-3 rounded-lg font-medium ${isActive('/facturare/plati') ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}><Receipt size={20}/>Plăți</Link>
         <Link to="/" className="flex items-center gap-3 p-3 rounded-lg font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors mb-4">
           <ArrowLeft size={20} />
           Înapoi la Hub
@@ -40,6 +39,7 @@ function Sidebar() {
           <Receipt size={20} />
           Facturi
         </Link>
+        <Link to="/facturare/plati" className={`flex items-center gap-3 p-3 rounded-lg font-medium transition-colors ${isActive('/facturare/plati') ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}><History size={20} />Istoric Plăți</Link>
         <Link to="/facturare/factura-manuala" className={`flex items-center gap-3 p-3 rounded-lg font-medium transition-colors ${isActive('/facturare/factura-manuala') ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
           <FilePlus2 size={20} />
           Factură manuală
@@ -66,7 +66,7 @@ export function BillingLayout() {
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden font-sans">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 min-w-0 overflow-y-auto">
         <Routes>
           <Route path="/dashboard" element={<BillingDashboard />} />
           <Route path="/plati" element={<BillingPayments />} />

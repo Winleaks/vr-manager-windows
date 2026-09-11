@@ -198,6 +198,27 @@ function weekly(storeId: number, storeExternalId: string, orderId: string) {
   };
 }
 
+test('invoice outstanding balance isolates sibling stores and keeps company statements unchanged', () => {
+  const {connection,company1,company2,store1,goodnessId,vatraId}=fixture();
+  try {
+    const sibling = Number(connection.prepare("INSERT INTO stores(company_id,name,supabase_store_id) VALUES (?, 'Second store', 'second-store')").run(company1).lastInsertRowid);
+    const [first, second] = createWeeklyInvoiceBatchTransaction(connection, [weekly(store1,'store-goodness','first-store'),weekly(sibling,'second-store','second-store')], '2026-08-31');
+    recordCompanyPaymentTransaction(connection,{companyId:company1,issuerId:goodnessId,invoiceId:first.invoiceId,amount:4,paymentDate:'2026-09-08',method:'transfer',bankName:'HSBC'});
+    assert.equal(outstandingReport(connection,company1,goodnessId,store1).total,6);
+    assert.deepEqual(outstandingReport(connection,company1,goodnessId,store1).rows.map(row=>row.id),[first.invoiceId]);
+    assert.equal(outstandingReport(connection,company1,goodnessId,sibling).total,10);
+    assert.deepEqual(outstandingReport(connection,company1,goodnessId,sibling).rows.map(row=>row.id),[second.invoiceId]);
+    assert.equal(statementReport(connection,company1,goodnessId,'2026-08-01','2026-09-30').closing,16);
+    assert.equal(outstandingReport(connection,company1,vatraId,store1).total,0);
+    assert.equal(outstandingReport(connection,company2,goodnessId,store1).total,0);
+    assert.throws(()=>outstandingReport(connection,company1,goodnessId,0));
+    cancelInvoiceTransaction(connection,second.invoiceId,'Cancelled test invoice');
+    assert.deepEqual(outstandingReport(connection,company1,goodnessId,sibling),{rows:[],total:0});
+    recordCompanyPaymentTransaction(connection,{companyId:company1,issuerId:goodnessId,invoiceId:first.invoiceId,amount:6,paymentDate:'2026-09-09',method:'transfer',bankName:'HSBC'});
+    assert.deepEqual(outstandingReport(connection,company1,goodnessId,store1),{rows:[],total:0});
+  } finally { connection.close(); }
+});
+
 test('reports isolate issuers, count payments by payment date, and retain partial balances', () => {
   const {connection,company1,store1,goodnessId,vatraId}=fixture();
   try {
@@ -206,14 +227,14 @@ test('reports isolate issuers, count payments by payment date, and retain partia
     const statement=statementReport(connection,company1,goodnessId,'2026-09-07','2026-09-13');
     assert.equal(statement.opening,10); assert.equal(statement.closing,6); assert.equal(statement.rows.length,1);
     assert.equal(statementReport(connection,company1,vatraId,'2026-09-07','2026-09-13').closing,0);
-    assert.equal(outstandingReport(connection,company1,goodnessId).total,6);
-    assert.equal(outstandingReport(connection,company1,goodnessId).rows[0].invoice_number,invoice.invoiceNumber);
+    assert.equal(outstandingReport(connection,company1,goodnessId,store1).total,6);
+    assert.equal(outstandingReport(connection,company1,goodnessId,store1).rows[0].invoice_number,invoice.invoiceNumber);
     assert.equal(paymentReport(connection,'2026-09-08','2026-09-08').length,1);
     assert.deepEqual(weeklyBillingStats(connection,goodnessId,'2026-09-07','2026-09-13'),{totalInvoiced:0,totalPaid:4,totalCredited:0,totalUnpaid:6});
     const payment=connection.prepare('SELECT * FROM payments').get() as any;
     updatePaymentTransaction(connection,{id:payment.id,amount:4,method:'transfer',bankName:'HSBC',paymentDate:'2026-09-06',reason:'Correct bank date'});
     assert.equal(paymentReport(connection,'2026-09-08','2026-09-08').length,0);
-    assert.equal(outstandingReport(connection,company1,goodnessId).total,6);
+    assert.equal(outstandingReport(connection,company1,goodnessId,store1).total,6);
     assert.equal(statementReport(connection,company1,goodnessId,'2026-09-07','2026-09-13').opening,6);
     assert.throws(()=>updatePaymentTransaction(connection,{id:payment.id,amount:4,method:'transfer',bankName:'HSBC',paymentDate:'2026-02-30',reason:'Invalid'}));
     assert.equal((connection.prepare('SELECT payment_date FROM payments').get() as any).payment_date,'2026-09-06');

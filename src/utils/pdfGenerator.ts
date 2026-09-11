@@ -385,7 +385,7 @@ export function generateInvoicePDF(
     doc.addPage(); doc.setFont('Arial', 'bold'); doc.setFontSize(16); doc.setTextColor(15,23,42);
     doc.text('OUTSTANDING INVOICES',14,22);
     doc.setFontSize(9); doc.setFont('Arial','normal');
-    const heading = doc.splitTextToSize(fixRomanianDiacritics(`${invoiceData.client.name} | Invoice ${invoiceData.invoiceNumber}\n${settings.issuerName || ''} | Current account balance (GBP)`),182);
+    const heading = doc.splitTextToSize(fixRomanianDiacritics(`${invoiceData.client.name} | Invoice ${invoiceData.invoiceNumber}\nStore: ${invoiceData.store?.name || ''}\n${settings.issuerName || ''} | Current store balance (GBP)`),182);
     doc.text(heading,14,31);
     autoTable(doc, {
       startY:36+heading.length*4, margin:{left:14,right:14,top:16,bottom:footerLayout.reservedBottom+5},

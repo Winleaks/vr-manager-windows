@@ -21,12 +21,13 @@ export function paymentReport(db: Database.Database, from: string, to: string) {
     WHERE p.payment_date BETWEEN ? AND ? ORDER BY p.payment_date DESC, c.name, p.id DESC`).all(start, end);
 }
 
-export function outstandingReport(db: Database.Database, companyId: number, issuerId: number) {
+export function outstandingReport(db: Database.Database, companyId: number, issuerId: number, storeId: number) {
   requirePositiveInteger(companyId, 'Compania'); requirePositiveInteger(issuerId, 'Emitentul');
+  requirePositiveInteger(storeId, 'Magazinul');
   const invoices = db.prepare(`SELECT i.id, i.invoice_number, i.invoice_date, s.name AS store_name
     FROM invoices i JOIN stores s ON s.id = i.store_id JOIN invoice_identities ii ON ii.invoice_id = i.id
-    WHERE s.company_id = ? AND ii.issuer_id = ? AND i.status != 'cancelled'
-    ORDER BY i.invoice_date, i.id`).all(companyId, issuerId) as Array<{ id: number; invoice_number: string; invoice_date: string; store_name: string }>;
+    WHERE s.company_id = ? AND ii.issuer_id = ? AND i.store_id = ? AND i.status != 'cancelled'
+    ORDER BY i.invoice_date, i.id`).all(companyId, issuerId, storeId) as Array<{ id: number; invoice_number: string; invoice_date: string; store_name: string }>;
   const rows = invoices.map(row => ({ ...row, ...getInvoiceFinancials(db, row.id) })).filter(row => row.outstanding > 0.005);
   return { rows, total: rows.reduce((sum, row) => sum + cents(row.outstanding), 0) / 100 };
 }
