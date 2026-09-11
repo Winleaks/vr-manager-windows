@@ -11,6 +11,7 @@ import { InvoiceEditorModal } from '../components/InvoiceEditorModal';
 import { NumericInput } from '../components/NumericInput';
 import { TextConfirmationModal } from '../components/TextConfirmationModal';
 import { InvoiceDocumentActions } from '../components/InvoiceDocumentActions';
+import { StatementActions } from '../components/StatementActions';
 
 interface Company {
   id: number;
@@ -53,7 +54,7 @@ export function BillingClients() {
   const [paymentForm, setPaymentForm] = useState<{
     amount: string;
     method: 'cash' | 'transfer';
-    bankName: 'Barclays' | 'Virgin';
+    bankName: 'Barclays' | 'Virgin' | 'HSBC';
     paymentDate: string;
     notes: string;
     issuerId: string;
@@ -73,7 +74,7 @@ export function BillingClients() {
   const [isAssigningIssuer, setIsAssigningIssuer] = useState(false);
   const [issuerAssignmentNotice, setIssuerAssignmentNotice] = useState('');
   const [editingPayment, setEditingPayment] = useState<any | null>(null);
-  const [paymentEditForm, setPaymentEditForm] = useState({ amount: '', method: 'cash' as 'cash' | 'transfer', bankName: 'Barclays' as 'Barclays' | 'Virgin', reason: '' });
+  const [paymentEditForm, setPaymentEditForm] = useState({ amount: '', method: 'cash' as 'cash' | 'transfer', bankName: 'Barclays' as 'Barclays' | 'Virgin' | 'HSBC', paymentDate: '', reason: '' });
   const [isUpdatingPayment, setIsUpdatingPayment] = useState(false);
   const [pendingCreditReversal, setPendingCreditReversal] = useState<any | null>(null);
 
@@ -196,7 +197,8 @@ export function BillingClients() {
     setPaymentEditForm({
       amount: Number(payment.amount).toFixed(2),
       method: payment.method === 'transfer' ? 'transfer' : 'cash',
-      bankName: payment.bank_name === 'Virgin' ? 'Virgin' : 'Barclays',
+      bankName: payment.bank_name === 'HSBC' ? 'HSBC' : payment.bank_name === 'Virgin' ? 'Virgin' : 'Barclays',
+      paymentDate: payment.payment_date,
       reason: '',
     });
   };
@@ -217,6 +219,7 @@ export function BillingClients() {
         method: paymentEditForm.method,
         bankName: paymentEditForm.method === 'transfer' ? paymentEditForm.bankName : undefined,
         reason: paymentEditForm.reason.trim(),
+        paymentDate: paymentEditForm.paymentDate,
       });
       setEditingPayment(null);
       await Promise.all([loadCompanyProfile(profileData.company.id), fetchCompanies()]);
@@ -242,7 +245,7 @@ export function BillingClients() {
     }
 
     if (paymentForm.method === 'transfer' && !paymentForm.bankName) {
-      notify('Te rugăm să selectezi banca unde s-a primit transferul bancar (Barclays sau Virgin)!');
+      notify('Te rugăm să selectezi banca unde s-a primit transferul bancar (Barclays, Virgin sau HSBC)!');
       return;
     }
 
@@ -284,8 +287,9 @@ export function BillingClients() {
   const filteredCompanies = companies.filter(c => 
     c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     (c.cui && c.cui.toLowerCase().includes(searchQuery.toLowerCase())) ||
-    (c.reg_com && c.reg_com.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+    (c.reg_com && c.reg_com.toLowerCase().includes(searchQuery.toLowerCase())) ||
+    c.stores?.some(store => store.name?.toLowerCase().includes(searchQuery.toLowerCase()))
+  ).sort((a, b) => Number(b.unpaidTotal || 0) - Number(a.unpaidTotal || 0) || a.name.localeCompare(b.name));
 
   // --- VIZUALIZARE 1: PROFIL COMPANIE ---
   if (selectedCompanyId && profileData) {
@@ -323,6 +327,7 @@ export function BillingClients() {
             void fetchCompanies();
           }}
         />}
+        {isWriter && <StatementActions companyId={company.id} issuers={profileData.issuers || []} />}
         {/* Header Profil Companie */}
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
@@ -789,6 +794,7 @@ export function BillingClients() {
                       >
                         Virgin
                       </button>
+                      <button type="button" onClick={() => setPaymentForm({ ...paymentForm, bankName: 'HSBC' })} className={`p-2.5 rounded-lg border text-sm font-bold ${paymentForm.bankName === 'HSBC' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}>HSBC</button>
                     </div>
                   </div>
                 )}
@@ -843,7 +849,8 @@ export function BillingClients() {
               <form onSubmit={submitPaymentEdit} className="space-y-4 p-6">
                 <label className="block text-xs font-semibold uppercase text-slate-600">Suma încasată (£)<NumericInput decimalScale={2} required value={paymentEditForm.amount} onValueChange={(amount) => setPaymentEditForm((current) => ({ ...current, amount }))} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 font-mono text-lg font-bold" /></label>
                 <div><div className="mb-1.5 text-xs font-semibold uppercase text-slate-600">Metodă plată</div><div className="grid grid-cols-2 gap-3"><button type="button" onClick={() => setPaymentEditForm((current) => ({ ...current, method: 'cash' }))} className={`rounded-xl border p-3 text-sm font-bold ${paymentEditForm.method === 'cash' ? 'border-amber-500 bg-amber-500 text-white' : 'border-slate-200 bg-slate-50 text-slate-700'}`}><Banknote size={17} className="mr-2 inline" />Cash</button><button type="button" onClick={() => setPaymentEditForm((current) => ({ ...current, method: 'transfer' }))} className={`rounded-xl border p-3 text-sm font-bold ${paymentEditForm.method === 'transfer' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-slate-50 text-slate-700'}`}><CreditCard size={17} className="mr-2 inline" />Transfer</button></div></div>
-                {paymentEditForm.method === 'transfer' && <label className="block text-xs font-semibold uppercase text-slate-600">Banca<select value={paymentEditForm.bankName} onChange={(event) => setPaymentEditForm((current) => ({ ...current, bankName: event.target.value as 'Barclays' | 'Virgin' }))} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><option value="Barclays">Barclays</option><option value="Virgin">Virgin</option></select></label>}
+                {paymentEditForm.method === 'transfer' && <label className="block text-xs font-semibold uppercase text-slate-600">Banca<select value={paymentEditForm.bankName} onChange={(event) => setPaymentEditForm((current) => ({ ...current, bankName: event.target.value as 'Barclays' | 'Virgin' | 'HSBC' }))} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><option value="Barclays">Barclays</option><option value="Virgin">Virgin</option><option value="HSBC">HSBC</option></select></label>}
+                <label className="block text-xs font-semibold text-slate-600">Data plății<input required type="date" value={paymentEditForm.paymentDate} onChange={(event) => setPaymentEditForm(current => ({ ...current, paymentDate: event.target.value }))} className="mt-1 block border rounded-xl px-3 py-2.5" /></label>
                 <label className="block text-xs font-semibold uppercase text-slate-600">Motivul modificării<input required maxLength={500} value={paymentEditForm.reason} onChange={(event) => setPaymentEditForm((current) => ({ ...current, reason: event.target.value }))} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm" placeholder="Ex.: sumă introdusă greșit" /></label>
                 <p className="text-xs text-slate-500">Modificarea recalculează factura sau creditul companiei și este păstrată în jurnalul de audit.</p>
                 <div className="flex justify-end gap-3 border-t border-slate-100 pt-4"><button type="button" onClick={() => setEditingPayment(null)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold">Renunță</button><button type="submit" disabled={isUpdatingPayment} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50">{isUpdatingPayment ? 'Se salvează...' : 'Salvează modificarea'}</button></div>

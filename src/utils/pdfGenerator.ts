@@ -57,6 +57,7 @@ export function generateInvoicePDF(
       totalPrice: number;
     }>;
     totalAmount: number;
+    accountOutstanding?: { total: number; rows: Array<{ invoice_number: string; invoice_date: string; grossAmount: number; cashPaid: number; creditedAmount: number; appliedCredit: number; outstanding: number }> };
   },
   metadata?: { fileId: string; creationDate: string },
 ): Uint8Array {
@@ -379,6 +380,22 @@ export function generateInvoicePDF(
   doc.text("Total Due:", summaryBoxX + 5, finalTableY + 14.5);
   doc.text(`£${invoiceData.totalAmount.toFixed(2)}`, 191, finalTableY + 14.5, { align: "right" });
 
+  if (invoiceData.accountOutstanding) {
+    const account = invoiceData.accountOutstanding;
+    doc.addPage(); doc.setFont('Arial', 'bold'); doc.setFontSize(16); doc.setTextColor(15,23,42);
+    doc.text('OUTSTANDING INVOICES',14,22);
+    doc.setFontSize(9); doc.setFont('Arial','normal');
+    const heading = doc.splitTextToSize(fixRomanianDiacritics(`${invoiceData.client.name} | Invoice ${invoiceData.invoiceNumber}\n${settings.issuerName || ''} | Current account balance (GBP)`),182);
+    doc.text(heading,14,31);
+    autoTable(doc, {
+      startY:36+heading.length*4, margin:{left:14,right:14,top:16,bottom:footerLayout.reservedBottom+5},
+      head:[['Date','Invoice','Total','Paid','Credits','To pay']],
+      body:account.rows.map(row=>[formatPdfDate(row.invoice_date),row.invoice_number,`£${row.grossAmount.toFixed(2)}`,`£${row.cashPaid.toFixed(2)}`,`£${(row.creditedAmount+row.appliedCredit).toFixed(2)}`,`£${row.outstanding.toFixed(2)}`]),
+      foot:[['','Total outstanding','','','',`£${account.total.toFixed(2)}`]],showFoot:'lastPage',
+      styles:{font:'Arial',fontSize:8,cellPadding:3},headStyles:{fillColor:[r,g,b]},
+      columnStyles:{0:{cellWidth:28},1:{cellWidth:42},2:{halign:'right',cellWidth:28},3:{halign:'right',cellWidth:28},4:{halign:'right',cellWidth:28},5:{halign:'right',cellWidth:28}},rowPageBreak:'avoid',
+    });
+  }
   // Footerul este desenat după ce numărul total de pagini este cunoscut.
   drawPdfFooters(doc, footerLayout);
 

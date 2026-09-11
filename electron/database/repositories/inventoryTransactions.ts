@@ -41,7 +41,8 @@ export interface CashTransactionInput {
 export interface CashReceiptUpdateInput {
   id: number;
   amount: number;
-  reference_id: number;
+  reference_id: number | null;
+  reference_name?: string;
   notes?: string | null;
 }
 
@@ -169,7 +170,8 @@ export function updateCashReceiptTransaction(
 ) {
   const transactionId = requirePositiveInteger(data.id, 'Încasarea');
   const amount = requireMoneyPositive(data.amount, 'Suma încasării');
-  const referenceId = requirePositiveInteger(data.reference_id, 'Șoferul');
+  const referenceId = data.reference_id === null ? null : requirePositiveInteger(data.reference_id, 'Șoferul');
+  const referenceName = referenceId === null ? requireText(data.reference_name, 'Sursa încasării', 300) : null;
   const notes = optionalText(data.notes, 'Observațiile încasării');
 
   return connection.transaction(() => {
@@ -181,16 +183,16 @@ export function updateCashReceiptTransaction(
     `).get(transactionId) as { id: number; type: string; category: string; is_closed: number } | undefined;
     if (!receipt) throw new Error('Încasarea nu există.');
     if (receipt.is_closed) throw new Error('Încasările unei zile închise nu pot fi modificate.');
-    if (receipt.type !== 'IN' || receipt.category !== 'driver_collection') {
+    if (receipt.type !== 'IN' || !['driver_collection', 'other_collection'].includes(receipt.category)) {
       throw new Error('Numai încasările de la șoferi pot fi modificate din acest ecran.');
     }
     const driver = connection.prepare('SELECT id FROM drivers WHERE id = ?').get(referenceId);
-    if (!driver) throw new Error('Șoferul selectat nu există.');
+    if (referenceId !== null && !driver) throw new Error('Șoferul selectat nu există.');
     const result = connection.prepare(`
       UPDATE cash_transactions
-      SET amount = ?, reference_id = ?, notes = ?
+      SET amount = ?, reference_id = ?, reference_name = ?, notes = ?, category = ?
       WHERE id = ?
-    `).run(amount, referenceId, notes, transactionId);
+    `).run(amount, referenceId, referenceName, notes, referenceId === null ? 'other_collection' : 'driver_collection', transactionId);
     if (result.changes !== 1) throw new Error('Încasarea nu a putut fi actualizată.');
     return true;
   })();
@@ -330,12 +332,19 @@ export function adjustRawMaterialStockTransaction(
 export function addCashTransaction(connection: SqliteDatabase, data: CashTransactionInput) {
   const dayId = requirePositiveInteger(data.cash_day_id, 'Ziua de casă');
   if (data.type !== 'IN' && data.type !== 'OUT') throw new Error('Tipul tranzacției de casă nu este valid.');
-  const category = requireText(data.category, 'Categoria', 100);
+  let category = requireText(data.category, 'Categoria', 100);
   const amount = requireFinitePositive(data.amount, 'Suma');
   const referenceId = data.reference_id === undefined || data.reference_id === null
     ? null
     : requirePositiveInteger(data.reference_id, 'Referința tranzacției');
   const referenceName = optionalText(data.reference_name, 'Numele referinței', 300);
+  if (category === 'driver_collection' && referenceId === null) category = 'other_collection';
+  if (category === 'other_collection' && (data.type !== 'IN' || referenceId !== null || !referenceName)) {
+    throw new Error('Completează sursa încasării fără a o atribui unui șofer.');
+  }
+  if (category === 'driver_collection' && (data.type !== 'IN' || (referenceId === null && !referenceName))) {
+    throw new Error('Selectează șoferul sau completează sursa încasării.');
+  }
   const transactionNotes = optionalText(data.notes, 'Observațiile tranzacției');
   const items = data.items || [];
   if (category === 'direct_sale' && (data.type !== 'IN' || items.length === 0)) {

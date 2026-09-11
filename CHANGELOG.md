@@ -1,3 +1,12 @@
+### VR - Hub Management v0.1.104
+
+- Statement PDF în profilul companiei pe Writer, filtrat după emitent și perioadă, cu deschidere, print și trimitere. Nu adaugă Statement în contul clientului.
+- Facturile regenerate includ lista facturilor neachitate și soldul total pentru aceeași companie și același emitent, inclusiv factura curentă dacă are rest de plată.
+- Dashboard săptămânal luni–duminică și secțiune Plăți cu perioadă și căutare după client, magazin sau factură.
+- Data încasării poate fi corectată; HSBC este disponibil ca bancă de plată. Încasările din alte surse permit introducerea manuală a sursei, fără șofer fictiv.
+- Căutare extinsă după companie/magazin și în catalogul editorului. Pozițiile importate pot fi eliminate explicit după setarea cantității la zero, păstrând legăturile comenzilor și istoricul editării.
+- Păstrează integral corecțiile v0.1.103, fără migrare nouă a bazei de date sau modificări ale contului clientului. Publicare autorizată pentru verificarea pe Windows; fluxurile native de print/WhatsApp și upgrade-ul pe calculatorul Writer necesită testare după instalare.
+
 ### VR - Hub Management v0.1.103
 
 - Facturile din Drive folosesc un singur PDF, `Invoice_<număr>.pdf`, atât în folderul clientului, cât și în platformă. Fișierele vechi sunt redenumite/actualizate păstrând ID-ul; copiile confirmate sunt mutate recuperabil în coș doar după confirmarea publicării. Asocierile ambigue sau schimbate opresc unificarea.

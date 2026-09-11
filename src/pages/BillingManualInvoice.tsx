@@ -22,6 +22,7 @@ export function BillingManualInvoice() {
   const [products, setProducts] = useState<any[]>([]);
   const [issuers, setIssuers] = useState<any[]>([]);
   const [companyId, setCompanyId] = useState('');
+  const [clientSearch,setClientSearch] = useState('');
   const [storeId, setStoreId] = useState('');
   const [productId, setProductId] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(todayLocal());
@@ -142,6 +143,7 @@ export function BillingManualInvoice() {
           },
           items: invoice.items,
           totalAmount: invoice.total_amount,
+          accountOutstanding: invoice.accountOutstanding,
         },
       );
       const localSave = await api.system.savePdfAuto({ buffer, invoiceId: created.invoiceId });
@@ -172,8 +174,9 @@ export function BillingManualInvoice() {
       {!isWriter && <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900 flex gap-2"><AlertCircle size={18} />Calculatorul Viewer poate consulta facturile, dar nu poate emite facturi manuale.</div>}
 
       <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-5">
+        <label className="block text-sm">Caută companie sau magazin<input type="search" value={clientSearch} onChange={event=>setClientSearch(event.target.value)} className="block w-full border rounded-xl p-2" /></label>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <label className="space-y-1.5"><span className="text-xs font-semibold uppercase text-slate-500">Companie client</span><select value={companyId} onChange={(event) => setCompanyId(event.target.value)} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50"><option value="">Selectează compania</option>{companies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label className="space-y-1.5"><span className="text-xs font-semibold uppercase text-slate-500">Companie client</span><select value={companyId} onChange={(event) => setCompanyId(event.target.value)} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50"><option value="">Selectează compania</option>{companies.filter(item => String(item.id) === companyId || `${item.name} ${(item.stores || []).map((store:any) => store.name).join(' ')}`.toLowerCase().includes(clientSearch.trim().toLowerCase())).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           <label className="space-y-1.5"><span className="text-xs font-semibold uppercase text-slate-500">Magazin / punct de livrare</span><select value={storeId} onChange={(event) => setStoreId(event.target.value)} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50"><option value="">Selectează magazinul</option>{stores.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           <label className="space-y-1.5"><span className="text-xs font-semibold uppercase text-slate-500">Data facturii</span><input type="date" value={invoiceDate} onChange={(event) => setInvoiceDate(event.target.value)} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50" /></label>
         </div>

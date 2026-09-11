@@ -99,7 +99,7 @@ export const desktopApi = {
     reopenDay: (dayId: number) => ipcRenderer.invoke('reopen-cash-day', dayId),
     initializeBalance: (dayId: number, actualBalance: number) =>
       ipcRenderer.invoke('initialize-cash-balance', dayId, actualBalance),
-    updateReceipt: (data: { id: number; amount: number; reference_id: number; notes?: string | null }) =>
+    updateReceipt: (data: { id: number; amount: number; reference_id: number | null; reference_name?: string; notes?: string | null }) =>
       ipcRenderer.invoke('update-cash-receipt', data),
     getTransactionsByDateRange: (startDate: string, endDate: string, category?: string) =>
       ipcRenderer.invoke('get-cash-transactions-by-date', startDate, endDate, category),
@@ -141,7 +141,9 @@ export const desktopApi = {
     setTestMode: (enabled: boolean, confirmation: string) => ipcRenderer.invoke('billing:setTestMode', { enabled, confirmation }),
     deleteTestInvoice: (invoiceId: number, confirmation: string) => ipcRenderer.invoke('billing:deleteTestInvoice', { invoiceId, confirmation }),
     reissueCancelledInvoice: (invoiceId: number) => ipcRenderer.invoke('billing:reissueCancelledInvoice', invoiceId),
-    getStats: (issuerId?: number) => ipcRenderer.invoke('billing:getStats', issuerId),
+    getStats: (issuerId?: number, from?: string, to?: string) => ipcRenderer.invoke('billing:getStats', issuerId, from, to),
+    getPaymentReport: (from: string, to: string) => ipcRenderer.invoke('billing:getPaymentReport', from, to),
+    statementDocument: (companyId: number, issuerId: number, from: string, to: string, action: 'open' | 'print' | 'share') => ipcRenderer.invoke('billing:statementDocument', companyId, issuerId, from, to, action),
     getIssuers: () => ipcRenderer.invoke('billing:getIssuers'),
     updateIssuer: (data: any) => ipcRenderer.invoke('billing:updateIssuer', data),
     assignCompanyIssuer: (companyId: number, issuerId: number | null) => ipcRenderer.invoke('billing:assignCompanyIssuer', { companyId, issuerId }),

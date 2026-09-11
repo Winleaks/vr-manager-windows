@@ -8,6 +8,7 @@ import { BillingSettings } from './BillingSettings';
 import { BillingProducts } from './BillingProducts';
 import { BillingCreditNotes } from './BillingCreditNotes';
 import { BillingManualInvoice } from './BillingManualInvoice';
+import { BillingPayments } from './BillingPayments';
 
 function Sidebar() {
   const location = useLocation();
@@ -21,7 +22,8 @@ function Sidebar() {
         </div>
         Facturare
       </div>
-      <nav className="flex-1 p-4 space-y-1">
+      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+        <Link to="/facturare/plati" className={`flex items-center gap-3 p-3 rounded-lg font-medium ${isActive('/facturare/plati') ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}><Receipt size={20}/>Plăți</Link>
         <Link to="/" className="flex items-center gap-3 p-3 rounded-lg font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors mb-4">
           <ArrowLeft size={20} />
           Înapoi la Hub
@@ -67,6 +69,7 @@ export function BillingLayout() {
       <main className="flex-1 overflow-y-auto">
         <Routes>
           <Route path="/dashboard" element={<BillingDashboard />} />
+          <Route path="/plati" element={<BillingPayments />} />
           <Route path="/comenzi" element={<BillingOrders />} />
           <Route path="/facturi" element={<BillingInvoices />} />
           <Route path="/factura-manuala" element={<BillingManualInvoice />} />

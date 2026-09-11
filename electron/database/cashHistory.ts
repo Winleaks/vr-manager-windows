@@ -32,7 +32,9 @@ export function getCashTransactionsByDateRange(
   const params: Array<string> = [startDate, endDate];
 
   if (categoryInput) {
-    if (categoryInput === 'purchase_or_expense') {
+    if (categoryInput === 'driver_collection') {
+      query += ` AND t.category IN ('driver_collection', 'other_collection')`;
+    } else if (categoryInput === 'purchase_or_expense') {
       query += ` AND (t.category = 'purchase' OR t.category = 'other_expense')`;
     } else {
       query += ' AND t.category = ?';

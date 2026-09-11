@@ -300,7 +300,7 @@ export function DailyCash() {
                         </td>
                         <td className="px-6 py-4">
                           <div className="font-medium text-slate-800">
-                            {t.category === 'driver_collection' ? 'Încasare Șofer' : 
+                            {t.category === 'driver_collection' ? 'Încasare Șofer' : t.category === 'other_collection' ? 'Încasare altă sursă' :
                              t.category === 'direct_sale' ? 'Vânzare Directă' : 
                              t.category === 'purchase' ? 'Achiziție Marfă' : 
                              t.category === 'cash_adjustment' ? 'Ajustare Sold' :

@@ -1,4 +1,5 @@
 import { db } from '../db';
+import { outstandingReport, paymentReport, statementReport, weeklyBillingStats } from '../billingReports.ts';
 import {
   createInvoiceBatchTransaction,
   createManualInvoiceTransaction,
@@ -457,8 +458,11 @@ export function getInvoiceById(invoiceIdInput: number) {
   const invoiceId = requirePositiveInteger(invoiceIdInput, 'Factura');
   const invoice = db.prepare(`${invoiceSelect} WHERE i.id = ?`).get(invoiceId) as any;
   if (!invoice) throw new Error('Factura nu există.');
-  return hydrateInvoice(invoice);
+  return { ...hydrateInvoice(invoice), accountOutstanding: invoice.issuer_id ? outstandingReport(db, invoice.company_id, invoice.issuer_id) : undefined };
 }
+
+export function getPaymentReport(from: string, to: string) { return paymentReport(db, from, to); }
+export function getStatement(companyId: number, issuerId: number, from: string, to: string) { return statementReport(db, companyId, issuerId, from, to); }
 
 export function getInvoicesByDateRange(startDate?: string, endDate?: string, issuerId?: number) {
   let query = invoiceSelect;
@@ -500,7 +504,8 @@ export function getInvoiceProductContext(invoiceIdInput: number) {
 
 
 // Dashboard calculations
-export function getBillingStats(issuerId?: number) {
+export function getBillingStats(issuerId?: number, from?: string, to?: string) {
+  if (from !== undefined || to !== undefined) return weeklyBillingStats(db, issuerId, from!, to!);
   const invoiceIds = db.prepare(`SELECT i.id FROM invoices i LEFT JOIN invoice_identities ii ON ii.invoice_id = i.id WHERE i.status != 'cancelled' AND (? IS NULL OR ii.issuer_id = ?)`).all(issuerId ?? null, issuerId ?? null) as Array<{ id: number }>;
   const rows = invoiceIds.map((row) => getInvoiceFinancials(db, row.id));
   return {

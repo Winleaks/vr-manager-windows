@@ -968,7 +968,7 @@ async function uploadCurrentInvoicePdf(invoiceId: number): Promise<{success:bool
       invoiceNumber:inv.invoice_number,invoiceDate:inv.invoice_date,
       client:{name:inv.company_name,cui:inv.company_cui,regCom:inv.company_reg_com,address:inv.company_address||inv.store_address},
       store:{name:inv.store_name,address:inv.store_address,postcode:inv.store_postcode,phone:inv.store_phone},
-      items:inv.items,totalAmount:inv.total_amount,
+      items:inv.items,totalAmount:inv.total_amount,accountOutstanding:inv.accountOutstanding,
     }, { fileId: createHash('md5').update(`${source_id}:${invoiceId}`).digest('hex'), creationDate: inv.invoice_date });
     const drive = google.drive({version:'v3',auth:oauth2Client});
     const facturiFolderId = await resolveExistingInvoiceFolder(drive,(db.prepare("SELECT value FROM app_settings WHERE key='invoice_drive_folder_id'").get() as {value:string}|undefined)?.value);

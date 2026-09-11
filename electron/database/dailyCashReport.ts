@@ -6,6 +6,7 @@ type SqliteDatabase = Database.Database;
 
 export const DAILY_CASH_CATEGORY_LABELS: Record<string, string> = {
   driver_collection: 'Încasare șofer',
+  other_collection: 'Încasare altă sursă',
   direct_sale: 'Vânzare directă',
   purchase: 'Achiziție marfă',
   other_expense: 'Alte cheltuieli',

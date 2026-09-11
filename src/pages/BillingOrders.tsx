@@ -55,6 +55,7 @@ export function BillingOrders() {
   const [testMode, setTestMode] = useState(false);
   const [pendingOrderAction, setPendingOrderAction] = useState<any | null>(null);
   const [selectedZoneKey, setSelectedZoneKey] = useState('all');
+  const [clientSearch,setClientSearch] = useState('');
 
   useEffect(() => {
     api.billing.getTestMode().then((mode) => setTestMode(mode.enabled === true)).catch(console.error);
@@ -295,9 +296,10 @@ export function BillingOrders() {
 
   const zoneSummaries = buildZoneSummaries(syncResult);
   const selectedZone = zoneSummaries.find((zone: any) => zone.key === selectedZoneKey);
-  const displayedOrders = selectedZoneKey === 'all'
+  const zoneOrders = selectedZoneKey === 'all'
     ? syncResult?.ordersByStore || []
     : (syncResult?.ordersByStore || []).filter((order: any) => orderZoneKey(order) === selectedZoneKey);
+  const displayedOrders = zoneOrders.filter((order:any) => `${order.store?.company?.name || ''} ${order.store?.name || ''}`.toLowerCase().includes(clientSearch.trim().toLowerCase()));
   const isBatchGenerating = isGeneratingAll || generatingZoneKey !== null;
 
   return (
@@ -329,7 +331,7 @@ export function BillingOrders() {
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 mr-1">
             <Calendar size={18} className="text-slate-400" />
-            <span className="text-sm font-semibold text-slate-700">Filtrează după Săptămână:</span>
+            <span className="text-sm font-semibold text-slate-700">Filtrează după Săptămână:</span><label className="text-sm">Caută companie / magazin<input type="search" value={clientSearch} onChange={event=>setClientSearch(event.target.value)} className="block border rounded-xl p-2" /></label>
           </div>
 
           <button

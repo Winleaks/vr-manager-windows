@@ -497,7 +497,8 @@ export function getCreditNotes(connection: SqliteDatabase, filters: any = {}) {
   if (filters.endDate) { conditions.push('cn.issue_date <= ?'); params.push(requireIsoDate(filters.endDate, 'Data de sfârșit')); }
   const rows = connection.prepare(`
     SELECT cn.*, c.name AS company_name, bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color,
-      (SELECT GROUP_CONCAT(i.invoice_number, ', ') FROM credit_note_invoice_links link JOIN invoices i ON i.id = link.invoice_id WHERE link.credit_note_id = cn.id) AS invoice_references
+      (SELECT GROUP_CONCAT(i.invoice_number, ', ') FROM credit_note_invoice_links link JOIN invoices i ON i.id = link.invoice_id WHERE link.credit_note_id = cn.id) AS invoice_references,
+      (SELECT GROUP_CONCAT(DISTINCT s.name) FROM credit_note_invoice_links link JOIN invoices i ON i.id = link.invoice_id JOIN stores s ON s.id=i.store_id WHERE link.credit_note_id=cn.id) AS store_names
     FROM credit_notes cn JOIN companies c ON c.id = cn.company_id JOIN billing_issuers bi ON bi.id = cn.issuer_id
     ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
     ORDER BY cn.issue_date DESC, cn.sequence_number DESC, cn.id DESC

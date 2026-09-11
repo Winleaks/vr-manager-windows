@@ -1,5 +1,5 @@
 import { notify } from '../utils/feedback';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import {
   Banknote,
@@ -24,7 +24,7 @@ function DailyCashSidebar() {
   const { activeDay, drivers, employees, products, loadData, isModalOpen, closeModal } = useCashStore();
 
   // Form states
-  const [inData, setInData] = useState({ category: 'driver_collection', amount: '', reference_id: '', notes: '' });
+  const [inData, setInData] = useState({ category: 'driver_collection', amount: '', reference_id: '', reference_name: '', notes: '' });
   const [outData, setOutData] = useState({ category: 'purchase', amount: '', notes: '' });
   const [collectionData, setCollectionData] = useState({ name: 'Emi', amount: '', notes: '' });
   const [saleData, setSaleData] = useState({ reference_id: '', reference_name: '', items: [] as {finished_product_id: number, quantity: number, unit_price: number}[] });
@@ -32,20 +32,26 @@ function DailyCashSidebar() {
   const [saleError, setSaleError] = useState('');
   const [isSaleSubmitting, setIsSaleSubmitting] = useState(false);
 
+  const receiptBusy = useRef(false);
   const handleInSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inData.amount || !activeDay) return;
+    if (!inData.amount || !activeDay || receiptBusy.current) return;
+    receiptBusy.current = true;
+    try {
     await api.dailyCash.addTransaction({
       cash_day_id: activeDay.id,
       type: 'IN',
       category: inData.category,
       amount: parseFloat(inData.amount),
-      reference_id: inData.reference_id ? parseInt(inData.reference_id) : null,
+      reference_id: inData.reference_id === 'other' ? null : parseInt(inData.reference_id),
+      reference_name: inData.reference_id === 'other' ? inData.reference_name.trim() : null,
       notes: inData.notes
     });
     closeModal();
-    setInData({ category: 'driver_collection', amount: '', reference_id: '', notes: '' });
+    setInData({ category: 'driver_collection', amount: '', reference_id: '', reference_name: '', notes: '' });
     loadData();
+    } catch (error) { notify(error instanceof Error ? error.message : 'Încasarea nu a putut fi salvată.'); }
+    finally { receiptBusy.current = false; }
   };
 
   const handleOutSubmit = async (e: React.FormEvent) => {
@@ -178,7 +184,7 @@ function DailyCashSidebar() {
 
             <Link to="/daily-cash/incasari" className={`flex items-center gap-3 p-3 rounded-lg font-medium transition-colors ${isActive('/daily-cash/incasari') ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
               <PlusCircle size={20} />
-              Încasări (Șoferi)
+              Încasări (Șoferi / Alte surse)
             </Link>
 
             <Link to="/daily-cash/colectari" className={`flex items-center gap-3 p-3 rounded-lg font-medium transition-colors ${isActive('/daily-cash/colectari') ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
@@ -210,7 +216,7 @@ function DailyCashSidebar() {
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden text-slate-800">
             <div className="p-5 border-b border-slate-100 bg-emerald-50 flex justify-between items-center">
-              <h3 className="font-bold text-emerald-800 flex items-center gap-2"><PlusCircle size={20}/> Încasare de la Șofer</h3>
+              <h3 className="font-bold text-emerald-800 flex items-center gap-2"><PlusCircle size={20}/> Înregistrare încasare</h3>
               <button onClick={closeModal} className="text-slate-400 hover:text-slate-600">&times;</button>
             </div>
             <form onSubmit={handleInSubmit} className="p-5 space-y-4">
@@ -222,9 +228,10 @@ function DailyCashSidebar() {
                   onChange={e => setInData({...inData, reference_id: e.target.value})}
                   required
                 >
-                  <option value="">-- Selectează Șofer --</option>
+                  <option value="">-- Selectează sursa --</option><option value="other">Altă sursă</option>
                   {drivers.map(d => <option key={d.id} value={d.id}>{d.name} ({d.car_details})</option>)}
                 </select>
+                {inData.reference_id === 'other' && <label className="block text-sm mt-3">Sursa încasării<input required maxLength={300} value={inData.reference_name} onChange={event => setInData({...inData, reference_name: event.target.value})} className="block w-full border rounded-lg px-3 py-2" /></label>}
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">Suma (£)</label>

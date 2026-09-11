@@ -45,6 +45,7 @@ const VIEWER_ALLOWED_CHANNELS = new Set([
   'billing:getInvoices',
   'billing:getInvoice',
   'billing:getStats',
+  'billing:getPaymentReport',
   'billing:getSettings',
   'billing:getIssuers',
   'billing:getTestMode',

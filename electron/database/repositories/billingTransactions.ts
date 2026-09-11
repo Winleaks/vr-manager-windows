@@ -33,6 +33,7 @@ function ensureInvoiceProductColumns(connection: SqliteDatabase) {
 
 export interface InvoiceItemInput {
   id?: number;
+  remove?: boolean;
   productId?: number;
   productName: string;
   name_ro?: string;
@@ -93,6 +94,7 @@ export interface UpdatePaymentInput {
   amount: number;
   method: 'cash' | 'transfer';
   bankName?: string;
+  paymentDate?: string;
   reason: string;
 }
 
@@ -669,13 +671,15 @@ export function updateInvoiceTransaction(
       importedItems = itemsInput.filter((item) => item.id !== undefined).map((item) => {
         const id = requirePositiveInteger(item.id, 'Poziția facturii');
         if (!existingIds.delete(id)) throw new Error('Poziție invalidă sau duplicată în factura importată.');
-        const quantity = requireFinitePositive(item.quantity, 'Cantitatea');
+        const quantity = item.remove === true ? requireFiniteNonNegative(item.quantity, 'Cantitatea') : requireFinitePositive(item.quantity, 'Cantitatea');
+        if (item.remove === true && quantity !== 0) throw new Error('Poate fi eliminată numai o poziție cu cantitate zero.');
         const unitPrice = requireFiniteNonNegative(item.unitPrice, 'Prețul unitar');
         const totalPrice = quantity * unitPrice;
         if (!Number.isFinite(totalPrice)) throw new Error('Totalul poziției nu este valid.');
         return { id, quantity, unitPrice, totalPrice };
       });
-      if (existingIds.size) throw new Error('Păstrează pozițiile existente ale facturii importate; poți adăuga produse și modifica cantitățile și prețurile.');
+      if (existingIds.size) throw new Error('Păstrează pozițiile existente sau marchează explicit eliminarea lor cu cantitate zero.');
+      if (!importedItems.some(item => item.quantity > 0) && !addedItems.length) throw new Error('Factura trebuie să păstreze cel puțin un produs.');
     }
     const validated = imported ? null : validateInvoiceItems(connection, itemsInput.map((item) =>
       item.productId !== undefined ? resolveAddedCatalogItem(connection, item) : item));
@@ -688,7 +692,7 @@ export function updateInvoiceTransaction(
       throw new Error('Totalul facturii nu poate fi mai mic decât suma deja achitată.');
     }
     const sameItems=imported
-      ? addedItems.length===0 && importedItems.every(item=>previousItems.some(old=>old.id===item.id&&old.quantity===item.quantity&&old.unit_price===item.unitPrice&&old.total_price===item.totalPrice))
+      ? addedItems.length===0 && importedItems.every(item=>item.quantity>0&&previousItems.some(old=>old.id===item.id&&old.quantity===item.quantity&&old.unit_price===item.unitPrice&&old.total_price===item.totalPrice))
       : JSON.stringify(previousItems.map(item=>[item.product_name,item.product_name_ro||null,item.variant_label||null,item.unit||null,item.quantity,item.unit_price,item.total_price,item.product_order??null,item.external_product_id||null]).sort())===
         JSON.stringify(validated!.items.map(item=>[item.productName,item.name_ro||null,item.variant_label||null,item.unit||null,item.quantity,item.unitPrice,item.totalPrice,item.productOrder??null,item.externalProductId||null]).sort());
     // A save used to force migration/regeneration must not reissue line IDs,
@@ -708,7 +712,8 @@ export function updateInvoiceTransaction(
     if (imported) {
       const updateItem = connection.prepare('UPDATE invoice_items SET quantity = ?, unit_price = ?, total_price = ? WHERE id = ? AND invoice_id = ?');
       for (const item of importedItems) {
-        updateItem.run(item.quantity, item.unitPrice, item.totalPrice, item.id, invoiceId);
+        if (item.quantity === 0) connection.prepare('DELETE FROM invoice_items WHERE id = ? AND invoice_id = ?').run(item.id, invoiceId);
+        else updateItem.run(item.quantity, item.unitPrice, item.totalPrice, item.id, invoiceId);
       }
     } else {
       connection.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
@@ -991,20 +996,25 @@ export function updatePaymentTransaction(connection: SqliteDatabase, input: Upda
   const method = requireText(input.method, 'Metoda de plată', 20);
   if (method !== 'cash' && method !== 'transfer') throw new Error('Metoda de plată trebuie să fie cash sau transfer bancar.');
   const bankName = method === 'transfer' ? requireText(input.bankName, 'Banca', 100) : null;
-  if (bankName && bankName !== 'Barclays' && bankName !== 'Virgin') throw new Error('Banca trebuie să fie Barclays sau Virgin.');
+  if (bankName && !['Barclays', 'Virgin', 'HSBC'].includes(bankName)) throw new Error('Banca trebuie să fie Barclays, Virgin sau HSBC.');
+  const requestedDate = input.paymentDate === undefined ? undefined : requireIsoDate(input.paymentDate, 'Data plății');
   const reason = requireText(input.reason, 'Motivul modificării', 500);
 
   return connection.transaction(() => {
     const payment = connection.prepare(`
-      SELECT id, company_id, invoice_id, issuer_id, amount, method, bank_name
+      SELECT id, company_id, invoice_id, issuer_id, amount, method, bank_name, payment_date
       FROM payments WHERE id = ?
     `).get(paymentId) as {
       id: number; company_id: number | null; invoice_id: number | null; issuer_id: number | null;
-      amount: number; method: string; bank_name: string | null;
+      amount: number; method: string; bank_name: string | null; payment_date: string;
     } | undefined;
     if (!payment || !payment.company_id || !payment.issuer_id) throw new Error('Încasarea nu există sau nu are companie și emitent asociate.');
 
-    if (payment.invoice_id) {
+    const paymentDate = requestedDate ?? payment.payment_date;
+    const dateOnly = amount === payment.amount && method === payment.method && bankName === payment.bank_name;
+    if (dateOnly) {
+      // A date correction does not reallocate payments or consume company credit.
+    } else if (payment.invoice_id) {
       const hasCreditNote = connection.prepare(`
         SELECT 1 FROM credit_note_invoice_links link JOIN credit_notes cn ON cn.id = link.credit_note_id
         WHERE link.invoice_id = ? AND cn.status = 'issued' LIMIT 1
@@ -1031,12 +1041,13 @@ export function updatePaymentTransaction(connection: SqliteDatabase, input: Upda
       syncCompanyCreditBalance(connection, payment.company_id, payment.issuer_id);
     }
 
+    connection.prepare('UPDATE payments SET payment_date = ? WHERE id = ?').run(paymentDate, paymentId);
     connection.prepare(`INSERT INTO billing_audit_events (event_type, issuer_id, company_id, invoice_id, details) VALUES ('payment_updated', ?, ?, ?, ?)`)
       .run(payment.issuer_id, payment.company_id, payment.invoice_id, JSON.stringify({
         paymentId,
         reason,
-        before: { amount: payment.amount, method: payment.method, bankName: payment.bank_name },
-        after: { amount, method, bankName },
+        before: { amount: payment.amount, method: payment.method, bankName: payment.bank_name, paymentDate: payment.payment_date },
+        after: { amount, method, bankName, paymentDate },
       }));
     return { id: paymentId, amount, method, bankName };
   })();

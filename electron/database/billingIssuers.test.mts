@@ -20,6 +20,7 @@ import {
   updateInvoiceTransaction,
 } from './repositories/billingTransactions.ts';
 import { ensureCreditNoteSchema } from './creditNotes.ts';
+import { paymentReport, statementReport, outstandingReport, weeklyBillingStats } from './billingReports.ts';
 
 function issuerInput(issuer: any, overrides: Record<string, unknown> = {}) {
   return {
@@ -196,6 +197,50 @@ function weekly(storeId: number, storeExternalId: string, orderId: string) {
     items: [{ productName: 'Bread', name_ro: 'Pâine', quantity: 2, unitPrice: 5 }],
   };
 }
+
+test('reports isolate issuers, count payments by payment date, and retain partial balances', () => {
+  const {connection,company1,store1,goodnessId,vatraId}=fixture();
+  try {
+    const [invoice]=createWeeklyInvoiceBatchTransaction(connection,[weekly(store1,'store-goodness','report')],'2026-08-31');
+    recordCompanyPaymentTransaction(connection,{companyId:company1,issuerId:goodnessId,invoiceId:invoice.invoiceId,amount:4,paymentDate:'2026-09-08',method:'transfer',bankName:'HSBC'});
+    const statement=statementReport(connection,company1,goodnessId,'2026-09-07','2026-09-13');
+    assert.equal(statement.opening,10); assert.equal(statement.closing,6); assert.equal(statement.rows.length,1);
+    assert.equal(statementReport(connection,company1,vatraId,'2026-09-07','2026-09-13').closing,0);
+    assert.equal(outstandingReport(connection,company1,goodnessId).total,6);
+    assert.equal(outstandingReport(connection,company1,goodnessId).rows[0].invoice_number,invoice.invoiceNumber);
+    assert.equal(paymentReport(connection,'2026-09-08','2026-09-08').length,1);
+    assert.deepEqual(weeklyBillingStats(connection,goodnessId,'2026-09-07','2026-09-13'),{totalInvoiced:0,totalPaid:4,totalCredited:0,totalUnpaid:6});
+    const payment=connection.prepare('SELECT * FROM payments').get() as any;
+    updatePaymentTransaction(connection,{id:payment.id,amount:4,method:'transfer',bankName:'HSBC',paymentDate:'2026-09-06',reason:'Correct bank date'});
+    assert.equal(paymentReport(connection,'2026-09-08','2026-09-08').length,0);
+    assert.equal(outstandingReport(connection,company1,goodnessId).total,6);
+    assert.equal(statementReport(connection,company1,goodnessId,'2026-09-07','2026-09-13').opening,6);
+    assert.throws(()=>updatePaymentTransaction(connection,{id:payment.id,amount:4,method:'transfer',bankName:'HSBC',paymentDate:'2026-02-30',reason:'Invalid'}));
+    assert.equal((connection.prepare('SELECT payment_date FROM payments').get() as any).payment_date,'2026-09-06');
+    assert.throws(()=>statementReport(connection,999,goodnessId,'2026-09-07','2026-09-13'));
+    assert.throws(()=>paymentReport(connection,'2026-09-13','2026-09-07'));
+    connection.prepare("INSERT INTO company_credit_entries(company_id,issuer_id,source_type,original_amount,available_amount) VALUES (?,?,'legacy',2,2)").run(company1,goodnessId);
+    const withLegacy=statementReport(connection,company1,goodnessId,'2026-09-07','2026-09-13');
+    assert.equal(withLegacy.legacyCredit,2); assert.equal(withLegacy.opening,4); assert.equal(withLegacy.closing,4);
+  } finally {connection.close();}
+});
+
+test('explicit zero-quantity removal preserves import history and refuses deleting every line',()=>{
+  const {connection,store1}=fixture();
+  try {
+    const source=weekly(store1,'store-goodness','remove-zero');
+    source.items.push({productName:'Cake',name_ro:'Chec',quantity:1,unitPrice:3});
+    const [invoice]=createWeeklyInvoiceBatchTransaction(connection,[source],'2026-08-31');
+    const rows=connection.prepare('SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id').all(invoice.invoiceId) as any[];
+    const input=rows.map(row=>({id:row.id,productName:row.product_name,quantity:row.quantity,unitPrice:row.unit_price}));
+    const batches=connection.prepare('SELECT * FROM invoice_import_batches').all();
+    assert.throws(()=>updateInvoiceTransaction(connection,invoice.invoiceId,invoice.invoiceNumber,'2026-08-31',input.map(row=>({...row,quantity:0,remove:true}))));
+    assert.throws(()=>updateInvoiceTransaction(connection,invoice.invoiceId,invoice.invoiceNumber,'2026-08-31',[input[0],{...input[1],remove:true}]));
+    updateInvoiceTransaction(connection,invoice.invoiceId,invoice.invoiceNumber,'2026-08-31',[input[0],{...input[1],quantity:0,remove:true}]);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS n FROM invoice_items WHERE invoice_id=?').get(invoice.invoiceId) as any).n,1);
+    assert.deepEqual(connection.prepare('SELECT * FROM invoice_import_batches').all(),batches);
+  } finally {connection.close();}
+});
 
 test('migrates the configured issuer and keeps historical invoice identity immutable', () => {
   const connection = new Database(':memory:');

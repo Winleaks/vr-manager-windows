@@ -13,8 +13,10 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
   const [invoice, setInvoice] = useState<any>(null);
   const [date, setDate] = useState('');
   const [items, setItems] = useState<any[]>([]);
+  const [removedItems,setRemovedItems] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [productId, setProductId] = useState('');
+  const [productSearch, setProductSearch] = useState('');
   const [catalogError, setCatalogError] = useState('');
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [error, setError] = useState('');
@@ -76,7 +78,7 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
     try {
       const result = await saveInvoiceEdits({
         id: invoiceId, invoiceDate: date,
-        items: items.map((item) => ({ ...item, quantity: Number(item.quantity), unitPrice: Number(item.unitPrice) })),
+        items: [...items.map((item) => ({ ...item, quantity: Number(item.quantity), unitPrice: Number(item.unitPrice) })), ...removedItems],
       }, {
         update: api.billing.updateInvoice,
         prepare: prepareInvoiceDocument,
@@ -128,15 +130,16 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
                   <td className="p-2"><NumericInput aria-label={'Cantitate ' + (index + 1)} value={item.quantity} onValueChange={(value) => changeItem(index, 'quantity', value)} className="w-full border rounded p-2" /></td>
                   <td className="p-2"><NumericInput aria-label={'Preț unitar ' + (index + 1)} value={item.unitPrice} onValueChange={(value) => changeItem(index, 'unitPrice', value)} className="w-full border rounded p-2" /></td>
                   <td className="p-2 font-semibold">£{(Number(item.quantity) * Number(item.unitPrice)).toFixed(2)}</td>
-                  <td>{(!invoice.is_imported || item.id === undefined) && <button type="button" title="Șterge poziția" aria-label={'Șterge poziția ' + (index + 1)} onClick={() => setItems((previous) => previous.filter((_, i) => i !== index))} className="p-2 text-rose-600"><Trash2 size={16} /></button>}</td>
+                  <td>{(!invoice.is_imported || item.id === undefined || (String(item.quantity).trim() !== '' && Number(item.quantity) === 0)) && <button type="button" title="Șterge poziția" aria-label={'Șterge poziția ' + (index + 1)} onClick={() => { if (invoice.is_imported && item.id !== undefined) setRemovedItems(previous => [...previous, {...item, quantity:0, unitPrice:Number(item.unitPrice),remove:true}]); setItems((previous) => previous.filter((_, i) => i !== index)); }} className="p-2 text-rose-600"><Trash2 size={16} /></button>}</td>
                 </tr>)}</tbody>
               </table></div>
               {catalogError && <p role="alert" className="text-amber-800">{catalogError}</p>}
+              <label className="block text-sm font-semibold">Caută produs<input type="search" value={productSearch} onChange={event => setProductSearch(event.target.value)} className="block w-full mt-1 border rounded-lg p-2" /></label>
               <div className="flex items-end gap-2">
                 <label className="flex-1 text-sm font-semibold">Adaugă produs din catalog
                   <select value={productId} onChange={(event) => setProductId(event.target.value)} disabled={catalogLoading || Boolean(catalogError)} className="block mt-1 w-full border rounded-lg p-2">
                     <option value="">{catalogLoading ? 'Se încarcă produsele...' : products.length ? 'Alege produsul...' : 'Nu există produse disponibile'}</option>
-                    {products.map((product) => <option key={product.id} value={product.id}>{product.name}{product.name_ro ? ' / ' + product.name_ro : ''} — £{Number(product.unitPrice).toFixed(2)}</option>)}
+                    {products.filter(product => `${product.name} ${product.name_ro || ''}`.toLowerCase().includes(productSearch.trim().toLowerCase())).map((product) => <option key={product.id} value={product.id}>{product.name}{product.name_ro ? ' / ' + product.name_ro : ''} — £{Number(product.unitPrice).toFixed(2)}</option>)}
                   </select>
                 </label>
                 <button type="button" title="Adaugă produs" aria-label="Adaugă produs" disabled={!productId || catalogLoading || Boolean(catalogError)} onClick={addProduct} className="p-2 rounded-lg text-indigo-700 hover:bg-indigo-50 disabled:opacity-40"><Plus size={20} /></button>

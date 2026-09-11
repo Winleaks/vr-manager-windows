@@ -22,6 +22,18 @@ function createDatabase() {
   return connection;
 }
 
+test('manual cash receipt source is required and survives edits without a fake driver',()=>{
+  const connection=createDatabase();
+  try {
+    const day=Number(connection.prepare("INSERT INTO cash_days (date,opening_balance) VALUES ('2026-09-11',0)").run().lastInsertRowid);
+    assert.throws(()=>addCashTransaction(connection,{cash_day_id:day,type:'IN',category:'driver_collection',amount:30,reference_id:null,reference_name:' '}));
+    const id=addCashTransaction(connection,{cash_day_id:day,type:'IN',category:'driver_collection',amount:30,reference_id:null,reference_name:'Counter collection'});
+    updateCashReceiptTransaction(connection,{id,amount:35,reference_id:null,reference_name:'Office collection'});
+    assert.equal((connection.prepare('SELECT category FROM cash_transactions WHERE id=?').get(id) as any).category,'other_collection');
+    assert.deepEqual(connection.prepare('SELECT amount,reference_id,reference_name FROM cash_transactions WHERE id=?').get(id),{amount:35,reference_id:null,reference_name:'Office collection'});
+  } finally {connection.close();}
+});
+
 test('production updates product and material stocks atomically', () => {
   const connection = createDatabase();
   try {
@@ -249,6 +261,7 @@ test('cash balance is initialized once at £578.25 and remains transaction-drive
       type: 'IN',
       category: 'driver_collection',
       amount: 21.75,
+      reference_name: 'Other receipt',
     });
     const updatedTotals = connection.prepare(`
       SELECT

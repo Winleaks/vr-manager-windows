@@ -8,6 +8,8 @@ import { validateWeeklyPeriod, VR_BAKER_API_ENDPOINT, type VrBakerZone } from '.
 import { app, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { generateStatementPdf } from '../reports/statementPdf.ts';
+import { openWindowsDocument } from '../reports/windowsDocuments.ts';
 import { creditNoteFilename, saveCreditNotePdf } from '../reports/creditNoteDelivery';
 import { localClientDocumentDirectory } from '../reports/clientDocumentStorage';
 import { validatePdfFilename } from '../security/fileValidation';
@@ -225,7 +227,24 @@ export function registerBillingHandlers() {
     await assertNormalStoreAllowed(source.store_id);
     return billingRepo.reissueCancelledInvoice(invoiceId, new Date().toISOString().slice(0, 10));
   }));
-  handleTrustedIpc('billing:getStats', (_, issuerId?: number) => billingRepo.getBillingStats(issuerId));
+  handleTrustedIpc('billing:getStats', (_, issuerId?: number, from?: string, to?: string) => billingRepo.getBillingStats(issuerId, from, to));
+  handleTrustedIpc('billing:getPaymentReport', (_, from: string, to: string) => billingRepo.getPaymentReport(from, to));
+  handleTrustedIpc('billing:statementDocument', async (_, companyId: number, issuerId: number, from: string, to: string, action: string) => {
+    if (!['open', 'print', 'share'].includes(action)) throw new Error('Acțiune invalidă.');
+    const report = billingRepo.getStatement(companyId, issuerId, from, to);
+    const folder = path.join(app.getPath('documents'), 'VR - Management', 'Statements');
+    fs.mkdirSync(folder, { recursive: true });
+    const filename = `Statement_${report.company.id}_${report.issuer.id}_${report.from}_${report.to}.pdf`;
+    const target = path.join(folder, filename);
+    const temporary = target + '.tmp';
+    fs.writeFileSync(temporary, generateStatementPdf(report));
+    fs.renameSync(temporary, target);
+    if (action === 'open') {
+      const error = await shell.openPath(target);
+      return { success: !error, error: error || undefined };
+    }
+    return openWindowsDocument(action as 'share' | 'print', target);
+  });
   handleTrustedIpc('billing:getProducts', () => billingRepo.getCloudProducts());
   handleTrustedIpc('billing:getIssuers', () => billingRepo.getBillingIssuers());
   handleTrustedIpc('billing:updateIssuer', (_, data) => billingRepo.updateBillingIssuer(data));

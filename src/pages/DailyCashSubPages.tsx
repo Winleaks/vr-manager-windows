@@ -21,6 +21,7 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
   const [editingReceipt, setEditingReceipt] = useState<any | null>(null);
   const [editAmount, setEditAmount] = useState('');
   const [editDriverId, setEditDriverId] = useState('');
+  const [editSource, setEditSource] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [deviceRole, setDeviceRole] = useState<'writer' | 'viewer'>('viewer');
 
@@ -55,7 +56,8 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
   const beginReceiptEdit = (transaction: any) => {
     setEditingReceipt(transaction);
     setEditAmount(Number(transaction.amount).toFixed(2));
-    setEditDriverId(String(transaction.reference_id || ''));
+    setEditDriverId(String(transaction.reference_id || 'other'));
+    setEditSource(transaction.reference_name || '');
     setEditNotes(transaction.notes || '');
   };
 
@@ -63,13 +65,13 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
     event.preventDefault();
     if (!editingReceipt) return;
     const amount = Number(editAmount);
-    const referenceId = Number(editDriverId);
-    if (!Number.isFinite(amount) || amount <= 0 || !/^\d+(\.\d{1,2})?$/.test(editAmount.trim()) || !Number.isInteger(referenceId) || referenceId <= 0) {
+    const referenceId = editDriverId === 'other' ? null : Number(editDriverId);
+    if (!Number.isFinite(amount) || amount <= 0 || !/^\d+(\.\d{1,2})?$/.test(editAmount.trim()) || (referenceId === null ? !editSource.trim() : !Number.isInteger(referenceId) || referenceId <= 0)) {
       notify('Verifică șoferul și suma introdusă. Suma poate avea maximum două zecimale.');
       return;
     }
     try {
-      await api.dailyCash.updateReceipt({ id: editingReceipt.id, amount, reference_id: referenceId, notes: editNotes });
+      await api.dailyCash.updateReceipt({ id: editingReceipt.id, amount, reference_id: referenceId, reference_name: editSource, notes: editNotes });
       setEditingReceipt(null);
       await loadData();
     } catch (error: any) {
@@ -215,11 +217,12 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
               <label className="block text-sm font-medium text-slate-700">
                 Șofer
                 <select required value={editDriverId} onChange={(event) => setEditDriverId(event.target.value)} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg bg-white">
-                  <option value="">-- Selectează șofer --</option>
+                  <option value="">-- Selectează sursa --</option><option value="other">Altă sursă</option>
                   {drivers.map((driver: any) => <option key={driver.id} value={driver.id}>{driver.name}</option>)}
                 </select>
               </label>
               <label className="block text-sm font-medium text-slate-700">
+                {editDriverId === 'other' && <span className="block mb-3">Sursa încasării<input required maxLength={300} value={editSource} onChange={event => setEditSource(event.target.value)} className="block w-full border rounded-lg px-3 py-2" /></span>}
                 Suma (£)
                 <NumericInput decimalScale={2} required value={editAmount} onValueChange={setEditAmount} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg" />
               </label>
