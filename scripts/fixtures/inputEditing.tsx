@@ -19,7 +19,8 @@ const company = { id: 1, name: 'Fixture Company', stores: [{ id: 1, name: 'Fixtu
 const documentStatus={pending:1,blocked:1,running:false,workerError:null,canRetry:role==='writer',connected:true,
   items:[{kind:'invoice',document_id:1,state:'blocked',attempts:1,last_error:'Drive refuză accesul la documente.',reference:'TEST-1'}]};
 const protectedInvoice = {
-  id: 'fixture-invoice', reference: 'TEST-P1', companyKey: 'fixture-company', issuerCode: 'goodness',
+  id: 'fixture-invoice', reference: 'TEST-P1', companyId: 1, storeId: 1, companyKey: 'fixture-company', issuerCode: 'goodness',
+  invoiceDate: '2026-09-13', totalAmount: 25, outstanding: 15, paidAmount: 10, creditedAmount: 0, status: 'partial',
   companyName: 'Fixture Company', storeName: 'Fixture Store',
   items: [{ id: 'fixture-line', productName: 'Fixture Product', quantity: 10, creditedQuantity: 0, unitPrice: 2.5, finishedProductId: 1 }],
 };
@@ -41,6 +42,13 @@ window.desktopApi = {
     status: async () => ({ unlocked: true }), getOverview: async () => ({ mode: 'test' }),
     lock: async () => {}, touch: async () => {}, getCreditNotes: async () => [],
     getCreditNoteDraft: async () => [protectedInvoice],
+    getCompanies: async () => [{ ...company, assigned: true, companyKey: 'fixture-company' }, { id: 2, name: 'Other Company', stores: [], assigned: true, companyKey: 'other' }],
+    getInvoices: async () => [protectedInvoice, { ...protectedInvoice, id: 'other-invoice', reference: 'OTHER-2', companyId: 2, companyKey: 'other', companyName: 'Other Company' }],
+    getPayments: async () => [{ id: 'p1', companyId: 1, companyKey: 'fixture-company', companyName: 'Fixture Company', invoiceId: protectedInvoice.id, invoiceReference: 'TEST-P1', storeName: 'Fixture Store', issuerCode: 'goodness', method: 'cash', paymentDate: '2026-09-13', amount: 10 }],
+    getCreditBalances: async () => [{ companyId: 1, companyKey: 'fixture-company', issuerCode: 'goodness', available: 5 }],
+    getCreditApplications: async () => [],
+    getInvoiceForEdit: async () => ({ ...protectedInvoice, issuerSnapshot: { issuerName: 'THE GOODNESS BAKER LTD' }, sourceOrderIds: [], expectedVersion: 'fixture-version' }),
+    getInvoiceProducts: async () => [],
     createCreditNote: async (payload: unknown) => { calls.push(payload); return { creditNote: { reference: 'TEST-PCN1' }, pdf: { success: true } }; },
   },
 } as any;

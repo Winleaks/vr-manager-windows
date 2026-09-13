@@ -5,6 +5,7 @@ import { applyProtectedIssuerChange, protectedIssuerChangeBlock, protectedIssuer
 import { applyProtectedInvoiceEdit, protectedInvoiceEditBlock, protectedInvoiceEditReplay, protectedInvoiceVersion, validateProtectedInvoiceEdit } from './invoiceEditing.ts';
 import type { ProtectedInvoiceEditInput } from '../../src/shared/protectedInvoiceEdit.ts';
 import { protectedInvoiceOutstanding } from './invoiceOutstanding.ts';
+import { protectedPaymentDisplay } from './paymentDisplay.ts';
 import { localInvoiceCatalog, priceInvoiceCatalog } from '../integrations/invoiceCatalogPricing.ts';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -523,9 +524,13 @@ export async function listProtectedRegistryCompanies(webContentsId: number) {
   return companies.map((company) => ({
     id: company.id,
     name: company.name,
+    companyKey: companyKey(company),
+    address: company.address,
+    cui: company.cui,
+    reg_com: company.reg_com,
     issuerName: company.issuer_name,
     issuerCode: company.issuer_code,
-    stores: company.stores.map((store: any) => ({ id: store.id, name: store.name })),
+    stores: company.stores.map((store: any) => ({ id: store.id, name: store.name, address: store.address })),
     assigned: assigned.has(companyKey(company)),
   }));
 }
@@ -1219,7 +1224,7 @@ export async function recordProtectedPayment(webContentsId: number, input: any, 
 
 export async function listProtectedPayments(webContentsId: number) {
   const session = await freshSession(webContentsId);
-  return [...session.vault.payments].sort((a, b) => b.paymentDate.localeCompare(a.paymentDate) || b.createdAt.localeCompare(a.createdAt));
+  return protectedPaymentDisplay(session.vault);
 }
 
 export async function reverseProtectedPayment(webContentsId: number, paymentIdInput: unknown, reasonInput: unknown, operationId: unknown) {
@@ -1567,7 +1572,8 @@ export async function getProtectedCreditBalances(webContentsId: number) {
     companyName: assignment.companyName,
     issuerCode,
     available: availableCredit(session.vault, assignment.companyKey, issuerCode),
-  }))).filter((row) => row.available > 0.005);
+    entries: session.vault.creditEntries.filter(entry => entry.companyKey === assignment.companyKey && entry.issuerCode === issuerCode),
+  }))).filter((row) => row.available > 0.005 || row.entries.length > 0);
 }
 
 export async function listProtectedCreditApplications(webContentsId: number) {

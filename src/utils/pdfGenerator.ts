@@ -23,6 +23,10 @@ export function invoiceProductDescription(item: { productName?: string; name_ro?
     : english;
 }
 
+export function outstandingInvoiceContext(companyName: string, storeName?: string) {
+  return `Company: ${companyName}\nStore: ${storeName || ''}`;
+}
+
 export const INVOICE_VAT_COLUMN_WIDTHS = [8, 95, 13, 12, 24, 12, 18] as const;
 export const INVOICE_NON_VAT_COLUMN_WIDTHS = [8, 107, 13, 12, 24, 18] as const;
 
@@ -123,15 +127,15 @@ export function generateInvoicePDF(
 
   if (invoiceData.accountOutstanding) {
     doc.setFillColor(248, 250, 252);
-    doc.roundedRect(130, 25, 66, 17, 2, 2, 'F');
+    doc.roundedRect(130, 24, 66, 14, 2, 2, 'F');
     doc.setFont('Arial', 'bold'); doc.setFontSize(7); doc.setTextColor(71,85,105);
-    doc.text('ACCOUNT BALANCE', 192, 29, {align:'right'});
+    doc.text('ACCOUNT BALANCE', 192, 27.5, {align:'right'});
     doc.setFontSize(13); doc.setTextColor(15,23,42);
-    doc.text('£' + invoiceData.accountOutstanding.total.toLocaleString('en-GB', {minimumFractionDigits:2, maximumFractionDigits:2}), 192, 35, {align:'right'});
+    doc.text('£' + invoiceData.accountOutstanding.total.toLocaleString('en-GB', {minimumFractionDigits:2, maximumFractionDigits:2}), 192, 33, {align:'right'});
     doc.setFont('Arial', 'normal'); doc.setFontSize(6.5); doc.setTextColor(71,85,105);
-    doc.text('This store - includes this invoice', 192, 39, {align:'right'});
+    doc.text('This store - includes this invoice', 192, 36.5, {align:'right'});
   }
-  currentY += invoiceData.accountOutstanding ? 37 : 18;
+  currentY += invoiceData.accountOutstanding ? 32 : 18;
 
   // --- SEPARATOR LINE ---
   doc.setDrawColor(226, 232, 240); // Slate-200
@@ -313,7 +317,7 @@ export function generateInvoicePDF(
     styles: {
       font: 'Arial',
       fontSize: 7.5,
-      cellPadding: 1.5,
+      cellPadding: { top: 0.7, bottom: 0.7, left: 1.5, right: 1.5 },
       valign: 'middle',
       lineWidth: 0,
     },
@@ -323,7 +327,7 @@ export function generateInvoicePDF(
       fillColor: [r, g, b],
       textColor: [255, 255, 255],
       fontSize: 7.5,
-      cellPadding: { top: 2, right: 1.2, bottom: 2, left: 1.2 },
+      cellPadding: { top: 1.5, right: 1.2, bottom: 1.5, left: 1.2 },
       valign: 'middle',
     },
     bodyStyles: {
@@ -331,7 +335,7 @@ export function generateInvoicePDF(
       fontStyle: 'normal',
       textColor: [30, 41, 59], // Slate-800
       fontSize: 7.5,
-      cellPadding: 1.5,
+      cellPadding: { top: 0.7, bottom: 0.7, left: 1.5, right: 1.5 },
       valign: 'middle',
     },
     alternateRowStyles: {
@@ -353,7 +357,9 @@ export function generateInvoicePDF(
       4: { halign: 'center', cellWidth: INVOICE_NON_VAT_COLUMN_WIDTHS[4] },
       5: { halign: 'center', cellWidth: INVOICE_NON_VAT_COLUMN_WIDTHS[5] }
     },
-    margin: { left: 14, right: 14, bottom: footerLayout.reservedBottom + summaryHeight + summaryGap },
+    // Only the footer is reserved on product pages. The summary is placed once,
+    // after the last product, with its own page-fit check below.
+    margin: { left: 14, right: 14, top: 14, bottom: footerLayout.reservedBottom + 2 },
     rowPageBreak: 'avoid',
     showHead: 'everyPage',
     tableLineWidth: 0,
@@ -403,7 +409,7 @@ export function generateInvoicePDF(
   if (invoiceData.accountOutstanding) {
     const account = invoiceData.accountOutstanding;
     doc.setFont('Arial','normal'); doc.setFontSize(7.5);
-    const heading = doc.splitTextToSize(fixRomanianDiacritics(invoiceData.client.name + ' | ' + settings.issuerName + '\nStore: ' + (invoiceData.store?.name || '') + ' | Includes this invoice'), 182);
+    const heading = doc.splitTextToSize(fixRomanianDiacritics(outstandingInvoiceContext(invoiceData.client.name, invoiceData.store?.name)), 182);
     const tableOffset = 14 + heading.length * 3.4;
     let outstandingY = finalTableY + summaryHeight + 9;
     // Keep the title, context, table header and at least one row together.

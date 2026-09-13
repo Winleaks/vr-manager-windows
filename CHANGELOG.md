@@ -1,3 +1,11 @@
+### VR - Hub Management v0.1.109
+
+- Facturile folosesc mai eficient spațiul paginii, păstrând fontul și denumirile bilingve. Totalul este rezervat numai după ultimele produse; în exemplul verificat încap 22 de produse și totalul pe prima pagină, în loc de 17 produse.
+- OUTSTANDING INVOICES afișează Company: compania clientului și, dedesubt, Store: magazinul. Emitentul nu mai este repetat în acest antet; calculul soldului rămâne limitat la magazin și emitent.
+- Istoricul plăților din registrul separat afișează compania, factura și magazinul aferent. Avansurile și încasările reversate sunt identificate distinct.
+- Numele clientului deschide profilul financiar din registrul separat, cu solduri, facturi și editor, încasări, Credit Notes, surse și aplicări de credit, magazine și filtrare după emitent.
+- Păstrează izolarea registrului separat și toate modificările v0.1.108. Fără migrare de date sau modificări în platforma clienților. PDF-urile existente primesc noul format la regenerare.
+
 ### VR - Hub Management v0.1.108
 
 - Registrul separat folosește editorul comun pentru data facturii, cantități, prețuri și adăugarea produselor. Păstrează numerotarea, comenzile sursă și încasările; verifică versiunea la salvare și permite reîncercarea fără reemitere.

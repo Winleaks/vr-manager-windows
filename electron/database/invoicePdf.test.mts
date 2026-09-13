@@ -5,6 +5,7 @@ import {
   INVOICE_NON_VAT_COLUMN_WIDTHS,
   INVOICE_VAT_COLUMN_WIDTHS,
   invoiceProductDescription,
+  outstandingInvoiceContext,
 } from '../../src/utils/pdfGenerator.ts';
 import { formatAddressWithPostcode, formatPdfDate, PDF_DEVELOPER_CREDIT } from '../../src/utils/pdfDocumentHelpers.ts';
 
@@ -15,6 +16,11 @@ const invoice = {
   items: [{ productName: 'CHEESE PIE', name_ro: 'PLĂCINTĂ CU BRÂNZĂ', unit: 'pcs', quantity: 2, unitPrice: 3, totalPrice: 6 }],
   totalAmount: 6,
 };
+
+test('outstanding context labels the customer company and store on separate lines without an issuer', () => {
+  assert.equal(outstandingInvoiceContext('CLIENT TEST LTD', 'STORE TEST'), 'Company: CLIENT TEST LTD\nStore: STORE TEST');
+  assert.equal(outstandingInvoiceContext('CLIENT TEST LTD'), 'Company: CLIENT TEST LTD\nStore: ');
+});
 
 test('outstanding section shares free invoice space for both issuers including zero balance', () => {
   for (const vatRegistered of [true, false]) {
@@ -72,7 +78,7 @@ test('formats PDF dates and distinct postcodes without duplication', () => {
   assert.match(PDF_DEVELOPER_CREDIT, /Razvan Cristofor.*www\.razvancristofor\.ro/);
 });
 
-test('keeps a 22-product bilingual invoice to two complete PDF pages', () => {
+test('fits the 22-product bilingual invoice and its total on one PDF page', () => {
   const base = {
     issuerName: 'THE GOODNESS BAKER LTD', issuerAddress: 'London', issuerCrn: '123', issuerVat: 'GB123',
     invoiceSeries: 'TGB', invoiceColor: '#F7B810', invoiceAlternateRowColor: '#F7B810', invoiceAlternateRowOpacity: 14,
@@ -93,5 +99,18 @@ test('keeps a 22-product bilingual invoice to two complete PDF pages', () => {
     totalAmount: items.reduce((sum, item) => sum + item.totalPrice, 0),
   });
   const source = Buffer.from(pdf).toString('latin1');
-  assert.equal((source.match(/\/Type \/Page\b/g) || []).length, 2);
+  assert.equal((source.match(/\/Type \/Page\b/g) || []).length, 1);
+});
+
+test('compact product rows still paginate long descriptions without changing financial data', () => {
+  const data = { ...invoice, items: Array.from({ length: 55 }, (_, i) => ({
+    productName: `PRODUCT ${i + 1} ` + 'LONG PACKAGED DESCRIPTION '.repeat(5),
+    name_ro: 'DENUMIRE PRODUS ÎN ROMÂNĂ '.repeat(4), unit: 'piece', quantity: 1, unitPrice: 2, totalPrice: 2,
+  })), totalAmount: 110 };
+  const original = structuredClone(data);
+  for (const vatRegistered of [true, false]) {
+    const pdf = generateInvoicePDF({ issuerName: 'SYNTHETIC BAKERY', vatRegistered }, data);
+    assert.ok((Buffer.from(pdf).toString('latin1').match(/\/Type \/Page\b/g) || []).length >= 3);
+    assert.deepEqual(data, original);
+  }
 });

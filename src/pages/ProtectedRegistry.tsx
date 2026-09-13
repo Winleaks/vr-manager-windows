@@ -212,6 +212,7 @@ function ClientsPanel() {
   const [companies, setCompanies] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState<number | null>(null);
+  const [selectedCompany, setSelectedCompany] = useState<any>(null);
   const reload = useCallback(() => api.protectedRegistry.getCompanies().then(setCompanies), []);
   useEffect(() => { void reload(); }, [reload]);
   const toggle = async (company: any) => {
@@ -220,6 +221,7 @@ function ClientsPanel() {
     catch (error) { notify(errorMessage(error)); } finally { setBusy(null); }
   };
   const filtered = companies.filter(company => matchesProtectedCompany(company, search));
+  if (selectedCompany) return <ClientProfile key={selectedCompany.id} company={selectedCompany} onBack={() => setSelectedCompany(null)} />;
   return <div className="space-y-5">
     <PanelHeading title="Clienți atribuiți" description="Atribuirea include toate magazinele companiei și exclude comenzile din facturarea normală." icon={Users} />
     <div className="rounded-2xl bg-white border border-slate-200 p-4">
@@ -228,13 +230,70 @@ function ClientsPanel() {
     </div>
     <div className="rounded-2xl bg-white border border-slate-200 divide-y divide-slate-100">
       {filtered.map(company => <div key={company.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="min-w-0"><p className="font-bold break-words">{company.name}</p><p className="text-sm text-slate-500">{company.issuerName || 'Emitent implicit'} · {company.stores.length} {company.stores.length === 1 ? 'magazin' : 'magazine'}</p>
+        <div className="min-w-0"><button type="button" onClick={() => setSelectedCompany(company)} className="font-bold break-words text-indigo-600 hover:underline" aria-label={`Deschide profilul ${company.name}`}>{company.name}</button><p className="text-sm text-slate-500">{company.issuerName || 'Emitent implicit'} · {company.stores.length} {company.stores.length === 1 ? 'magazin' : 'magazine'}</p>
           <ul aria-label={`Magazinele companiei ${company.name}`} className="mt-2 flex flex-wrap gap-2">{company.stores.map((store: { id: number; name: string }) => <li key={store.id} className="inline-flex items-start gap-1.5 min-w-0 max-w-full rounded-lg bg-slate-50 border border-slate-100 px-2.5 py-1 text-sm text-slate-600"><Store size={15} aria-hidden="true" className="shrink-0 mt-0.5 text-indigo-500" /><span className="break-words">{store.name || 'Magazin fără nume'}</span></li>)}</ul>
         </div>
         <button disabled={busy === company.id} onClick={() => toggle(company)} className={`shrink-0 self-start sm:self-auto rounded-xl px-4 py-2 font-semibold ${company.assigned ? 'bg-red-50 text-red-700' : 'bg-indigo-600 text-white'}`}>{company.assigned ? 'Elimină din registru' : 'Adaugă în registru'}</button>
       </div>)}
       {!filtered.length && <p role="status" className="p-8 text-center text-slate-500">{search.trim() ? 'Nu există companii sau magazine pentru această căutare.' : 'Nu există companii disponibile.'}</p>}
     </div>
+  </div>;
+}
+
+function ClientProfile({ company, onBack }: { company: any; onBack: () => void }) {
+  const [tab, setTab] = useState('invoices');
+  const [issuer, setIssuer] = useState('all');
+  const [data, setData] = useState<{ invoices: any[]; payments: any[]; balances: any[]; notes: any[] } | null>(null);
+  const [error, setError] = useState('');
+  const [paymentInvoice, setPaymentInvoice] = useState<any>();
+  const [creditInvoiceId, setCreditInvoiceId] = useState<string>();
+  const request = useRef(0);
+  const reload = useCallback(async () => {
+    const version = ++request.current;
+    try {
+      const [invoices, payments, balances, notes] = await Promise.all([
+        api.protectedRegistry.getInvoices(), api.protectedRegistry.getPayments(),
+        api.protectedRegistry.getCreditBalances(), api.protectedRegistry.getCreditNotes(),
+      ]);
+      if (version !== request.current) return;
+      const belongs = (row: any) => row.companyId === company.id;
+      setData({ invoices: invoices.filter(belongs), payments: payments.filter(belongs), balances: balances.filter(belongs), notes: notes.filter(belongs) });
+      setError('');
+    } catch (failure) { if (version === request.current) setError(errorMessage(failure)); }
+  }, [company.id]);
+  useEffect(() => { void reload(); return () => {
+    // Invalidate pending reads, not a DOM ref captured by this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    request.current++;
+  }; }, [reload]);
+  const changed = useCallback(() => { void reload(); }, [reload]);
+  const scoped = (rows: any[]) => rows.filter(row => issuer === 'all' || row.issuerCode === issuer);
+  const sum = (rows: any[], field: string) => rows.reduce((total, row) => total + Math.round(Number(row[field] || 0) * 100), 0) / 100;
+  const invoices = scoped(data?.invoices || []);
+  const active = invoices.filter(row => row.status !== 'cancelled');
+  const payments = scoped(data?.payments || []);
+  const notes = scoped(data?.notes || []);
+  const balances = scoped(data?.balances || []);
+  const profileTabs = [['invoices', 'Facturi', Receipt], ['payments', 'Istoric încasări', Banknote], ['notes', 'Credit Notes', FileMinus2], ['credits', 'Registru Credit', ShieldCheck], ['stores', 'Magazine & detalii', Store]] as const;
+  return <div className="space-y-6">
+    <button type="button" onClick={onBack} className="flex items-center gap-2 text-indigo-600 text-sm font-semibold"><ArrowLeft size={16} />Înapoi la lista de clienți</button>
+    <header className="flex flex-wrap items-start justify-between gap-4"><div><PanelHeading title={company.name} icon={Users} /><p className="text-sm text-slate-500 mt-2">{company.address}</p><p className="text-sm text-slate-500">{company.cui && `VAT No: ${company.cui} · `}{company.reg_com && `CRN: ${company.reg_com} · `}{company.stores.length} magazine · {company.issuerName || 'Emitent implicit'}</p></div><label className="text-sm font-semibold">Societate emitentă<select className="block mt-2" value={issuer} onChange={event => { setIssuer(event.target.value); setPaymentInvoice(undefined); setCreditInvoiceId(undefined); }}><option value="all">Toate societățile</option><option value="goodness">THE GOODNESS BAKER LTD</option><option value="vatra">VATRA ROMANEASCA LTD</option></select></label></header>
+    {error && <div role="alert" className="rounded-xl bg-rose-50 p-4 text-rose-700">{error}<button type="button" onClick={() => void reload()} className="ml-3 underline">Reîncearcă</button></div>}
+    {!data ? <p role="status">Se încarcă profilul clientului...</p> : <>
+      <section aria-label="Situație financiară client" className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4">{[
+        ['Total facturat', sum(active, 'totalAmount'), Receipt],
+        ['Încasări active', sum(payments.filter(row => !row.reversedAt), 'amount'), Banknote],
+        ['Rest de plată', sum(active, 'outstanding'), FileSpreadsheet],
+        ['Sold Credit / Avans', sum(balances, 'available'), ShieldCheck],
+      ].map(([label, amount, Icon]: any) => <div key={label} className="rounded-2xl bg-white border border-slate-200 p-5 shadow-sm"><div className="flex items-center justify-between gap-3"><span className="text-sm text-slate-500">{label}</span><Icon size={20} className="text-indigo-600" /></div><p className="text-2xl font-bold mt-3">{money(amount)}</p></div>)}</section>
+      <p className="text-sm text-slate-500">Credit Notes active: {money(sum(notes.filter(row => row.status !== 'cancelled'), 'totalAmount'))}. Soldurile sunt separate pe societate; creditul disponibil se aplică din Istoric încasări.</p>
+      <nav aria-label="Secțiuni profil client" className="flex flex-wrap gap-x-6 border-b border-slate-200">{profileTabs.map(([id, label, Icon]) => <button key={id} type="button" aria-current={tab === id ? 'page' : undefined} onClick={() => { setTab(id); setPaymentInvoice(undefined); setCreditInvoiceId(undefined); }} className={`flex items-center gap-2 py-4 border-b-2 text-sm font-semibold ${tab === id ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500'}`}><Icon size={18} />{label}</button>)}</nav>
+      {tab === 'invoices' && <InvoicesPanel key={issuer} companyId={company.id} issuer={issuer} onChanged={changed} onPayment={invoice => { setPaymentInvoice(invoice); setTab('payments'); }} onCreditNote={id => { setCreditInvoiceId(id); setTab('notes'); }} />}
+      {tab === 'payments' && <PaymentsPanel key={issuer + (paymentInvoice?.id || '')} profileCompany={company} profileIssuer={issuer} initialInvoice={paymentInvoice} onChanged={changed} />}
+      {tab === 'notes' && <CreditNotesPanel key={issuer + (creditInvoiceId || '')} companyId={company.id} issuer={issuer} invoiceId={creditInvoiceId} onChanged={changed} />}
+      {tab === 'credits' && <div className="space-y-5"><section className="rounded-2xl bg-white border border-slate-200 overflow-x-auto"><h2 className="font-bold p-4">Surse de credit</h2><table className="w-full text-sm text-left"><thead className="bg-slate-50"><tr>{['Sursă', 'Emitent', 'Data', 'Inițial', 'Disponibil'].map(label => <th key={label} className="p-3">{label}</th>)}</tr></thead><tbody>{balances.flatMap(balance => (balance.entries || []).map((entry: any) => <tr key={entry.id} className="border-t"><td className="p-3">{entry.sourceType === 'payment_overpayment' ? 'Avans / Supraîncasare' : 'Credit Note'}</td><td className="p-3">{balance.issuerCode === 'goodness' ? 'THE GOODNESS BAKER LTD' : 'VATRA ROMANEASCA LTD'}</td><td className="p-3">{entry.createdAt.slice(0, 10)}</td><td className="p-3">{money(entry.originalAmount)}</td><td className="p-3 font-bold">{money(entry.availableAmount)}</td></tr>))}</tbody></table>{!balances.some(row => row.entries?.length) && <p className="p-5 text-slate-500">Nu există surse de credit.</p>}</section><PaymentsPanel key={issuer} profileCompany={company} profileIssuer={issuer} onChanged={changed} creditOnly /></div>}
+      {tab === 'stores' && <section className="rounded-2xl bg-white border border-slate-200 divide-y">{company.stores.map((store: any) => <div key={store.id} className="p-5 flex flex-wrap justify-between gap-3"><div><h2 className="font-bold flex items-center gap-2"><Store size={18} className="text-indigo-600" />{store.name}</h2><p className="text-sm text-slate-500 mt-1">{store.address}</p></div><div className="text-right text-sm"><p>{invoices.filter(row => row.storeId === store.id).length} facturi</p><b>Rest {money(sum(active.filter(row => row.storeId === store.id), 'outstanding'))}</b></div></div>)}</section>}
+    </>}
   </div>;
 }
 
@@ -288,7 +347,7 @@ function OrdersPanel() {
   return <div className="space-y-5"><PanelHeading title="Comenzi protejate" description="Numai comenzile open/locked ale clienților atribuiți." icon={ShoppingBag} /><div className="rounded-2xl bg-white border p-4 flex flex-wrap gap-3 items-end"><label className="text-sm">Luni<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="block border rounded-lg p-2" /></label><label className="text-sm">Duminică<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} className="block border rounded-lg p-2" /></label><button onClick={load} disabled={busy} className="rounded-xl bg-slate-900 text-white px-4 py-2.5 flex gap-2"><RefreshCw size={18} />Actualizează</button><button onClick={issue} disabled={busy || !selected.length} className="rounded-xl bg-indigo-600 text-white px-4 py-2.5 disabled:opacity-50">Generează selectate</button><button onClick={issueAll} disabled={busy || !preview?.ordersByStore?.some((row: any) => row.billingState === 'ready')} className="rounded-xl bg-emerald-600 text-white px-4 py-2.5 disabled:opacity-50">Generează toate</button></div>{[...byZone.entries()].map(([zoneId, rows]) => { const readyCount = rows.filter((row) => row.billingState === 'ready').length; const total = rows.filter((row) => row.billingState === 'ready').reduce((sum, row) => sum + row.items.reduce((itemSum: number, item: any) => itemSum + item.totalPrice, 0), 0); return <section key={zoneId} className="rounded-2xl bg-white border overflow-hidden"><header className="p-4 bg-slate-50 font-bold flex items-center gap-3"><span className="flex-1">{rows[0]?.store.zone?.name || 'FĂRĂ ZONĂ ALOCATĂ'} · {rows[0]?.store.zone?.driver?.name || 'Fără șofer'}<small className="block text-slate-500 font-normal">{readyCount} pregătite · {money(total)}</small></span><button onClick={() => issueZone(zoneId, rows)} disabled={busy || !readyCount} className="rounded-lg bg-indigo-600 text-white px-3 py-2 text-sm disabled:opacity-50">Generează zona</button></header>{rows.map((row: any) => <label key={row.store.id} className="p-4 border-t flex gap-3 items-center"><input type="checkbox" disabled={row.billingState !== 'ready'} checked={selected.includes(row.store.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, row.store.id] : current.filter((id) => id !== row.store.id))} /><span className="flex-1"><b>{row.store.name}</b><small className="block text-slate-500">{row.store.company?.name} · {row.issuer?.issuerName}</small></span><span className="font-bold">{money(row.items.reduce((sum: number, item: any) => sum + item.totalPrice, 0))}</span></label>)}</section>; })}</div>;
 }
 
-function InvoicesPanel({ onCreditNote, onPayment }: { onCreditNote: (id: string) => void; onPayment: (invoice: any) => void }) {
+function InvoicesPanel({ onCreditNote, onPayment, companyId, issuer = 'all', onChanged }: { onCreditNote: (id: string) => void; onPayment: (invoice: any) => void; companyId?: number; issuer?: string; onChanged?: () => void }) {
   const run = useContext(CloudActionContext);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -296,7 +355,7 @@ function InvoicesPanel({ onCreditNote, onPayment }: { onCreditNote: (id: string)
   const [issuerInvoiceId, setIssuerInvoiceId] = useState<string | null>(null);
   const [invoices, setInvoices] = useState<any[]>([]);
   const { ask, dialog } = useInputDialog();
-  const reload = useCallback(async () => { setLoading(true); setLoadError(''); try { setInvoices(await api.protectedRegistry.getInvoices()); } catch (error) { setLoadError(errorMessage(error)); } finally { setLoading(false); } }, []);
+  const reload = useCallback(async () => { setLoading(true); setLoadError(''); try { const rows = await api.protectedRegistry.getInvoices(); setInvoices(rows.filter((row: any) => (companyId === undefined || row.companyId === companyId) && (issuer === 'all' || row.issuerCode === issuer))); onChanged?.(); } catch (error) { setLoadError(errorMessage(error)); } finally { setLoading(false); } }, [companyId, issuer, onChanged]);
   useEffect(() => { void reload(); }, [reload]);
   const cancel = async (invoice: any) => { const values = await ask({ title: `Anulează ${invoice.reference}`, fields: [{ name: 'reason', label: 'Motivul anulării', type: 'textarea' }] }); if (!values) return; try { await run(() => api.protectedRegistry.cancelInvoice(invoice.id, values.reason, operationId())); await reload(); } catch (error) { notify(errorMessage(error)); } };
   const remove = async (invoice: any) => { const values = await ask({ title: `Șterge definitiv ${invoice.reference}`, message: `Scrie exact STERGE ${invoice.reference}`, fields: [{ name: 'confirmation', label: 'Confirmare' }] }); if (!values) return; try { await run(() => api.protectedRegistry.deleteTestInvoice(invoice.id, values.confirmation, operationId())); await reload(); } catch (error) { notify(errorMessage(error)); } };
@@ -365,21 +424,21 @@ function ManualInvoicePanel() {
   </div>;
 }
 
-function PaymentsPanel({ initialInvoice }: { initialInvoice?: any }) {
+function PaymentsPanel({ initialInvoice, profileCompany, profileIssuer = 'all', onChanged, creditOnly = false }: { initialInvoice?: any; profileCompany?: any; profileIssuer?: string; onChanged?: () => void; creditOnly?: boolean }) {
   const run = useContext(CloudActionContext);
   const { ask, dialog } = useInputDialog();
   const [companies, setCompanies] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
-  const [companyId, setCompanyId] = useState(initialInvoice ? String(initialInvoice.companyId) : '');
-  const [issuerCode, setIssuerCode] = useState<'goodness' | 'vatra'>(initialInvoice?.issuerCode || 'goodness');
+  const [companyId, setCompanyId] = useState(initialInvoice ? String(initialInvoice.companyId) : profileCompany ? String(profileCompany.id) : '');
+  const [issuerCode, setIssuerCode] = useState<'goodness' | 'vatra'>(initialInvoice?.issuerCode || (profileIssuer !== 'all' ? profileIssuer : 'goodness'));
   const [amount, setAmount] = useState(initialInvoice ? Number(initialInvoice.outstanding).toFixed(2) : '');
   const [method, setMethod] = useState('transfer');
   const [balances, setBalances] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [creditApplications, setCreditApplications] = useState<any[]>([]);
   const [creditInvoiceId, setCreditInvoiceId] = useState('');
-  const reload = useCallback(async () => { const [nextCompanies, nextPayments, nextBalances, nextInvoices, nextApplications] = await Promise.all([api.protectedRegistry.getCompanies(), api.protectedRegistry.getPayments(), api.protectedRegistry.getCreditBalances(), api.protectedRegistry.getInvoices(), api.protectedRegistry.getCreditApplications()]); const assigned = nextCompanies.filter((row: any) => row.assigned); setCompanies(assigned); setPayments(nextPayments); setBalances(nextBalances); setInvoices(nextInvoices); setCreditApplications(nextApplications); setCompanyId(current => current || (assigned[0] ? String(assigned[0].id) : '')); }, []);
-  useEffect(() => { void reload(); }, [reload]);
+  const reload = useCallback(async () => { const [nextCompanies, nextPayments, nextBalances, nextInvoices, nextApplications] = await Promise.all([api.protectedRegistry.getCompanies(), api.protectedRegistry.getPayments(), api.protectedRegistry.getCreditBalances(), api.protectedRegistry.getInvoices(), api.protectedRegistry.getCreditApplications()]); const assigned = nextCompanies.filter((row: any) => row.assigned); setCompanies(assigned); setPayments(nextPayments.filter((row: any) => (!profileCompany || row.companyId === profileCompany.id) && (profileIssuer === 'all' || row.issuerCode === profileIssuer))); setBalances(nextBalances); setInvoices(nextInvoices); setCreditApplications(nextApplications.filter((row: any) => (!profileCompany || row.companyKey === profileCompany.companyKey) && (profileIssuer === 'all' || row.issuerCode === profileIssuer))); setCompanyId(current => current || (assigned[0] ? String(assigned[0].id) : '')); onChanged?.(); }, [profileCompany, profileIssuer, onChanged]);
+  useEffect(() => { void reload().catch(error => notify(errorMessage(error))); }, [reload]);
   const save = async () => { try { await run(() => api.protectedRegistry.recordPayment({ invoiceId: initialInvoice && String(initialInvoice.companyId) === companyId && initialInvoice.issuerCode === issuerCode ? initialInvoice.id : undefined, companyId: Number(companyId), issuerCode, amount: Number(amount), paymentDate: localToday(), method, operationId: operationId() })); setAmount(''); await reload(); } catch (error) { notify(errorMessage(error)); } };
   const reverse = async (payment: any) => { const values = await ask({ title: 'Reversează încasarea', fields: [{ name: 'reason', label: 'Motivul reversării', type: 'textarea' }] }); if (!values) return; try { await run(() => api.protectedRegistry.reversePayment(payment.id, values.reason, operationId())); await reload(); } catch (error) { notify(errorMessage(error)); } };
   const selectedCompany = companies.find((row) => String(row.id) === companyId);
@@ -388,10 +447,10 @@ function PaymentsPanel({ initialInvoice }: { initialInvoice?: any }) {
   const eligibleInvoices = invoices.filter((invoice) => String(invoice.companyId) === companyId && invoice.issuerCode === issuerCode && invoice.status !== 'cancelled' && invoice.totalAmount - invoice.paidAmount - invoice.creditedAmount - appliedCredit(invoice.id) > 0.005);
   const applyCredit = async () => { if (!creditInvoiceId) return; const values = await ask({ title: 'Aplică credit', message: `Credit disponibil: ${money(credit)}`, fields: [{ name: 'amount', label: 'Suma', type: 'number' }, { name: 'reason', label: 'Motivul aplicării', type: 'textarea' }] }); if (!values) return; try { await run(() => api.protectedRegistry.applyCredit({ invoiceId: creditInvoiceId, amount: Number(values.amount), reason: values.reason, operationId: operationId() })); await reload(); } catch (error) { notify(errorMessage(error)); } };
   const reverseCredit = async (application: any) => { const values = await ask({ title: `Reversează creditul aplicat pe ${application.invoiceReference}`, fields: [{ name: 'reason', label: 'Motivul reversării', type: 'textarea' }] }); if (!values) return; try { await run(() => api.protectedRegistry.reverseCredit(application.id, values.reason, operationId())); await reload(); } catch (error) { notify(errorMessage(error)); } };
-  return <div className="space-y-5"><PanelHeading title="Istoric Plăți" icon={Banknote} />{initialInvoice && <p className="rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-800">Plată pentru {initialInvoice.reference} · {initialInvoice.companyName} · {initialInvoice.storeName}. Factura este prioritară; orice surplus se repartizează către celelalte facturi sau credit disponibil.</p>}<div className="rounded-2xl bg-white border p-5 grid sm:grid-cols-2 xl:grid-cols-5 gap-3"><select aria-label="Companie" value={companyId} onChange={(event) => setCompanyId(event.target.value)} className="border rounded-xl p-2">{companies.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select><select aria-label="Societate emitentă" value={issuerCode} onChange={(event) => setIssuerCode(event.target.value as any)} className="border rounded-xl p-2"><option value="goodness">THE GOODNESS BAKER LTD</option><option value="vatra">VATRA ROMANEASCA LTD</option></select><select aria-label="Metoda încasării" value={method} onChange={(event) => setMethod(event.target.value)} className="border rounded-xl p-2"><option value="transfer">Transfer bancar</option><option value="cash">Cash</option><option value="card">Card</option><option value="other">Altă metodă</option></select><NumericInput aria-label="Suma încasării în GBP" value={amount} onValueChange={setAmount} min={0.01} placeholder="Suma GBP" /><button onClick={save} className="rounded-xl bg-indigo-600 text-white font-bold">Înregistrează</button><p className="md:col-span-5 text-xs text-slate-500">Încasările cash din acest registru nu modifică automat Daily Cash.</p></div><div className="protected-payment-credit rounded-2xl bg-white border p-5 flex gap-3 items-center"><b>Credit disponibil: {money(credit)}</b><select value={creditInvoiceId} onChange={(event) => setCreditInvoiceId(event.target.value)} className="border rounded-xl p-2 flex-1"><option value="">Factura pe care aplici creditul</option>{eligibleInvoices.map((invoice) => <option key={invoice.id} value={invoice.id}>{invoice.reference} · rest {money(invoice.totalAmount - invoice.paidAmount - invoice.creditedAmount - appliedCredit(invoice.id))}</option>)}</select><button disabled={credit <= 0.005 || !creditInvoiceId} onClick={applyCredit} className="bg-emerald-600 text-white rounded-xl px-4 py-2 disabled:opacity-50">Aplică credit</button></div><div className="rounded-2xl bg-white border divide-y"><h2 className="p-4 font-bold">Istoric încasări</h2>{payments.map((payment) => <div key={payment.id} className={`p-4 flex justify-between gap-4 ${payment.reversedAt ? 'opacity-50' : ''}`}><span>{payment.paymentDate} · {payment.method} · {payment.issuerCode.toUpperCase()}{payment.reversedAt && ' · REVERSATĂ'}</span><div className="flex gap-3"><b>{money(payment.amount)}</b>{!payment.reversedAt && <button onClick={() => reverse(payment)} className="text-red-700">Reversează</button>}</div></div>)}</div><div className="rounded-2xl bg-white border divide-y"><h2 className="p-4 font-bold">Aplicări de credit</h2>{creditApplications.map((application) => <div key={application.id} className={`p-4 flex justify-between gap-4 ${application.reversedAt ? 'opacity-50' : ''}`}><span>{application.createdAt.slice(0, 10)} · {application.companyName} · {application.invoiceReference} · {application.issuerCode.toUpperCase()}{application.reversedAt && ' · REVERSAT'}</span><div className="flex gap-3"><b>{money(application.amount)}</b>{!application.reversedAt && <button onClick={() => reverseCredit(application)} className="text-red-700">Reversează</button>}</div></div>)}</div>{dialog}</div>;
+  return <div className="space-y-5"><PanelHeading title={creditOnly ? "Aplicări de credit" : "Istoric Plăți"} icon={Banknote} />{!creditOnly && <>{initialInvoice && <p className="rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-800">Plată pentru {initialInvoice.reference} · {initialInvoice.companyName} · {initialInvoice.storeName}. Factura este prioritară; orice surplus se repartizează către celelalte facturi sau credit disponibil.</p>}<div className="rounded-2xl bg-white border p-5 grid sm:grid-cols-2 xl:grid-cols-5 gap-3"><select aria-label="Companie" disabled={Boolean(profileCompany)} value={companyId} onChange={(event) => setCompanyId(event.target.value)} className="border rounded-xl p-2">{(profileCompany ? [profileCompany] : companies).map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select><select aria-label="Societate emitentă" disabled={profileIssuer !== "all"} value={issuerCode} onChange={(event) => setIssuerCode(event.target.value as any)} className="border rounded-xl p-2"><option value="goodness">THE GOODNESS BAKER LTD</option><option value="vatra">VATRA ROMANEASCA LTD</option></select><select aria-label="Metoda încasării" value={method} onChange={(event) => setMethod(event.target.value)} className="border rounded-xl p-2"><option value="transfer">Transfer bancar</option><option value="cash">Cash</option><option value="card">Card</option><option value="other">Altă metodă</option></select><NumericInput aria-label="Suma încasării în GBP" value={amount} onValueChange={setAmount} min={0.01} placeholder="Suma GBP" /><button onClick={save} className="rounded-xl bg-indigo-600 text-white font-bold">Înregistrează</button><p className="md:col-span-5 text-xs text-slate-500">Încasările cash din acest registru nu modifică automat Daily Cash.</p></div></>}{creditOnly && profileIssuer === 'all' && <label className="block text-sm font-semibold">Emitentul creditului<select className="block mt-2" value={issuerCode} onChange={event => { setIssuerCode(event.target.value as any); setCreditInvoiceId(''); }}><option value="goodness">THE GOODNESS BAKER LTD</option><option value="vatra">VATRA ROMANEASCA LTD</option></select></label>}<div className="protected-payment-credit rounded-2xl bg-white border p-5 flex gap-3 items-center"><b>Credit disponibil: {money(credit)}</b><select value={creditInvoiceId} onChange={(event) => setCreditInvoiceId(event.target.value)} className="border rounded-xl p-2 flex-1"><option value="">Factura pe care aplici creditul</option>{eligibleInvoices.map((invoice) => <option key={invoice.id} value={invoice.id}>{invoice.reference} · rest {money(invoice.totalAmount - invoice.paidAmount - invoice.creditedAmount - appliedCredit(invoice.id))}</option>)}</select><button disabled={credit <= 0.005 || !creditInvoiceId} onClick={applyCredit} className="bg-emerald-600 text-white rounded-xl px-4 py-2 disabled:opacity-50">Aplică credit</button></div>{!creditOnly && <div className="rounded-2xl bg-white border divide-y"><h2 className="p-4 font-bold">Istoric încasări</h2>{payments.map((payment) => <div key={payment.id} className={`p-4 flex justify-between gap-4 ${payment.reversedAt ? 'opacity-50' : ''}`}><div className="min-w-0"><p className="font-semibold text-slate-900 break-words">{payment.companyName}</p><p className="text-sm text-slate-600">{payment.invoiceReference ? payment.invoiceReference + (payment.storeName ? ' · ' + payment.storeName : '') : payment.invoiceId ? 'Factură istorică indisponibilă' : 'Avans / Credit disponibil'}</p><small className="text-slate-500">{payment.paymentDate} · {({ cash: 'Cash', transfer: 'Transfer bancar', card: 'Card', other: 'Altă metodă' } as Record<string, string>)[payment.method] || payment.method} · {payment.issuerCode === 'goodness' ? 'THE GOODNESS BAKER LTD' : 'VATRA ROMANEASCA LTD'}{payment.reversedAt && ' · REVERSATĂ'}</small>{payment.notes && <p className="text-sm text-slate-500">{payment.notes}</p>}</div><div className="flex gap-3"><b>{money(payment.amount)}</b>{!payment.reversedAt && <button onClick={() => reverse(payment)} className="text-red-700">Reversează</button>}</div></div>)}{!payments.length && <p className="p-5 text-slate-500">Nu există încasări pentru selecția curentă.</p>}</div>}<div className="rounded-2xl bg-white border divide-y"><h2 className="p-4 font-bold">Aplicări de credit</h2>{creditApplications.map((application) => <div key={application.id} className={`p-4 flex justify-between gap-4 ${application.reversedAt ? 'opacity-50' : ''}`}><span>{application.createdAt.slice(0, 10)} · {application.companyName} · {application.invoiceReference} · {application.issuerCode.toUpperCase()}{application.reversedAt && ' · REVERSAT'}</span><div className="flex gap-3"><b>{money(application.amount)}</b>{!application.reversedAt && <button onClick={() => reverseCredit(application)} className="text-red-700">Reversează</button>}</div></div>)}{!creditApplications.length && <p className="p-5 text-slate-500">Nu există aplicări de credit.</p>}</div>{dialog}</div>;
 }
 
-function CreditNotesPanel({ invoiceId }: { invoiceId?: string }) {
+function CreditNotesPanel({ invoiceId, companyId, issuer = 'all', onChanged }: { invoiceId?: string; companyId?: number; issuer?: string; onChanged?: () => void }) {
   const run = useContext(CloudActionContext);
   const { ask, dialog } = useInputDialog();
   const [draft, setDraft] = useState<any[]>([]);
@@ -401,9 +460,10 @@ function CreditNotesPanel({ invoiceId }: { invoiceId?: string }) {
   const [issueDate, setIssueDate] = useState(localToday());
   const reload = useCallback(async () => {
     const [nextDraft, nextNotes] = await Promise.all([api.protectedRegistry.getCreditNoteDraft(), api.protectedRegistry.getCreditNotes()]);
-    setDraft(nextDraft); setNotes(nextNotes);
-  }, []);
-  useEffect(() => { void reload(); }, [reload]);
+    const belongs = (row: any) => (companyId === undefined || row.companyId === companyId) && (issuer === 'all' || row.issuerCode === issuer);
+    setDraft(nextDraft.filter(belongs)); setNotes(nextNotes.filter(belongs)); onChanged?.();
+  }, [companyId, issuer, onChanged]);
+  useEffect(() => { void reload().catch(error => notify(errorMessage(error))); }, [reload]);
   const selectedSource = Object.keys(selected)[0];
   const anchor = draft.find((invoice) => invoice.items.some((item: any) => item.id === selectedSource));
   const toggle = (invoice: any, item: any) => {
