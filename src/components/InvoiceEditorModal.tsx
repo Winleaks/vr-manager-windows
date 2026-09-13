@@ -6,8 +6,17 @@ import { prepareInvoiceDocument } from '../utils/prepareInvoiceDocument';
 import { saveInvoiceEdits } from '../utils/saveInvoiceEdits';
 import { InvoiceIssuerChangeModal } from './InvoiceIssuerChangeModal';
 
-export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
-  invoiceId: number;
+export interface InvoiceEditorAdapter {
+  getInvoice: () => Promise<any>;
+  getProducts: (verify: boolean) => Promise<any[]>;
+  save: (data: { invoiceDate: string; items: any[] }, current: any) => Promise<{ invoice: any; message: string }>;
+}
+
+export function InvoiceEditorModal({ invoiceId, onClose, onSaved, adapter }: ({
+  invoiceId: number; adapter?: never;
+} | {
+  invoiceId: string; adapter: InvoiceEditorAdapter;
+}) & {
   onClose: () => void;
   onSaved: (invoice: any, message: string) => void;
 }) {
@@ -33,7 +42,7 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
     let active = true;
     const previousFocus = document.activeElement as HTMLElement | null;
     dialog.current?.focus();
-    Promise.all([api.billing.getInvoice(invoiceId), api.system.getDeviceRole()])
+    Promise.all([adapter ? adapter.getInvoice() : api.billing.getInvoice(Number(invoiceId)), api.system.getDeviceRole()])
       .then(([row, device]) => {
         if (!active) return;
         setInvoice(row);
@@ -44,7 +53,7 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
       })
       .catch((failure) => { if (active) setError(failure.message || 'Factura nu a putut fi încărcată.'); });
     return () => { active = false; previousFocus?.focus(); };
-  }, [invoiceId]);
+  }, [invoiceId, adapter]);
 
   useEffect(() => {
     if (!invoice?.id || !isWriter || invoice.status === 'cancelled') return;
@@ -53,10 +62,10 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
     void (async () => {
       try {
         // Local products are usable even while the network price lookup is pending.
-        const local = await api.billing.getInvoiceProducts(invoiceId, false);
+        const local = await (adapter ? adapter.getProducts(false) : api.billing.getInvoiceProducts(Number(invoiceId), false));
         if (!active) return;
         setProducts(local); setCatalogLoading(false); setPricingLoading(true);
-        const priced = await api.billing.getInvoiceProducts(invoiceId);
+        const priced = await (adapter ? adapter.getProducts(true) : api.billing.getInvoiceProducts(Number(invoiceId)));
         if (active) setProducts(priced);
       } catch {
         if (active) setCatalogError('Catalogul sau tarifele nu au putut fi reîncărcate. Poți reîncerca aici; prețurile neverificate trebuie completate manual.');
@@ -65,9 +74,9 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
       }
     })();
     return () => { active = false; };
-  }, [invoiceId, invoice?.id, invoice?.status, isWriter, catalogAttempt]);
+  }, [invoiceId, invoice?.id, invoice?.status, isWriter, catalogAttempt, adapter]);
 
-  const blocked = !isWriter || invoice?.status === 'cancelled' || Number(invoice?.creditedAmount || 0) > 0.005 || Number(invoice?.appliedCredit || 0) > 0.005;
+  const blocked = !isWriter || Boolean(invoice?.blockedReason) || invoice?.status === 'cancelled' || Number(invoice?.creditedAmount || 0) > 0.005 || Number(invoice?.appliedCredit || 0) > 0.005;
   const dirty = Boolean(invoice && (date !== invoice.invoice_date || removedItems.length || items.length !== invoice.items.length || items.some((item, index) => {
     const original = invoice.items[index];
     return !original || item.id !== original.id || item.productName !== original.productName || String(item.quantity) !== String(original.quantity) || String(item.unitPrice) !== String(original.unitPrice);
@@ -102,8 +111,14 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
     busy.current = true;
     setStage('saving');
     try {
+      if (adapter) {
+        const result = await adapter.save({ invoiceDate: date,
+          items: [...items.map(item => ({ ...item, quantity: Number(item.quantity), unitPrice: Number(item.unitPrice) })), ...removedItems] }, invoice);
+        onSaved(result.invoice, result.message);
+        return;
+      }
       const result = await saveInvoiceEdits({
-        id: invoiceId, invoiceDate: date,
+        id: Number(invoiceId), invoiceDate: date,
         items: [...items.map((item) => ({ ...item, quantity: Number(item.quantity), unitPrice: Number(item.unitPrice) })), ...removedItems],
       }, {
         update: api.billing.updateInvoice,
@@ -120,7 +135,9 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
     }
   };
 
-  if (changingIssuer) return <InvoiceIssuerChangeModal registry="normal" invoiceId={invoiceId} onClose={() => setChangingIssuer(false)} onComplete={(message) => onSaved({ ...invoice, status: 'cancelled' }, message)} />;
+  if (changingIssuer) return adapter
+    ? <InvoiceIssuerChangeModal registry="protected" invoiceId={String(invoiceId)} onClose={() => setChangingIssuer(false)} onComplete={(message) => onSaved({ ...invoice, status: 'cancelled' }, message)} />
+    : <InvoiceIssuerChangeModal registry="normal" invoiceId={Number(invoiceId)} onClose={() => setChangingIssuer(false)} onComplete={(message) => onSaved({ ...invoice, status: 'cancelled' }, message)} />;
   return <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
     <div ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="invoice-editor-title"
       onKeyDown={(event) => {
@@ -149,7 +166,7 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved }: {
               {isWriter && invoice.status !== 'cancelled' && <button type="button" disabled={dirty || stage !== 'idle'} onClick={() => setChangingIssuer(true)} className="text-indigo-700 font-semibold text-sm hover:underline disabled:opacity-50">Schimbă emitentul</button>}
               {isWriter && dirty && <p className="text-sm text-amber-800">Ai modificări nesalvate. Salvează factura sau <button type="button" disabled={stage !== 'idle'} className="underline font-semibold" onClick={() => { setDate(invoice.invoice_date); setRemovedItems([]); setItems(invoice.items.map((item: any) => ({ ...item, quantity: String(item.quantity), unitPrice: String(item.unitPrice) }))); }}>renunță la modificări</button> înainte de schimbarea emitentului.</p>}
             </section>
-            {blocked && <p role="status" className="text-amber-800 bg-amber-50 rounded-xl p-3">{!isWriter ? 'Modificarea este disponibilă numai pe calculatorul Writer.' : 'Factura anulată sau cu Credit Notes ori credit aplicat nu poate fi editată.'}</p>}
+            {blocked && <p role="status" className="text-amber-800 bg-amber-50 rounded-xl p-3">{!isWriter ? 'Modificarea este disponibilă numai pe calculatorul Writer.' : invoice.blockedReason || 'Factura anulată sau cu Credit Notes ori credit aplicat nu poate fi editată.'}</p>}
             <fieldset disabled={blocked || stage !== 'idle'} className="space-y-4">
               <p className="text-sm text-slate-600">{invoice.company_name} · {invoice.store_name}</p>
               <label className="block text-sm font-semibold">Data emiterii

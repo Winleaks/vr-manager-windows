@@ -1,10 +1,15 @@
 /* Scoped to the isolated register; use the Hub's Inter / slate / indigo system. */
-.protected-workspace { color: #0f172a; }
+.protected-workspace { color: #0f172a; font-family: var(--font-sans); }
 .protected-sidebar { flex-shrink: 0; }
+.protected-sidebar > header { padding: 1.5rem; font-size: 1.25rem; font-weight: 700; }
+.protected-sidebar nav { padding: 1rem; }
+.protected-sidebar nav button { padding: .85rem; border-radius: .5rem; font-size: 1rem; font-weight: 500; }
+.protected-sidebar nav svg { width: 20px; height: 20px; flex-shrink: 0; }
 .protected-main { min-width: 0; }
 .protected-content { min-width: 0; width: 100%; }
 .protected-content :is(section, .border, .border-t, .divide-y > *) { border-color: #e2e8f0; }
-.protected-content h2 { font-size: 1.125rem; line-height: 1.5rem; }
+.protected-content h2 { font-size: 1.25rem; line-height: 1.75rem; }
+.protected-content label { color: #475569; font-size: .875rem; font-weight: 500; }
 .protected-content > div > :is(section, div.bg-white) {
   border-color: #e2e8f0;
   box-shadow: 0 1px 2px rgb(15 23 42 / .05);
@@ -33,6 +38,9 @@
 .protected-content input[type='checkbox'] { accent-color: #4f46e5; width: 1rem; height: 1rem; }
 .protected-content table th { color: #64748b; font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .025em; }
 .protected-content table td { border-color: #f1f5f9; vertical-align: middle; }
+.protected-content table { border-collapse: collapse; }
+.protected-content table th:empty { width: 2.5rem; }
+.protected-content [role='dialog'] table { min-width: 550px; }
 .protected-content tbody tr:hover { background: #f8fafc; }
 .protected-content td button { padding: .5rem; border-radius: .5rem; }
 .protected-content td button:hover { background: #eef2ff; }

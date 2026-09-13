@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { DocumentSyncStatus } from '../src/shared/documentSyncTypes'
+import type { SharedIssuerSettingsInput } from '../src/shared/sharedIssuerSettings'
 import type { InvoiceIssuerChangeInput, InvoiceIssuerChangeOptions } from '../src/shared/invoiceIssuerChange'
 
 type EventCallback = (...args: any[]) => void
@@ -149,6 +150,7 @@ export const desktopApi = {
     statementDocument: (companyId: number, issuerId: number, from: string, to: string, action: 'open' | 'print' | 'share') => ipcRenderer.invoke('billing:statementDocument', companyId, issuerId, from, to, action),
     getIssuers: () => ipcRenderer.invoke('billing:getIssuers'),
     updateIssuer: (data: any) => ipcRenderer.invoke('billing:updateIssuer', data),
+    updateSharedIssuerSettings: (data: SharedIssuerSettingsInput) => ipcRenderer.invoke('billing:updateSharedIssuerSettings', data),
     assignCompanyIssuer: (companyId: number, issuerId: number | null) => ipcRenderer.invoke('billing:assignCompanyIssuer', { companyId, issuerId }),
     getCreditNoteDraft: (invoiceIds?: number[]) => ipcRenderer.invoke('billing:getCreditNoteDraft', invoiceIds),
     createCreditNote: (data: any) => ipcRenderer.invoke('billing:createCreditNote', data),
@@ -175,6 +177,10 @@ export const desktopApi = {
     syncEntities: () => ipcRenderer.invoke('billing:syncEntities'),
   },
   protectedRegistry: {
+    getInvoiceForEdit: (id: string): Promise<import('./protectedRegistry/types').ProtectedInvoice & { expectedVersion: string; blockedReason: string | null; appliedCredit: number }> => ipcRenderer.invoke('protectedRegistry:getInvoiceForEdit', id),
+    getInvoiceProducts: (id: string, verifyPrices = true): Promise<import('./integrations/invoiceCatalogPricing').PricedInvoiceCatalogProduct[]> => ipcRenderer.invoke('protectedRegistry:getInvoiceProducts', id, verifyPrices),
+    updateInvoice: (input: import('../src/shared/protectedInvoiceEdit').ProtectedInvoiceEditInput): Promise<{ success: true; invoice: import('./protectedRegistry/types').ProtectedInvoice; pdf: { success: boolean; error?: string } }> => ipcRenderer.invoke('protectedRegistry:updateInvoice', input),
+    printDocument: (type: 'invoice' | 'credit-note', id: string) => ipcRenderer.invoke('protectedRegistry:printDocument', { type, id }),
     status: () => ipcRenderer.invoke('protectedRegistry:status'),
     configure: (pin: string, pinConfirmation: string) => ipcRenderer.invoke('protectedRegistry:configure', { pin, pinConfirmation }),
     unlock: (pin: string) => ipcRenderer.invoke('protectedRegistry:unlock', pin),

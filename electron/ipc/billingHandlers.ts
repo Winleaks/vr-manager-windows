@@ -1,4 +1,5 @@
 import * as billingRepo from '../database/repositories/billingRepo';
+import { updateSharedIssuerSettings } from '../database/sharedIssuerSettings';
 import { isBillingPublishing } from '../integrations/billingPublisher';
 import { handleTrustedIpc } from './trustedHandler';
 import { aggregateWeeklyOrders } from '../integrations/weeklyInvoiceImport';
@@ -264,6 +265,10 @@ export function registerBillingHandlers() {
   handleTrustedIpc('billing:getProducts', () => billingRepo.getCloudProducts());
   handleTrustedIpc('billing:getIssuers', () => billingRepo.getBillingIssuers());
   handleTrustedIpc('billing:updateIssuer', (_, data) => billingRepo.updateBillingIssuer(data));
+  handleTrustedIpc('billing:updateSharedIssuerSettings', (_, data) => {
+    if (getDeviceRole() !== 'writer') throw new Error('Setările pot fi modificate numai pe Writer.');
+    return updateSharedIssuerSettings(db, data);
+  });
   handleTrustedIpc('billing:assignCompanyIssuer', (_, data) => billingRepo.assignCompanyIssuer(data.companyId, data.issuerId));
   handleTrustedIpc('billing:getCreditNoteDraft', (_, invoiceIds?: number[]) => billingRepo.readCreditNoteDraft(invoiceIds));
   handleTrustedIpc('billing:createCreditNote', async (_, data) => withRegistryRoutingLock(async () => {

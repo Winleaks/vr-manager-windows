@@ -4,6 +4,10 @@ import {
   cancelProtectedInvoice,
   changeProtectedInvoiceIssuer,
   getProtectedIssuerChangeOptions,
+  getProtectedInvoiceForEdit,
+  getProtectedInvoiceProducts,
+  updateProtectedInvoice,
+  printProtectedDocument,
   changeProtectedRegistryPin,
   clearProtectedRegistryTestFinancialData,
   configureProtectedRegistry,
@@ -43,6 +47,10 @@ import {
 } from '../protectedRegistry/service.ts';
 
 export function registerProtectedRegistryHandlers() {
+  handleTrustedIpc('protectedRegistry:getInvoiceForEdit', (event, id: string) => getProtectedInvoiceForEdit(event.sender.id, id));
+  handleTrustedIpc('protectedRegistry:getInvoiceProducts', (event, id: string, verifyPrices: boolean) => getProtectedInvoiceProducts(event.sender.id, id, verifyPrices));
+  handleTrustedIpc('protectedRegistry:updateInvoice', (event, input) => updateProtectedInvoice(event.sender.id, input));
+  handleTrustedIpc('protectedRegistry:printDocument', (event, data) => printProtectedDocument(event.sender.id, data?.type, data?.id));
   handleTrustedIpc('protectedRegistry:getInvoiceIssuerChangeOptions', (event, invoiceId: string) => getProtectedIssuerChangeOptions(event.sender.id, invoiceId));
   handleTrustedIpc('protectedRegistry:changeInvoiceIssuer', (event, data: InvoiceIssuerChangeInput<string>) => changeProtectedInvoiceIssuer(event.sender.id, data));
   handleTrustedIpc('protectedRegistry:status', (event) => protectedRegistryStatus(event.sender.id));

@@ -16,6 +16,28 @@ const invoice = {
   totalAmount: 6,
 };
 
+test('outstanding section shares free invoice space for both issuers including zero balance', () => {
+  for (const vatRegistered of [true, false]) {
+    for (const count of [0, 2]) {
+      const rows = Array.from({ length: count }, (_, i) => ({ invoice_number: `INV-${i + 1}`, invoice_date: '2026-09-13', grossAmount: 6, cashPaid: 0, creditedAmount: 0, appliedCredit: 0, outstanding: 6 }));
+      const pdf = generateInvoicePDF({ issuerName: 'SYNTHETIC BAKERY', invoiceColor: '#F5CC38', vatRegistered }, { ...invoice, accountOutstanding: { rows, total: count * 6 } });
+      assert.equal((Buffer.from(pdf).toString('latin1').match(/\/Type \/Page\b/g) || []).length, 1);
+    }
+  }
+});
+
+test('large outstanding lists paginate deterministically without changing source data', () => {
+  const rows = Array.from({ length: 80 }, (_, i) => ({ invoice_number: `INV-${i + 1}`, invoice_date: '2026-09-13', grossAmount: 6, cashPaid: 0, creditedAmount: 0, appliedCredit: 0, outstanding: 6 }));
+  const data = { ...invoice, accountOutstanding: { rows, total: 480 } };
+  const before = structuredClone(data);
+  const metadata = { fileId: '12345678901234567890123456789012', creationDate: '2026-09-13' };
+  const settings = { issuerName: 'SYNTHETIC BAKERY', invoiceColor: '#4F46E5' };
+  const pdf = generateInvoicePDF(settings, data, metadata);
+  assert.deepEqual(pdf, generateInvoicePDF(settings, data, metadata));
+  assert.deepEqual(data, before);
+  assert.ok((Buffer.from(pdf).toString('latin1').match(/\/Type \/Page\b/g) || []).length >= 4);
+});
+
 test('generates valid VAT and non-VAT invoice PDFs from issuer snapshots', () => {
   const base = {
     issuerName: 'THE GOODNESS BAKER LTD', issuerAddress: 'London', issuerCrn: '123', issuerVat: 'GB123',

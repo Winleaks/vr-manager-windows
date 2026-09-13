@@ -1,3 +1,12 @@
+### VR - Hub Management v0.1.108
+
+- Registrul separat folosește editorul comun pentru data facturii, cantități, prețuri și adăugarea produselor. Păstrează numerotarea, comenzile sursă și încasările; verifică versiunea la salvare și permite reîncercarea fără reemitere.
+- Lista facturilor are căutare, filtre și acțiuni cu iconuri pentru deschidere, WhatsApp, print, editare, emitent, plată și Credit Note. Facturarea manuală și navigarea sunt aliniate cu designul hubului.
+- Setările juridice, bancare, logo-ul și designul PDF sunt comune cu facturarea normală; seriile și datele financiare ale registrului separat rămân independente. Salvarea setărilor comune nu modifică numerotarea.
+- Facturile din ambele registre afișează balanța magazinului sus în dreapta. OUTSTANDING INVOICES continuă imediat după factură când există spațiu, cu antete și valori centrate și paginare pentru liste lungi.
+- Soldul registrului separat include doar același magazin și emitent, separă test/live și scade plățile și creditele active. PDF-ul se regenerează din datele autoritative înainte de deschidere/trimitere/print.
+- Include corecțiile v0.1.107, fără migrare nouă de bază de date sau modificări în platforma clienților. Nu rescrie automat PDF-urile deja descărcate/exportate.
+
 ### VR - Hub Management v0.1.107
 
 - Schimbarea societății emitente este disponibilă pe Writer în ambele registre: originalul rămâne anulat în istoric, iar înlocuitoarea primește un număr din seria emitentului ales. Plățile și creditele blochează operațiunea; comenzile originale rămân legate și nu se facturează din nou.

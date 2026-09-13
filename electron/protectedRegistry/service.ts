@@ -2,6 +2,10 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { withPrivateCloudOperation } from '../integrations/privateCloudOperation.ts';
 import type { InvoiceIssuerChangeInput, InvoiceIssuerChangeOptions } from '../../src/shared/invoiceIssuerChange.ts';
 import { applyProtectedIssuerChange, protectedIssuerChangeBlock, protectedIssuerChangeReplay, validateProtectedIssuerChange } from './issuerChange.ts';
+import { applyProtectedInvoiceEdit, protectedInvoiceEditBlock, protectedInvoiceEditReplay, protectedInvoiceVersion, validateProtectedInvoiceEdit } from './invoiceEditing.ts';
+import type { ProtectedInvoiceEditInput } from '../../src/shared/protectedInvoiceEdit.ts';
+import { protectedInvoiceOutstanding } from './invoiceOutstanding.ts';
+import { localInvoiceCatalog, priceInvoiceCatalog } from '../integrations/invoiceCatalogPricing.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, shell } from 'electron';
@@ -770,7 +774,7 @@ function createProtectedInvoiceRecord(input: {
   };
 }
 
-async function uploadProtectedInvoicePdf(invoice: ProtectedInvoice) {
+async function uploadProtectedInvoicePdf(invoice: ProtectedInvoice, vault: ProtectedRegistryVault) {
   const snapshot = invoice.issuerSnapshot as any;
   const buffer = generateInvoicePDF(
     {
@@ -796,6 +800,7 @@ async function uploadProtectedInvoicePdf(invoice: ProtectedInvoice) {
       },
       items: invoice.items.map((item) => ({ productName: item.productName, name_ro: item.productNameRo || undefined, unit: item.unit, quantity: item.quantity, unitPrice: item.unitPrice, totalPrice: item.totalPrice })),
       totalAmount: invoice.totalAmount,
+      accountOutstanding: protectedInvoiceOutstanding(vault, invoice),
     },
   );
   const filename = `Factura_${invoice.reference}.pdf`;
@@ -893,7 +898,7 @@ export async function createProtectedWeeklyInvoices(
   const issued = created.length ? created : result.invoices.filter((invoice) => invoice.operationId === operationId);
   const pdfResults = [];
   for (const invoice of issued) {
-    try { pdfResults.push({ invoiceId: invoice.id, success: true, ...(await uploadProtectedInvoicePdf(invoice)) }); }
+    try { pdfResults.push({ invoiceId: invoice.id, success: true, ...(await uploadProtectedInvoicePdf(invoice, result)) }); }
     catch (error) { pdfResults.push({ invoiceId: invoice.id, success: false, error: error instanceof Error ? error.message : 'PDF-ul nu a putut fi încărcat.' }); }
   }
   return { success: true, invoices: issued, pdfResults };
@@ -965,13 +970,88 @@ export async function createProtectedManualInvoice(webContentsId: number, input:
   });
   const invoice = created[0] || result.invoices.find((row) => row.operationId === operationId);
   if (!invoice) throw new Error('Factura emisă nu a putut fi recitită.');
-  try { return { success: true, invoice, pdf: { success: true, ...(await uploadProtectedInvoicePdf(invoice)) } }; }
+  try { return { success: true, invoice, pdf: { success: true, ...(await uploadProtectedInvoicePdf(invoice, result)) } }; }
   catch (error) { return { success: true, invoice, pdf: { success: false, error: error instanceof Error ? error.message : 'PDF-ul nu a putut fi încărcat.' } }; }
 }
 
 export async function listProtectedInvoices(webContentsId: number) {
   const session = await freshSession(webContentsId);
-  return [...session.vault.invoices].sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate) || b.sequenceNumber - a.sequenceNumber);
+  return [...session.vault.invoices].sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate) || b.sequenceNumber - a.sequenceNumber)
+    .map(invoice => ({ ...invoice, appliedCredit: activeCreditApplied(session.vault, invoice.id),
+      outstanding: invoice.status === 'cancelled' ? 0 : Math.max(0, invoice.totalAmount - invoice.paidAmount - invoice.creditedAmount - activeCreditApplied(session.vault, invoice.id)) }));
+}
+
+export async function getProtectedInvoiceForEdit(webContentsId: number, invoiceId: string) {
+  assertWriter();
+  const id = requireText(invoiceId, 'Factura', 100);
+  return withRegistryRoutingLock(() => withPrivateCloudOperation(async () => {
+    const session = await freshSession(webContentsId);
+    const key = keyBuffer();
+    await reconcilePending(key);
+    const latest = await loadVaultFromCloud(key);
+    assertWriter();
+    if (await freshSession(webContentsId) !== session) throw Error('Registrul a fost blocat.');
+    const invoice = latest.vault.invoices.find(row => row.id === id);
+    if (!invoice) throw Error('Factura nu există în registrul separat.');
+    setSession({ ...session, vault: latest.vault, envelope: latest.envelope, driveVersion: latest.driveVersion });
+    return { ...invoice, expectedVersion: protectedInvoiceVersion(invoice), blockedReason: protectedInvoiceEditBlock(latest.vault, invoice),
+      appliedCredit: activeCreditApplied(latest.vault, invoice.id) };
+  }));
+}
+
+export async function getProtectedInvoiceProducts(webContentsId: number, invoiceId: string, verifyPrices = true) {
+  assertWriter();
+  if (typeof verifyPrices !== 'boolean') throw Error('Opțiune de verificare invalidă.');
+  const session = await freshSession(webContentsId);
+  const invoice = session.vault.invoices.find(row => row.id === requireText(invoiceId, 'Factura', 100));
+  if (!invoice) throw Error('Factura nu există în registrul separat.');
+  const products = (billingRepo.getCloudProducts() as any[]).filter(row => row.available);
+  const context = { storeExternalId: invoice.storeExternalId, products };
+  if (!verifyPrices) return localInvoiceCatalog(context);
+  const result = await priceInvoiceCatalog(context, id => createVrBakerClient().fetchInvoicePrices(id));
+  assertWriter();
+  if (await freshSession(webContentsId) !== session) throw Error('Registrul s-a schimbat. Reîncarcă produsele.');
+  return result;
+}
+
+// Serialize document regeneration with vault mutations. Read the latest committed
+// invoice, never a renderer snapshot or a previous revision captured before upload.
+async function refreshProtectedInvoiceDocument(webContentsId: number, invoiceId: string) {
+  return withRegistryRoutingLock(() => withPrivateCloudOperation(async () => {
+    assertWriter();
+    const session = await freshSession(webContentsId);
+    await reconcilePending(keyBuffer());
+    const latest = await loadVaultFromCloud(keyBuffer());
+    const invoice = latest.vault.invoices.find(row => row.id === invoiceId);
+    if (!invoice || invoice.status === 'cancelled') throw Error('Factura nu există sau este anulată.');
+    if (await freshSession(webContentsId) !== session) throw Error('Registrul a fost blocat.');
+    assertWriter();
+    const result = await uploadProtectedInvoicePdf(invoice, latest.vault);
+    if (await freshSession(webContentsId) !== session) throw Error('Registrul a fost blocat.');
+    return result;
+  }));
+}
+
+export async function updateProtectedInvoice(webContentsId: number, input: ProtectedInvoiceEditInput) {
+  assertWriter();
+  const request = validateProtectedInvoiceEdit(input);
+  const vault = await mutate(webContentsId, request.operationId, 'protected_invoice_updated', next => {
+    applyProtectedInvoiceEdit(next, request, productId => {
+      const product = db.prepare('SELECT * FROM cloud_products WHERE id = ? AND available = 1').get(productId) as any;
+      if (!product) throw Error('Produsul selectat nu mai este disponibil în catalog.');
+      const finished = product.supabase_product_id ? db.prepare('SELECT id FROM finished_products WHERE external_product_id = ? LIMIT 1').get(product.supabase_product_id) as any : null;
+      return { externalProductId: product.supabase_product_id || null, finishedProductId: finished?.id || null,
+        productName: product.name, productNameRo: product.name_ro || null, unit: product.unit || 'pcs', productOrder: product.display_order ?? null };
+    });
+  }, next => protectedInvoiceEditReplay(next, request));
+  const invoice = vault.invoices.find(row => row.id === request.invoiceId)!;
+  const session = await freshSession(webContentsId);
+  let pdf: { success: boolean; error?: string };
+  try { pdf = { success: true, ...(await refreshProtectedInvoiceDocument(webContentsId, invoice.id)) }; }
+  catch { pdf = { success: false, error: 'Factura este salvată în registru. Reîncearcă PDF-ul din acțiunile facturii; nu salva din nou modificarea.' }; }
+  assertWriter();
+  if (await freshSession(webContentsId) !== session) throw Error('Registrul a fost blocat. Deblochează-l pentru a verifica factura salvată.');
+  return { success: true as const, invoice, pdf };
 }
 
 export async function getProtectedIssuerChangeOptions(webContentsId: number, invoiceId: string): Promise<InvoiceIssuerChangeOptions> {
@@ -997,7 +1077,7 @@ export async function changeProtectedInvoiceIssuer(webContentsId: number, input:
   }, (latest) => Boolean(protectedIssuerChangeReplay(latest, request)));
   const invoice = protectedIssuerChangeReplay(vault, request);
   if (!invoice) throw new Error('Înlocuitoarea nu a putut fi recitită.');
-  try { return { success: true, invoice, pdf: { success: true, ...(await uploadProtectedInvoicePdf(invoice)) } }; }
+  try { return { success: true, invoice, pdf: { success: true, ...(await uploadProtectedInvoicePdf(invoice, vault)) } }; }
   catch (error) { return { success: true, invoice, pdf: { success: false, error: error instanceof Error ? error.message : 'PDF-ul trebuie regenerat.' } }; }
 }
 
@@ -1060,7 +1140,7 @@ export async function reissueProtectedInvoice(webContentsId: number, invoiceIdIn
   });
   const invoice = created[0] || vault.invoices.find((row) => row.operationId === operationId);
   if (!invoice) throw new Error('Factura reemisă nu a putut fi recitită.');
-  try { return { success: true, invoice, pdf: { success: true, ...(await uploadProtectedInvoicePdf(invoice)) } }; }
+  try { return { success: true, invoice, pdf: { success: true, ...(await uploadProtectedInvoicePdf(invoice, vault)) } }; }
   catch (error) { return { success: true, invoice, pdf: { success: false, error: error instanceof Error ? error.message : 'PDF-ul nu a putut fi încărcat.' } }; }
 }
 
@@ -1507,10 +1587,14 @@ async function protectedPdfToTemporaryFile(webContentsId: number, type: 'invoice
   const session = await freshSession(webContentsId);
   const record = type === 'invoice' ? session.vault.invoices.find((row) => row.id === id) : session.vault.creditNotes.find((row) => row.id === id);
   if (!record) throw new Error('Documentul nu există.');
+  if (record.status === 'cancelled') throw Error('Documentul este anulat.');
+  // A prior edit can commit even when its PDF upload fails. Never deliver that
+  // old PDF: regenerate from the authoritative vault before reading it.
+  if (type === 'invoice') await refreshProtectedInvoiceDocument(webContentsId, id);
   const filename = type === 'invoice' ? `Factura_${record.reference}.pdf` : `Credit_Note_${record.reference}.pdf`;
   let file = await readProtectedDocumentPdf(type, record, filename);
   if (!file) {
-    if (type === 'invoice') await uploadProtectedInvoicePdf(record as ProtectedInvoice);
+    if (type === 'invoice') await uploadProtectedInvoicePdf(record as ProtectedInvoice, session.vault);
     else await uploadProtectedCreditNotePdf(record as ProtectedCreditNote, session.vault);
     file = await readProtectedDocumentPdf(type, record, filename);
   }
@@ -1543,6 +1627,14 @@ export async function shareProtectedDocument(webContentsId: number, type: 'invoi
   // The source process stays alive for deferred reads. This confirms preparation
   // in Windows Share, not WhatsApp delivery to the recipient.
   return result;
+}
+
+export async function printProtectedDocument(webContentsId: number, type: 'invoice' | 'credit-note', idInput: unknown) {
+  assertWriter();
+  const id = requireText(idInput, 'Documentul', 100);
+  if (type !== 'invoice' && type !== 'credit-note') throw Error('Tipul documentului este invalid.');
+  const filePath = await protectedPdfToTemporaryFile(webContentsId, type, id);
+  return openWindowsDocument('print', filePath);
 }
 
 export async function exportProtectedRegistryMonth(webContentsId: number, monthInput: unknown) {
@@ -1582,7 +1674,7 @@ export async function exportProtectedRegistryMonth(webContentsId: number, monthI
     const filename = `Factura_${invoice.reference}.pdf`;
     let source = await readProtectedDocumentPdf('invoice', invoice, filename);
     if (!source) {
-      await uploadProtectedInvoicePdf(invoice);
+      await uploadProtectedInvoicePdf(invoice, session.vault);
       source = await readProtectedDocumentPdf('invoice', invoice, filename);
     }
     if (source) { await writeVerifiedPrivateCloudFile({ folderNames: [...folder, 'PDF'], filename, mimeType: 'application/pdf', buffer: source.buffer }); pdfCount += 1; }
