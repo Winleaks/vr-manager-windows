@@ -15,9 +15,11 @@ import {
   RotateCw,
   ExternalLink,
   Share2,
+  Search,
   Settings,
   ShieldCheck,
   ShoppingBag,
+  Store,
   Trash2,
   Users,
 } from 'lucide-react';
@@ -26,6 +28,7 @@ import { NumericInput } from '../components/NumericInput';
 import { PinInput } from '../components/PinInput';
 import { BilingualProductName } from '../components/BilingualProductName';
 import { registerProtectedRegistryAccessClick } from '../utils/protectedRegistryAccess';
+import { matchesProtectedCompany } from '../utils/protectedCompanySearch';
 
 const protectedFeedback = createFeedbackController();
 const { notify, confirmAction } = protectedFeedback;
@@ -186,6 +189,7 @@ function DashboardPanel() {
 
 function ClientsPanel() {
   const [companies, setCompanies] = useState<any[]>([]);
+  const [search, setSearch] = useState('');
   const [busy, setBusy] = useState<number | null>(null);
   const reload = useCallback(() => api.protectedRegistry.getCompanies().then(setCompanies), []);
   useEffect(() => { void reload(); }, [reload]);
@@ -194,7 +198,23 @@ function ClientsPanel() {
     try { await api.protectedRegistry.setAssignment(company.id, !company.assigned, operationId()); await reload(); }
     catch (error) { notify(errorMessage(error)); } finally { setBusy(null); }
   };
-  return <div className="space-y-5"><div><h1 className="text-3xl font-bold">Clienți atribuiți</h1><p className="text-slate-500">Atribuirea include toate magazinele companiei și exclude comenzile din facturarea normală.</p></div><div className="rounded-2xl bg-white border border-slate-200 divide-y">{companies.map((company) => <div key={company.id} className="p-4 flex items-center justify-between gap-4"><div><p className="font-bold">{company.name}</p><p className="text-sm text-slate-500">{company.issuerName || 'Emitent implicit'} · {company.stores.length} magazine</p></div><button disabled={busy === company.id} onClick={() => toggle(company)} className={`rounded-xl px-4 py-2 font-semibold ${company.assigned ? 'bg-red-50 text-red-700' : 'bg-indigo-600 text-white'}`}>{company.assigned ? 'Elimină din registru' : 'Adaugă în registru'}</button></div>)}</div></div>;
+  const filtered = companies.filter(company => matchesProtectedCompany(company, search));
+  return <div className="space-y-5">
+    <div><h1 className="text-3xl font-bold">Clienți atribuiți</h1><p className="text-slate-500">Atribuirea include toate magazinele companiei și exclude comenzile din facturarea normală.</p></div>
+    <div className="rounded-2xl bg-white border border-slate-200 p-4">
+      <label className="block text-xs font-semibold uppercase text-slate-500" htmlFor="protected-client-search">Caută companie sau magazin</label>
+      <div className="relative mt-2"><Search size={18} aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /><input id="protected-client-search" type="search" value={search} onChange={event => setSearch(event.target.value)} autoComplete="off" placeholder="Numele companiei sau al magazinului..." className="w-full min-w-0 rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500" /></div>
+    </div>
+    <div className="rounded-2xl bg-white border border-slate-200 divide-y divide-slate-100">
+      {filtered.map(company => <div key={company.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="min-w-0"><p className="font-bold break-words">{company.name}</p><p className="text-sm text-slate-500">{company.issuerName || 'Emitent implicit'} · {company.stores.length} {company.stores.length === 1 ? 'magazin' : 'magazine'}</p>
+          <ul aria-label={`Magazinele companiei ${company.name}`} className="mt-2 flex flex-wrap gap-2">{company.stores.map((store: { id: number; name: string }) => <li key={store.id} className="inline-flex items-start gap-1.5 min-w-0 max-w-full rounded-lg bg-slate-50 border border-slate-100 px-2.5 py-1 text-sm text-slate-600"><Store size={15} aria-hidden="true" className="shrink-0 mt-0.5 text-indigo-500" /><span className="break-words">{store.name || 'Magazin fără nume'}</span></li>)}</ul>
+        </div>
+        <button disabled={busy === company.id} onClick={() => toggle(company)} className={`shrink-0 self-start sm:self-auto rounded-xl px-4 py-2 font-semibold ${company.assigned ? 'bg-red-50 text-red-700' : 'bg-indigo-600 text-white'}`}>{company.assigned ? 'Elimină din registru' : 'Adaugă în registru'}</button>
+      </div>)}
+      {!filtered.length && <p role="status" className="p-8 text-center text-slate-500">{search.trim() ? 'Nu există companii sau magazine pentru această căutare.' : 'Nu există companii disponibile.'}</p>}
+    </div>
+  </div>;
 }
 
 function OrdersPanel() {

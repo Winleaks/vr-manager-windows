@@ -1,3 +1,9 @@
+### VR - Hub Management v0.1.106
+
+- Lista clienților din registrul separat afișează numele fiecărui magazin, împreună cu numărul de magazine al companiei.
+- Bara de căutare filtrează după companie și magazine, fără diferențe între litere mari/mici sau diacritice. Afișarea păstrează toate magazinele companiei găsite.
+- Filtrarea rămâne locală în pagina protejată, fără salvarea căutării, modificarea atribuirilor sau migrare de bază de date. Include toate corecțiile v0.1.105.
+
 ### VR - Hub Management v0.1.105
 
 - Facturare manuală: compania se alege direct din rezultatele căutării după companie sau magazin, fără selector separat sau client preselectat automat. Selectorul produsului și butonul icon „+” încap în card inclusiv la ferestre mai înguste.
