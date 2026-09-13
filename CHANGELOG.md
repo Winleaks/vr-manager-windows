@@ -1,3 +1,12 @@
+### VR - Hub Management v0.1.107
+
+- Schimbarea societății emitente este disponibilă pe Writer în ambele registre: originalul rămâne anulat în istoric, iar înlocuitoarea primește un număr din seria emitentului ales. Plățile și creditele blochează operațiunea; comenzile originale rămân legate și nu se facturează din nou.
+- Editorul facturii păstrează catalogul și permite căutarea/adăugarea produselor dacă verificarea tarifelor VR Baker eșuează. Prețurile verificate se completează automat; cele neverificate trebuie introduse manual. Reîncărcarea tarifelor nu șterge modificările din editor.
+- Textele generate în Credit Notes, Daily Cash și exporturile PDF de inventar/producție sunt în engleză. Denumirile și notele introduse de operator rămân neschimbate; PDF-urile existente primesc noul format la regenerare.
+- Registrul separat folosește câmpuri, iconuri și tabele aliniate cu designul hubului, cu formulare adaptabile și indicator de salvare în Drive. Apăsările repetate în timpul salvării sunt blocate.
+- Salvarea registrului separat elimină căutări Drive redundante, păstrând verificările de versiune și conținut. Nu adaugă bază de date sau cache pe disc; datele rămân în cloud, cu sesiune temporară în memorie.
+- Include toate corecțiile v0.1.106. Nu introduce migrare de bază de date sau modificări în platforma clienților.
+
 ### VR - Hub Management v0.1.106
 
 - Lista clienților din registrul separat afișează numele fiecărui magazin, împreună cu numărul de magazine al companiei.

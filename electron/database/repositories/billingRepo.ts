@@ -1,7 +1,10 @@
 import { db } from '../db';
+import type { InvoiceIssuerChangeInput, InvoiceIssuerChangeOptions } from '../../../src/shared/invoiceIssuerChange.ts';
 import { outstandingReport, paymentReport, statementReport, weeklyBillingStats } from '../billingReports.ts';
 import {
   createInvoiceBatchTransaction,
+  changeInvoiceIssuerTransaction,
+  invoiceIssuerChangeBlock,
   createManualInvoiceTransaction,
   recordCompanyPaymentTransaction,
   updateInvoiceTransaction,
@@ -23,6 +26,7 @@ import {
   assignCompanyIssuer as assignCompanyIssuerTransaction,
   getBillingIssuers as readBillingIssuers,
   invoiceSettingsFromIdentity,
+  isIssuerReady,
   updateBillingIssuer as updateBillingIssuerTransaction,
   type UpdateBillingIssuerInput,
 } from '../billingIssuers';
@@ -305,6 +309,8 @@ export function getCompanyProfileDetails(companyId: number) {
     const placeholders = storeIds.map(() => '?').join(',');
     invoices = db.prepare(`
       SELECT i.*, s.name as store_name, s.address AS store_address, s.postcode AS store_postcode,
+             (SELECT old.invoice_number FROM invoice_replacements r JOIN invoices old ON old.id = r.cancelled_invoice_id WHERE r.replacement_invoice_id = i.id) AS replaces_reference,
+             (SELECT new.invoice_number FROM invoice_replacements r JOIN invoices new ON new.id = r.replacement_invoice_id WHERE r.cancelled_invoice_id = i.id) AS replacement_reference,
              ii.issuer_id, ii.series AS invoice_series,
              ii.sequence_number AS invoice_sequence, ii.reference AS invoice_reference,
              ii.issuer_snapshot_json, bi.legal_name AS issuer_name, bi.code AS issuer_code,
@@ -413,11 +419,16 @@ export function getStoreBySupabaseId(supabaseStoreId: string) {
 
 // Invoices
 const invoiceSelect = `
-    SELECT i.*, 
+    SELECT i.*,
+           (SELECT replacement_invoice_id FROM invoice_replacements WHERE cancelled_invoice_id = i.id) AS replaced_by_invoice_id,
+           (SELECT old.invoice_number FROM invoice_replacements r JOIN invoices old ON old.id = r.cancelled_invoice_id WHERE r.replacement_invoice_id = i.id) AS replaces_reference,
+           (SELECT new.invoice_number FROM invoice_replacements r JOIN invoices new ON new.id = r.replacement_invoice_id WHERE r.cancelled_invoice_id = i.id) AS replacement_reference,
            ii.issuer_id, ii.series AS invoice_series, ii.sequence_number AS invoice_sequence,
            ii.reference AS invoice_reference, ii.issuer_snapshot_json,
            bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color,
-           EXISTS(SELECT 1 FROM invoice_import_batches ib WHERE ib.invoice_id = i.id) AS is_imported,
+           EXISTS(WITH RECURSIVE lineage(id) AS (
+             SELECT i.id UNION ALL SELECT r.cancelled_invoice_id FROM invoice_replacements r JOIN lineage l ON r.replacement_invoice_id = l.id
+           ) SELECT 1 FROM invoice_import_batches ib JOIN lineage l ON l.id = ib.invoice_id) AS is_imported,
            s.name as store_name, s.address as store_address, s.postcode as store_postcode, s.phone as store_phone,
            c.id as company_id, c.name as company_name, c.cui as company_cui, c.reg_com as company_reg_com, c.address as company_address, c.phone as company_phone, c.bank_account as company_bank_account, c.bank_name as company_bank_name,
            cl.name as client_name
@@ -428,6 +439,23 @@ const invoiceSelect = `
     LEFT JOIN invoice_identities ii ON ii.invoice_id = i.id
     LEFT JOIN billing_issuers bi ON bi.id = ii.issuer_id
   `;
+
+export function getInvoiceIssuerChangeOptions(invoiceId: number): InvoiceIssuerChangeOptions {
+  requirePositiveInteger(invoiceId, 'Factura');
+  const source = getInvoiceById(invoiceId);
+  return {
+    reference: source.invoice_reference || source.invoice_number,
+    issuerName: source.issuer_name,
+    blockedReason: invoiceIssuerChangeBlock(db, invoiceId),
+    issuers: readBillingIssuers(db).filter((issuer) => issuer.id !== source.issuer_id && isIssuerReady(issuer) && ['goodness', 'vatra'].includes(issuer.code))
+      .map((issuer) => ({ id: issuer.id, name: issuer.legal_name, series: issuer.invoice_series!, nextNumber: issuer.next_invoice_number })),
+  };
+}
+
+export function changeInvoiceIssuer(input: InvoiceIssuerChangeInput) {
+  const result = changeInvoiceIssuerTransaction(db, input);
+  return { ...result, invoice: getInvoiceById(result.invoiceId) };
+}
 
 function hydrateInvoice(inv: any) {
   const items = db.prepare(`
@@ -662,18 +690,24 @@ export function syncEntitiesFromVrBaker(companies: VrBakerCompany[], stores: VrB
 
 export function getWeeklyImportState(storeExternalId: string, periodStart: string, periodEnd: string, fingerprint: string) {
   const row = db.prepare(`
+    WITH RECURSIVE chain(root_id, invoice_id) AS (
+      SELECT invoice_id, invoice_id FROM invoice_import_batches
+      UNION ALL
+      SELECT chain.root_id, r.replacement_invoice_id FROM chain JOIN invoice_replacements r ON r.cancelled_invoice_id = chain.invoice_id
+    )
     SELECT b.invoice_id AS source_invoice_id, b.source_fingerprint,
-           COALESCE(r.replacement_invoice_id, b.invoice_id) AS invoice_id,
+           current.id AS invoice_id,
            current.invoice_number, current.invoice_date, current.status,
            ii.issuer_id, ii.reference AS invoice_reference, ii.issuer_snapshot_json,
            bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color
     FROM invoice_import_batches b
     JOIN invoices original ON original.id = b.invoice_id
-    LEFT JOIN invoice_replacements r ON r.cancelled_invoice_id = original.id
-    JOIN invoices current ON current.id = COALESCE(r.replacement_invoice_id, original.id)
+    JOIN chain ON chain.root_id = original.id
+    JOIN invoices current ON current.id = chain.invoice_id
     LEFT JOIN invoice_identities ii ON ii.invoice_id = current.id
     LEFT JOIN billing_issuers bi ON bi.id = ii.issuer_id
     WHERE b.source = 'vrbaker' AND b.store_external_id = ? AND b.period_start = ? AND b.period_end = ?
+      AND NOT EXISTS (SELECT 1 FROM invoice_replacements r WHERE r.cancelled_invoice_id = current.id)
   `).get(storeExternalId, periodStart, periodEnd) as any;
   if (!row) return { billingState: 'ready' as const };
   return {

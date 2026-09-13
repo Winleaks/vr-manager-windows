@@ -25,6 +25,12 @@ test('viewer can read data and control its local role', () => {
 });
 
 test('viewer denies business writes, cloud publishing and unknown channels', () => {
+  for (const registry of ['billing', 'protectedRegistry']) {
+    for (const action of ['changeInvoiceIssuer', 'getInvoiceIssuerChangeOptions']) {
+      assert.equal(isChannelAllowedForRole('viewer', `${registry}:${action}`), false);
+      assert.equal(isChannelAllowedForRole('writer', `${registry}:${action}`), true);
+    }
+  }
   assert.equal(isChannelAllowedForRole('viewer', 'billing:statementDocument'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:getPaymentReport'), true);
   assert.equal(isChannelAllowedForRole('viewer', 'add-production'), false);

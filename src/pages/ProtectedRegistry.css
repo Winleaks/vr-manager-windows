@@ -1,0 +1,64 @@
+/* Scoped to the isolated register; use the Hub's Inter / slate / indigo system. */
+.protected-workspace { color: #0f172a; }
+.protected-sidebar { flex-shrink: 0; }
+.protected-main { min-width: 0; }
+.protected-content { min-width: 0; width: 100%; }
+.protected-content :is(section, .border, .border-t, .divide-y > *) { border-color: #e2e8f0; }
+.protected-content h2 { font-size: 1.125rem; line-height: 1.5rem; }
+.protected-content > div > :is(section, div.bg-white) {
+  border-color: #e2e8f0;
+  box-shadow: 0 1px 2px rgb(15 23 42 / .05);
+}
+.protected-content :is(input, select, textarea):not([type='checkbox']):not([type='radio']) {
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid #e2e8f0;
+  background-color: #f8fafc;
+  border-radius: .75rem;
+  padding-block: .65rem;
+  padding-inline: .8rem;
+  font-size: .875rem;
+  line-height: 1.5;
+}
+.protected-content input[type='search'] { padding-left: 2.5rem !important; }
+.protected-content :is(select, label, .grid > *) { min-width: 0; }
+.protected-content :is(input, select, textarea, button):focus-visible,
+.protected-sidebar button:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+.protected-content :is(input, select, textarea):disabled { opacity: .6; background-color: #f1f5f9; }
+.protected-content button:disabled { opacity: .5; cursor: not-allowed; }
+.protected-content button { transition: background-color .15s, color .15s; }
+.protected-content input[type='checkbox'] { accent-color: #4f46e5; width: 1rem; height: 1rem; }
+.protected-content table th { color: #64748b; font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .025em; }
+.protected-content table td { border-color: #f1f5f9; vertical-align: middle; }
+.protected-content tbody tr:hover { background: #f8fafc; }
+.protected-content td button { padding: .5rem; border-radius: .5rem; }
+.protected-content td button:hover { background: #eef2ff; }
+.protected-invoice-line { display: grid; grid-template-columns: minmax(0, 1fr) 120px 140px 40px; }
+.protected-credit-line { display: grid; grid-template-columns: 28px minmax(0, 1fr) 100px 120px 110px; }
+.protected-credit-line input:not([type='checkbox']) { width: 100%; }
+.protected-payment-credit { flex-wrap: wrap; }
+.protected-payment-credit select { min-width: 180px; }
+.protected-input-dialog { max-height: calc(100dvh - 2rem); overflow-y: auto; }
+@media (max-width: 1100px) {
+  .protected-sidebar { width: 13rem; }
+  .protected-main { padding: 1.25rem; }
+  .protected-credit-line { grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr); }
+  .protected-credit-line > :nth-child(2) { grid-column: 2 / -1; }
+  .protected-credit-line > :nth-child(3) { grid-column: 2; }
+  .protected-credit-line > :last-child { grid-column: 2 / -1; }
+  .protected-invoice-line { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px; }
+  .protected-invoice-line > :first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) {
+  .protected-workspace { flex-direction: column; }
+  .protected-sidebar { width: 100%; max-height: 12rem; }
+  .protected-sidebar > header { display: none; }
+  .protected-sidebar nav { display: flex; overflow-x: auto; flex: none; padding: .5rem; }
+  .protected-sidebar nav button { width: auto; flex-shrink: 0; margin: 0; white-space: nowrap; }
+  .protected-sidebar > button { margin: 0 .5rem .5rem; padding: .5rem; }
+  .protected-main { padding: 1rem; }
+}
+@media (prefers-reduced-motion: reduce) { .protected-content button { transition: none; } }

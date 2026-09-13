@@ -26,6 +26,9 @@ interface InvoiceItem {
 }
 
 interface Invoice {
+  replaces_reference?: string;
+  replacement_reference?: string;
+  replaced_by_invoice_id?: number;
   id: number;
   store_id: number;
   invoice_number: string;
@@ -319,6 +322,8 @@ export function BillingInvoices() {
                     <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-4 px-6 font-bold text-slate-900">
                         <div>#{inv.invoice_number}</div>
+                        {inv.replaces_reference && <small className="block text-indigo-600">Înlocuiește {inv.replaces_reference}</small>}
+                        {inv.replacement_reference && <small className="block text-indigo-600">Înlocuită cu {inv.replacement_reference}</small>}
                         <span className="inline-flex mt-1 text-[10px] font-semibold text-white px-2 py-0.5 rounded-full" style={{ backgroundColor: inv.issuer_color || '#64748B' }}>{inv.issuer_name || 'Emitent istoric'}</span>
                       </td>
                       <td className="py-4 px-6 text-slate-600">
@@ -382,7 +387,7 @@ export function BillingInvoices() {
                           >
                             <Trash2 size={16} />
                           </button>}
-                          {isCancelled && !testMode && <button disabled={!isWriter} onClick={() => handleReissue(inv)} className="p-2 text-amber-700 hover:bg-amber-50 rounded-lg disabled:opacity-40" title="Reemite cu număr nou"><RefreshCw size={16} /></button>}
+                          {isCancelled && !testMode && !inv.replaced_by_invoice_id && <button disabled={!isWriter} onClick={() => handleReissue(inv)} className="p-2 text-amber-700 hover:bg-amber-50 rounded-lg disabled:opacity-40" title="Reemite cu număr nou"><RefreshCw size={16} /></button>}
                         </div>
                       </td>
                     </tr>

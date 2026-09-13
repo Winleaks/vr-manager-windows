@@ -1,6 +1,9 @@
 import { handleTrustedIpc } from './trustedHandler.ts';
+import type { InvoiceIssuerChangeInput } from '../../src/shared/invoiceIssuerChange.ts';
 import {
   cancelProtectedInvoice,
+  changeProtectedInvoiceIssuer,
+  getProtectedIssuerChangeOptions,
   changeProtectedRegistryPin,
   clearProtectedRegistryTestFinancialData,
   configureProtectedRegistry,
@@ -40,6 +43,8 @@ import {
 } from '../protectedRegistry/service.ts';
 
 export function registerProtectedRegistryHandlers() {
+  handleTrustedIpc('protectedRegistry:getInvoiceIssuerChangeOptions', (event, invoiceId: string) => getProtectedIssuerChangeOptions(event.sender.id, invoiceId));
+  handleTrustedIpc('protectedRegistry:changeInvoiceIssuer', (event, data: InvoiceIssuerChangeInput<string>) => changeProtectedInvoiceIssuer(event.sender.id, data));
   handleTrustedIpc('protectedRegistry:status', (event) => protectedRegistryStatus(event.sender.id));
   handleTrustedIpc('protectedRegistry:configure', (event, data) => configureProtectedRegistry(event.sender.id, data?.pin, data?.pinConfirmation));
   handleTrustedIpc('protectedRegistry:unlock', (event, pin) => unlockProtectedRegistry(event.sender.id, pin));

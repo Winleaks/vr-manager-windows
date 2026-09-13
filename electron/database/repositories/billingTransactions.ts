@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { InvoiceIssuerChangeInput } from '../../../src/shared/invoiceIssuerChange.ts';
 import {
   optionalText,
   requireFiniteNonNegative,
@@ -642,7 +643,7 @@ export function updateInvoiceTransaction(
   const invoiceDate = requireIsoDate(invoiceDateInput, 'Data facturii');
 
   return connection.transaction(() => {
-    const imported = Boolean(connection.prepare('SELECT 1 FROM invoice_import_batches WHERE invoice_id = ?').get(invoiceId));
+    const imported = hasImportedInvoiceSource(connection, invoiceId);
     if (connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'credit_note_invoice_links'").get()) {
       const credited = connection.prepare(`SELECT 1 FROM credit_note_invoice_links link JOIN credit_notes cn ON cn.id = link.credit_note_id WHERE link.invoice_id = ? AND cn.status = 'issued' LIMIT 1`).get(invoiceId);
       const applied = connection.prepare('SELECT 1 FROM invoice_credit_applications WHERE invoice_id = ? AND reversed_at IS NULL LIMIT 1').get(invoiceId);
@@ -1053,7 +1054,16 @@ export function updatePaymentTransaction(connection: SqliteDatabase, input: Upda
   })();
 }
 
-export function reissueCancelledWeeklyInvoiceTransaction(connection: SqliteDatabase, invoiceIdInput: number, invoiceDateInput: string) {
+export function hasImportedInvoiceSource(connection: SqliteDatabase, invoiceId: number) {
+  if (!connection.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='invoice_replacements'").get()) {
+    return Boolean(connection.prepare('SELECT 1 FROM invoice_import_batches WHERE invoice_id=?').get(invoiceId));
+  }
+  return Boolean(connection.prepare(`WITH RECURSIVE lineage(id) AS (
+    SELECT ? UNION ALL SELECT r.cancelled_invoice_id FROM invoice_replacements r JOIN lineage l ON r.replacement_invoice_id = l.id
+  ) SELECT 1 FROM invoice_import_batches ib JOIN lineage l ON l.id = ib.invoice_id`).get(invoiceId));
+}
+
+function replaceCancelledInvoice(connection: SqliteDatabase, invoiceIdInput: number, invoiceDateInput: string, targetIssuerId?: number) {
   ensureInvoiceProductColumns(connection);
   const cancelledInvoiceId = requirePositiveInteger(invoiceIdInput, 'Factura anulată');
   const invoiceDate = requireIsoDate(invoiceDateInput, 'Data facturii');
@@ -1067,11 +1077,11 @@ export function reissueCancelledWeeklyInvoiceTransaction(connection: SqliteDatab
     if (connection.prepare('SELECT 1 FROM invoice_replacements WHERE cancelled_invoice_id = ?').get(cancelledInvoiceId)) {
       throw new Error('Factura anulată are deja o factură înlocuitoare.');
     }
-    if (!connection.prepare('SELECT 1 FROM invoice_import_batches WHERE invoice_id = ?').get(cancelledInvoiceId)) {
+    if (targetIssuerId === undefined && !hasImportedInvoiceSource(connection, cancelledInvoiceId)) {
       throw new Error('Reemiterea automată este disponibilă numai pentru facturile săptămânale VR Baker.');
     }
-    if (!original.issuer_id) throw new Error('Compania nu are un emitent atribuit.');
-    const issuer = connection.prepare('SELECT * FROM billing_issuers WHERE id = ?').get(original.issuer_id) as BillingIssuerRow | undefined;
+    if (!targetIssuerId && !original.issuer_id) throw new Error('Compania nu are un emitent atribuit.');
+    const issuer = connection.prepare('SELECT * FROM billing_issuers WHERE id = ?').get(targetIssuerId ?? original.issuer_id) as BillingIssuerRow | undefined;
     if (!issuer || !isIssuerReady(issuer)) throw new Error('Emitentul curent al companiei nu este configurat complet.');
     const sequence = issuer.next_invoice_number;
     if (!Number.isSafeInteger(sequence) || sequence <= 0) throw new Error('Contorul emitentului nu este valid.');
@@ -1100,4 +1110,51 @@ export function reissueCancelledWeeklyInvoiceTransaction(connection: SqliteDatab
       .run(issuer.id, original.company_id, replacementInvoiceId, JSON.stringify({ cancelledInvoiceId }));
     return { invoiceId: replacementInvoiceId, invoiceNumber: reference, invoiceDate, issuerId: issuer.id, issuerSettings: snapshot };
   })();
+}
+
+export function reissueCancelledWeeklyInvoiceTransaction(connection: SqliteDatabase, invoiceId: number, invoiceDate: string) {
+  return replaceCancelledInvoice(connection, invoiceId, invoiceDate);
+}
+
+export function invoiceIssuerChangeBlock(connection: SqliteDatabase, invoiceId: number): string | null {
+  const source = connection.prepare('SELECT status, paid_amount FROM invoices WHERE id = ?').get(invoiceId) as any;
+  if (!source) return 'Factura nu există.';
+  if (connection.prepare('SELECT 1 FROM invoice_replacements WHERE cancelled_invoice_id = ?').get(invoiceId)) return 'Factura are deja o înlocuitoare.';
+  if (source.status === 'cancelled') return 'Factura este anulată.';
+  if (source.paid_amount > 0 || connection.prepare('SELECT 1 FROM payments WHERE invoice_id = ?').get(invoiceId)) return 'Factura are plăți înregistrate. Nu transferăm încasări între societăți.';
+  if (connection.prepare("SELECT 1 FROM credit_note_invoice_links l JOIN credit_notes n ON n.id = l.credit_note_id WHERE l.invoice_id = ? AND n.status = 'issued'").get(invoiceId)) return 'Factura are Credit Notes emise.';
+  if (connection.prepare('SELECT 1 FROM invoice_credit_applications WHERE invoice_id = ? AND reversed_at IS NULL').get(invoiceId)) return 'Factura are credit aplicat.';
+  return null;
+}
+
+export function changeInvoiceIssuerTransaction(connection: SqliteDatabase, input: InvoiceIssuerChangeInput) {
+  const request = {
+    invoiceId: requirePositiveInteger(input.invoiceId, 'Factura'),
+    expectedReference: requireText(input.expectedReference, 'Referința facturii', 100),
+    targetIssuerId: requirePositiveInteger(input.targetIssuerId, 'Emitentul'),
+    invoiceDate: requireIsoDate(input.invoiceDate, 'Data facturii'),
+    reason: requireText(input.reason, 'Motivul', 500),
+    operationId: requireText(input.operationId, 'Identificatorul operației', 100),
+  };
+  if (!/^[a-zA-Z0-9_-]{16,100}$/.test(request.operationId)) throw new Error('Identificatorul operației este invalid.');
+  return connection.transaction(() => {
+    const prior = connection.prepare("SELECT details FROM billing_audit_events WHERE event_type = 'invoice_issuer_changed' AND json_extract(details, '$.request.operationId') = ?").get(request.operationId) as { details: string } | undefined;
+    if (prior) {
+      const saved = JSON.parse(prior.details);
+      if (JSON.stringify(saved.request) !== JSON.stringify(request)) throw new Error('Identificatorul operației a fost utilizat cu alte date.');
+      return saved.result as ReturnType<typeof replaceCancelledInvoice>;
+    }
+    const block = invoiceIssuerChangeBlock(connection, request.invoiceId);
+    if (block) throw new Error(block);
+    const identity = connection.prepare('SELECT issuer_id, reference FROM invoice_identities WHERE invoice_id = ?').get(request.invoiceId) as any;
+    if (!identity || identity.reference !== request.expectedReference) throw new Error('Identitatea facturii s-a schimbat. Redeschide factura.');
+    if (identity.issuer_id === request.targetIssuerId) throw new Error('Alege o societate emitentă diferită.');
+    const issuer = connection.prepare('SELECT * FROM billing_issuers WHERE id = ?').get(request.targetIssuerId) as BillingIssuerRow | undefined;
+    if (!issuer || !['goodness', 'vatra'].includes(issuer.code) || !isIssuerReady(issuer)) throw new Error('Emitentul nu este activ sau configurat complet.');
+    cancelInvoiceTransaction(connection, request.invoiceId, request.reason);
+    const result = replaceCancelledInvoice(connection, request.invoiceId, request.invoiceDate, request.targetIssuerId);
+    connection.prepare("INSERT INTO billing_audit_events (event_type, issuer_id, invoice_id, details) VALUES ('invoice_issuer_changed', ?, ?, ?)")
+      .run(request.targetIssuerId, result.invoiceId, JSON.stringify({ request, result, previousIssuerId: identity.issuer_id }));
+    return result;
+  }).immediate();
 }

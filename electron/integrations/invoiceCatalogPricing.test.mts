@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { priceInvoiceCatalog } from './invoiceCatalogPricing.ts';
+import { localInvoiceCatalog, priceInvoiceCatalog } from './invoiceCatalogPricing.ts';
 import { VrBakerApiClient } from './vrBakerApiClient.ts';
 
 const storeId = '11111111-1111-4111-8111-111111111111';
@@ -27,11 +27,37 @@ test('unlinked local customers use standard prices without any provider call', a
 
 test('offline, missing and invalid tariffs never silently fall back to standard prices', async () => {
   const context = { storeExternalId: storeId, products: [product] };
-  await assert.rejects(priceInvoiceCatalog(context, async () => { throw new Error('offline'); }), /offline/);
-  await assert.rejects(priceInvoiceCatalog(context, async () => new Map()), /lipsește/);
+  const [offline] = await priceInvoiceCatalog(context, async () => { throw new Error('offline credential must not escape'); });
+  assert.equal(offline.id, product.id); assert.equal(offline.unitPrice, null); assert.equal(offline.priceSource, 'unverified'); assert.equal(offline.priceIssue, 'unavailable');
+  assert.equal(JSON.stringify(offline).includes('credential'), false);
+  const [missing] = await priceInvoiceCatalog(context, async () => new Map());
+  assert.equal(missing.unitPrice, null); assert.equal(missing.priceIssue, 'missing');
   for (const price of [NaN, -1, Infinity]) {
-    await assert.rejects(priceInvoiceCatalog(context, async () => new Map([[productId, price]])), /invalid/);
+    const [invalid] = await priceInvoiceCatalog(context, async () => new Map([[productId, price]]));
+    assert.equal(invalid.unitPrice, null); assert.equal(invalid.priceIssue, 'invalid');
   }
+});
+
+test('one missing tariff does not hide the other products or invalidate their verified prices', async () => {
+  const second = { ...product, id: 2, supabase_product_id: storeId, name: 'Cake' };
+  const result = await priceInvoiceCatalog({ storeExternalId: storeId, products: [product, second] }, async () => new Map([[productId, 2.5]]));
+  assert.equal(result.length, 2); assert.equal(result[0].unitPrice, 2.5); assert.equal(result[0].priceSource, 'vr-baker');
+  assert.equal(result[1].id, second.id); assert.equal(result[1].unitPrice, null); assert.equal(result[1].priceIssue, 'missing');
+});
+
+test('local catalogue is immediately available without claiming that client tariffs are verified', () => {
+  const localOnly = { ...product, id: 2, supabase_product_id: null };
+  const rows = localInvoiceCatalog({ storeExternalId: storeId, products: [product, localOnly] });
+  assert.equal(rows[0].unitPrice, null); assert.equal(rows[0].priceSource, 'unverified'); assert.equal(rows[0].price_standard, 5);
+  assert.equal(rows[1].unitPrice, 5); assert.equal(rows[1].priceSource, 'standard');
+});
+
+test('retry restores verified pricing without mutating catalogue or previous results; empty catalogue skips network', async () => {
+  const context = { storeExternalId: storeId, products: [product] };
+  const first = await priceInvoiceCatalog(context, async () => { throw Error('offline'); });
+  const retry = await priceInvoiceCatalog(context, async () => new Map([[productId, 0]]));
+  assert.equal(first[0].unitPrice, null); assert.equal(retry[0].unitPrice, 0); assert.equal(product.price_standard, 5);
+  assert.deepEqual(await priceInvoiceCatalog({ storeExternalId: storeId, products: [] }, async () => { throw Error('must not call'); }), []);
 });
 
 function client(data: unknown, inspect?: (payload: any) => void) {

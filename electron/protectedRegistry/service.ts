@@ -1,4 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { withPrivateCloudOperation } from '../integrations/privateCloudOperation.ts';
+import type { InvoiceIssuerChangeInput, InvoiceIssuerChangeOptions } from '../../src/shared/invoiceIssuerChange.ts';
+import { applyProtectedIssuerChange, protectedIssuerChangeBlock, protectedIssuerChangeReplay, validateProtectedIssuerChange } from './issuerChange.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, shell } from 'electron';
@@ -284,15 +287,24 @@ async function mutate(
   operationIdInput: unknown,
   eventType: string,
   apply: (vault: ProtectedRegistryVault, operationId: string) => void,
+  findReplay?: (vault: ProtectedRegistryVault) => boolean,
 ) {
-  return withRegistryRoutingLock(async () => {
-    await freshSession(webContentsId);
+  return withRegistryRoutingLock(() => withPrivateCloudOperation(async () => {
+    const initialSession = await freshSession(webContentsId);
     const operationId = requireText(operationIdInput, 'Identificatorul operației', 100);
     if (!/^[a-zA-Z0-9_-]{16,100}$/.test(operationId)) throw new Error('Identificatorul operației este invalid.');
     const key = keyBuffer();
     await reconcilePending(key);
     const latest = await loadVaultFromCloud(key);
-    if (latest.vault.processedOperations.includes(operationId)) return latest.vault;
+    if (await freshSession(webContentsId) !== initialSession) throw new Error('Sesiunea registrului s-a schimbat. Reîncearcă.');
+    if (getDeviceRole() !== 'writer') throw new Error('Operațiunea este disponibilă numai pe Writer.');
+    const restoreLatestSession = () => {
+      setSession({ ...initialSession, vault: latest.vault, envelope: latest.envelope, driveVersion: latest.driveVersion });
+      return latest.vault;
+    };
+    if (findReplay?.(latest.vault)) return restoreLatestSession();
+    if (findReplay && latest.vault.processedOperations.includes(operationId)) throw new Error('Identificatorul operației a fost deja utilizat.');
+    if (latest.vault.processedOperations.includes(operationId)) return restoreLatestSession();
     const next = structuredClone(latest.vault);
     apply(next, operationId);
     next.revision += 1;
@@ -319,9 +331,13 @@ async function mutate(
     const manifestExisting = await readVerifiedPrivateCloudFile(FOLDER, MANIFEST_FILE);
     await uploadManifest(next, key, nextEnvelope.recovery, manifestExisting?.version ?? null);
     await deletePrivateCloudFile(FOLDER, PENDING_FILE);
+    // A cloud commit may finish after the user locks the register. Do not reopen
+    // it or return protected data to an expired/replaced session.
+    if (await freshSession(webContentsId) !== initialSession) throw new Error('Sesiunea registrului s-a schimbat. Deblochează din nou modulul.');
+    if (getDeviceRole() !== 'writer') throw new Error('Operațiunea este disponibilă numai pe Writer.');
     setSession({ webContentsId, lastActivity: Date.now(), vault: next, envelope: nextEnvelope, driveVersion: null });
     return next;
-  });
+  }));
 }
 
 export function isProtectedRegistryEnabled() {
@@ -956,6 +972,33 @@ export async function createProtectedManualInvoice(webContentsId: number, input:
 export async function listProtectedInvoices(webContentsId: number) {
   const session = await freshSession(webContentsId);
   return [...session.vault.invoices].sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate) || b.sequenceNumber - a.sequenceNumber);
+}
+
+export async function getProtectedIssuerChangeOptions(webContentsId: number, invoiceId: string): Promise<InvoiceIssuerChangeOptions> {
+  const session = await freshSession(webContentsId);
+  const source = session.vault.invoices.find((row) => row.id === requireText(invoiceId, 'Factura', 100));
+  if (!source) throw new Error('Factura nu există.');
+  return {
+    reference: source.reference, issuerName: String(source.issuerSnapshot.issuerName || source.issuerCode),
+    blockedReason: protectedIssuerChangeBlock(session.vault, source),
+    issuers: billingRepo.getBillingIssuers().filter((issuer) => issuer.id !== source.issuerId && isIssuerReady(issuer) && (issuer.code === 'goodness' || issuer.code === 'vatra'))
+      .map((issuer) => ({ id: issuer.id, name: issuer.legal_name, series: protectedSeries(issuer.code as ProtectedIssuerCode), nextNumber: session.vault.counters[protectedSeries(issuer.code as ProtectedIssuerCode)] })),
+  };
+}
+
+export async function changeProtectedInvoiceIssuer(webContentsId: number, input: InvoiceIssuerChangeInput<string>) {
+  const request = validateProtectedIssuerChange(input);
+  const vault = await mutate(webContentsId, request.operationId, 'protected_invoice_issuer_changed', (next) => {
+    const source = next.invoices.find((row) => row.id === request.invoiceId);
+    if (!source?.storeId) throw new Error('Magazinul facturii nu mai este mapat local.');
+    const store = readStoreSnapshot(source.storeId);
+    if (store.company_id !== source.companyId || companyKey({ id: store.company_id, supabase_company_id: store.supabase_company_id }) !== source.companyKey) throw new Error('Asocierea magazinului s-a schimbat. Verifică factura înainte de continuare.');
+    applyProtectedIssuerChange(next, request, readIssuer(request.targetIssuerId));
+  }, (latest) => Boolean(protectedIssuerChangeReplay(latest, request)));
+  const invoice = protectedIssuerChangeReplay(vault, request);
+  if (!invoice) throw new Error('Înlocuitoarea nu a putut fi recitită.');
+  try { return { success: true, invoice, pdf: { success: true, ...(await uploadProtectedInvoicePdf(invoice)) } }; }
+  catch (error) { return { success: true, invoice, pdf: { success: false, error: error instanceof Error ? error.message : 'PDF-ul trebuie regenerat.' } }; }
 }
 
 export async function cancelProtectedInvoice(webContentsId: number, invoiceIdInput: unknown, reasonInput: unknown, operationId: unknown) {

@@ -14,5 +14,5 @@ test('billing actions use application modals instead of unsupported native promp
 test('billing test mode exposes permanent deletion for cancelled invoices', () => {
   const source = fs.readFileSync(path.join(process.cwd(), 'src', 'pages', 'BillingInvoices.tsx'), 'utf8');
   assert.match(source, /\{\(testMode \|\| !isCancelled\) && <button/);
-  assert.match(source, /\{isCancelled && !testMode && <button/);
+  assert.match(source, /\{isCancelled && !testMode && !inv.replaced_by_invoice_id && <button/);
 });

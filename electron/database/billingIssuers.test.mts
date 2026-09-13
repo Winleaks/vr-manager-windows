@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import Database from 'better-sqlite3';
+import { readFileSync } from 'node:fs';
 import { initialSchema } from './schema.ts';
 import {
   assignCompanyIssuer,
@@ -10,6 +11,8 @@ import {
 } from './billingIssuers.ts';
 import {
   cancelInvoiceTransaction,
+  changeInvoiceIssuerTransaction,
+  hasImportedInvoiceSource,
   createManualInvoiceTransaction,
   createWeeklyInvoiceBatchTransaction,
   deleteInvoiceForTestingTransaction,
@@ -21,6 +24,8 @@ import {
 } from './repositories/billingTransactions.ts';
 import { ensureCreditNoteSchema } from './creditNotes.ts';
 import { paymentReport, statementReport, outstandingReport, weeklyBillingStats } from './billingReports.ts';
+import { installBillingPublication, prepareBillingDelivery } from './billingPublication.ts';
+import { installDocumentSyncQueue, dueDocuments } from './documentSyncQueue.ts';
 
 function issuerInput(issuer: any, overrides: Record<string, unknown> = {}) {
   return {
@@ -197,6 +202,93 @@ function weekly(storeId: number, storeExternalId: string, orderId: string) {
     items: [{ productName: 'Bread', name_ro: 'Pâine', quantity: 2, unitPrice: 5 }],
   };
 }
+
+for (const imported of [true, false]) test(`issuer change in both directions is atomic/idempotent and preserves ${imported ? 'imported' : 'manual'} invoice history`, () => {
+  const { connection, store1, company1, goodnessId, vatraId } = fixture();
+  try {
+    installBillingPublication(connection); installDocumentSyncQueue(connection);
+    const order = weekly(store1, 'store-goodness', 'issuer-change-order');
+    const productId = Number(connection.prepare("INSERT INTO cloud_products(supabase_product_id,name,price_standard,available) VALUES('issuer-change-bread','Bread',5,1)").run().lastInsertRowid);
+    const source = imported ? createWeeklyInvoiceBatchTransaction(connection, [order], '2026-09-01')[0]
+      : createManualInvoiceTransaction(connection, { storeId: store1, invoiceDate: '2026-09-01', items: [{ productId, quantity: 2, unitPrice: 5 }] });
+    connection.prepare("UPDATE invoices SET pdf_path='original.pdf', drive_file_id='original-drive-id' WHERE id=?").run(source.invoiceId);
+    const sourceItems = connection.prepare('SELECT product_name, quantity, unit_price, total_price FROM invoice_items WHERE invoice_id=?').all(source.invoiceId);
+    const batches = connection.prepare('SELECT * FROM invoice_import_batches').all();
+    const orders = connection.prepare('SELECT * FROM invoice_source_orders').all();
+    const request = { invoiceId: source.invoiceId, expectedReference: source.invoiceNumber, targetIssuerId: vatraId, invoiceDate: '2026-09-13', reason: 'Emitent selectat greșit', operationId: 'issuer-change-test-0001' };
+    const replacement = changeInvoiceIssuerTransaction(connection, request);
+    assert.equal(replacement.invoiceNumber, 'VATRA-1');
+    assert.deepEqual(replacement.issuerSettings, getBillingIssuers(connection).find((row) => row.id === vatraId)!.settings);
+    assert.deepEqual(changeInvoiceIssuerTransaction(connection, request), replacement);
+    assert.throws(() => changeInvoiceIssuerTransaction(connection, { ...request, reason: 'Alt motiv' }), /alte date/);
+    assert.throws(() => changeInvoiceIssuerTransaction(connection, { ...request, operationId: 'issuer-change-test-0002' }), /înlocuitoare/);
+    const old = connection.prepare('SELECT * FROM invoices WHERE id=?').get(source.invoiceId) as any;
+    assert.equal(old.status, 'cancelled'); assert.equal(old.pdf_path, 'original.pdf'); assert.equal(old.drive_file_id, 'original-drive-id');
+    const next = connection.prepare('SELECT * FROM invoices WHERE id=?').get(replacement.invoiceId) as any;
+    assert.equal(next.store_id, store1); assert.equal(next.total_amount, 10); assert.equal(next.paid_amount, 0); assert.equal(next.drive_file_id, null);
+    assert.deepEqual(connection.prepare('SELECT product_name, quantity, unit_price, total_price FROM invoice_items WHERE invoice_id=?').all(replacement.invoiceId), sourceItems);
+    assert.equal((connection.prepare('SELECT issuer_id FROM companies WHERE id=?').get(company1) as any).issuer_id, goodnessId);
+    assert.equal(outstandingReport(connection, company1, goodnessId, store1).total, 0);
+    assert.equal(outstandingReport(connection, company1, vatraId, store1).total, 10);
+    const back = changeInvoiceIssuerTransaction(connection, { ...request, invoiceId: replacement.invoiceId, expectedReference: replacement.invoiceNumber, targetIssuerId: goodnessId, operationId: 'issuer-change-test-0003' });
+    assert.equal(back.invoiceNumber, 'TGB-11');
+    assert.deepEqual(back.issuerSettings, getBillingIssuers(connection).find((row) => row.id === goodnessId)!.settings);
+    assert.equal(hasImportedInvoiceSource(connection, back.invoiceId), imported);
+    const repository = readFileSync(new URL('./repositories/billingRepo.ts', import.meta.url), 'utf8');
+    const select = repository.match(/const invoiceSelect = `([\s\S]*?)`;/)![1];
+    const selected = connection.prepare(select + ' WHERE i.id=?').get(back.invoiceId) as any;
+    assert.equal(Boolean(selected.is_imported), imported);
+    assert.equal(selected.replaces_reference, replacement.invoiceNumber);
+    if (imported) {
+      const weeklyQuery = repository.match(/export function getWeeklyImportState[\s\S]*?db.prepare\(`([\s\S]*?)`\)/)![1];
+      assert.equal((connection.prepare(weeklyQuery).get('store-goodness', order.periodStart, order.periodEnd) as any).invoice_id, back.invoiceId);
+    }
+    assert.deepEqual(connection.prepare('SELECT * FROM invoice_import_batches').all(), batches);
+    assert.deepEqual(connection.prepare('SELECT * FROM invoice_source_orders').all(), orders);
+    if (imported) assert.throws(() => createWeeklyInvoiceBatchTransaction(connection, [order], '2026-09-13'));
+    assert.deepEqual(dueDocuments(connection).map((d) => d.document_id), [back.invoiceId]);
+    assert.ok(connection.prepare('SELECT 1 FROM billing_publication_queue').get());
+    connection.prepare('UPDATE companies SET supabase_company_id=? WHERE id=?').run('11111111-1111-4111-8111-111111111111', company1);
+    connection.prepare('UPDATE stores SET supabase_store_id=? WHERE id=?').run('22222222-2222-4222-8222-222222222222', store1);
+    const published = prepareBillingDelivery(connection, company1);
+    assert.deepEqual(published.invoices.map((i: any) => [i.id, i.cancelled, i.outstanding]), [[String(source.invoiceId), true, 0], [String(replacement.invoiceId), true, 0], [String(back.invoiceId), false, 1000]]);
+    assert.deepEqual(connection.pragma('foreign_key_check'), []);
+  } finally { connection.close(); }
+});
+
+test('issuer change rejects stale identity, same/missing/incomplete issuer and payments; audit failure rolls back all changes', () => {
+  const { connection, store1, company1, goodnessId, vatraId } = fixture();
+  try {
+    installBillingPublication(connection); installDocumentSyncQueue(connection);
+    const source = createWeeklyInvoiceBatchTransaction(connection, [weekly(store1, 'store-goodness', 'issuer-failure')], '2026-09-01')[0];
+    const request = { invoiceId: source.invoiceId, expectedReference: source.invoiceNumber, targetIssuerId: vatraId, invoiceDate: '2026-09-13', reason: 'Corecție', operationId: 'issuer-failure-test-01' };
+    const snapshot = () => ['invoices', 'invoice_items', 'invoice_identities', 'invoice_replacements', 'billing_issuers', 'billing_audit_events', 'billing_publication_queue', 'document_sync_queue'].map((table) => connection.prepare(`SELECT * FROM ${table}`).all());
+    const before = snapshot();
+    for (const patch of [{ targetIssuerId: goodnessId }, { targetIssuerId: 99999 }, { expectedReference: 'wrong' }, { invoiceId: 99999 }, { reason: '' }, { invoiceDate: 'invalid' }]) {
+      assert.throws(() => changeInvoiceIssuerTransaction(connection, { ...request, ...patch })); assert.deepEqual(snapshot(), before);
+    }
+    connection.exec("CREATE TRIGGER reject_issuer_audit BEFORE INSERT ON billing_audit_events WHEN NEW.event_type='invoice_issuer_changed' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END");
+    assert.throws(() => changeInvoiceIssuerTransaction(connection, request), /audit unavailable/); assert.deepEqual(snapshot(), before);
+    connection.exec('DROP TRIGGER reject_issuer_audit');
+    connection.prepare('UPDATE billing_issuers SET is_active=0 WHERE id=?').run(vatraId);
+    assert.throws(() => changeInvoiceIssuerTransaction(connection, request), /activ/);
+    connection.prepare('UPDATE billing_issuers SET is_active=1 WHERE id=?').run(vatraId);
+    recordCompanyPaymentTransaction(connection, { invoiceId: source.invoiceId, companyId: company1, issuerId: goodnessId, amount: 1, paymentDate: '2026-09-13', method: 'cash' });
+    assert.throws(() => changeInvoiceIssuerTransaction(connection, request), /plăți/);
+  } finally { connection.close(); }
+});
+
+test('concurrent normal issuer-change submissions allocate one replacement and one number', async () => {
+  const { connection, store1, vatraId } = fixture();
+  try {
+    const source = createWeeklyInvoiceBatchTransaction(connection, [weekly(store1, 'store-goodness', 'concurrent-change')], '2026-09-01')[0];
+    const request = { invoiceId: source.invoiceId, expectedReference: source.invoiceNumber, targetIssuerId: vatraId, invoiceDate: '2026-09-13', reason: 'Corecție', operationId: 'concurrent-operation-001' };
+    const [first, second] = await Promise.all([request, request].map((input) => Promise.resolve().then(() => changeInvoiceIssuerTransaction(connection, input))));
+    assert.equal(first.invoiceId, second.invoiceId);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS n FROM invoice_replacements').get() as any).n, 1);
+    assert.equal((connection.prepare('SELECT next_invoice_number FROM billing_issuers WHERE id=?').get(vatraId) as any).next_invoice_number, 2);
+  } finally { connection.close(); }
+});
 
 test('invoice outstanding balance isolates sibling stores and keeps company statements unchanged', () => {
   const {connection,company1,company2,store1,goodnessId,vatraId}=fixture();

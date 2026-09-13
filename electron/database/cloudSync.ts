@@ -4,6 +4,7 @@ import { syncSingleInvoicePdf, trashConfirmedInvoiceCopy, type InvoicePdfCopy } 
 import { trackDocumentUpload } from './documentSyncQueue';
 import { documentSyncFailure } from '../integrations/documentSyncErrors';
 import { withDriveFolderLock } from '../integrations/driveFolderLock';
+import { resolvePrivateFolderInOperation } from '../integrations/privateCloudOperation.ts';
 import fs from 'fs';
 import path from 'path';
 import { app, shell } from 'electron';
@@ -552,13 +553,16 @@ async function fetchUploadedMetadata(drive: any, fileId: string): Promise<Upload
 
 async function uploadVerifiedBuffer(
   drive: any,
-  input: { filename: string; parentId: string; mimeType: string; buffer: Uint8Array; strictParent?: boolean },
+  input: { filename: string; parentId: string; mimeType: string; buffer: Uint8Array; strictParent?: boolean; expectedVersion?: string | null },
 ) {
   const expectedMd5 = createHash('md5').update(Buffer.from(input.buffer)).digest('hex');
   const expectedSize = input.buffer.byteLength;
   const existing = input.strictParent
     ? await findExactCloudFile(drive, input.parentId, input.filename)
     : await findFileForUpload(drive, input.filename, input.parentId);
+  if (input.expectedVersion !== undefined && (existing?.version || null) !== input.expectedVersion) {
+    throw new Error('Registrul a fost modificat în Google Drive de o altă operație. Reîncarcă înainte de a continua.');
+  }
   let fileId: string;
 
   if (existing?.id) {
@@ -614,6 +618,14 @@ function validatePrivateCloudPath(folderNames: string[], filename: string) {
 }
 
 async function resolvePrivateCloudFolder(drive: any, folderNames: string[], create: boolean, assertCurrent?: () => void) {
+  const identity = oauth2Client.credentials.refresh_token || oauth2Client.credentials.access_token;
+  // Account-scoped, ephemeral IDs only. Tokens themselves are never cache keys.
+  const key = identity ? createHash('sha256').update(identity).digest('hex') + JSON.stringify(folderNames) : null;
+  const resolve = () => resolvePrivateCloudFolderUncached(drive, folderNames, create, assertCurrent);
+  return key ? resolvePrivateFolderInOperation(key, resolve) : resolve();
+}
+
+async function resolvePrivateCloudFolderUncached(drive: any, folderNames: string[], create: boolean, assertCurrent?: () => void) {
   const rootFolderId = create
     ? await getOrCreateFolder(drive, CLOUD_ROOT_FOLDER_NAME, undefined, assertCurrent)
     : await findFolder(drive, CLOUD_ROOT_FOLDER_NAME);
@@ -690,17 +702,13 @@ export async function writeVerifiedPrivateCloudFile(input: {
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
     const parentId = await resolvePrivateCloudFolder(drive, input.folderNames, true);
     if (!parentId) throw new Error('Folderul Google Drive nu a putut fi creat.');
-    const existing = await findExactCloudFile(drive, parentId, input.filename);
-    const currentVersion = existing?.version || null;
-    if (input.expectedVersion !== undefined && currentVersion !== input.expectedVersion) {
-      throw new Error('Registrul a fost modificat în Google Drive de o altă operație. Reîncarcă înainte de a continua.');
-    }
     return await uploadVerifiedBuffer(drive, {
       filename: input.filename,
       parentId,
       mimeType: input.mimeType,
       buffer: input.buffer,
       strictParent: true,
+      expectedVersion: input.expectedVersion,
     });
   } catch (error) {
     const details = error instanceof Error ? error.message : '';

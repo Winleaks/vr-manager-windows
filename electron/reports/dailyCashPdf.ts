@@ -16,6 +16,18 @@ function text(value: string) {
   return fixRomanianDiacritics(value || '-');
 }
 
+// Translate system categories for the document only; retain custom categories and notes.
+const categoryLabels: Record<string, string> = {
+  driver_collection: 'Driver collection',
+  other_collection: 'Other collection',
+  direct_sale: 'Direct sale',
+  purchase: 'Stock purchase',
+  other_expense: 'Other expenses',
+  cash_collection: 'Cash collection',
+  employee_collection: 'Employee collection',
+  cash_adjustment: 'Balance adjustment',
+};
+
 export function generateDailyCashPdf(report: DailyCashReportSnapshot): Uint8Array {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   registerFonts(doc);
@@ -28,26 +40,26 @@ export function generateDailyCashPdf(report: DailyCashReportSnapshot): Uint8Arra
   doc.setTextColor(15, 23, 42);
   doc.text('VR - Hub Management', 14, 18);
   doc.setFontSize(13);
-  doc.text('Raport Daily Cash', 14, 25);
+  doc.text('Daily Cash Report', 14, 25);
 
   const statusColor: [number, number, number] = report.isClosed ? [5, 150, 105] : [217, 119, 6];
   doc.setFillColor(...statusColor);
   doc.roundedRect(160, 12, 36, 10, 2, 2, 'F');
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(9);
-  doc.text(report.status, 178, 18.5, { align: 'center' });
+  doc.text(report.isClosed ? 'FINAL' : 'PROVISIONAL', 178, 18.5, { align: 'center' });
 
   doc.setFont('Arial', 'normal');
   doc.setTextColor(71, 85, 105);
   doc.setFontSize(9);
-  doc.text(`Ziua: ${displayDate(report.date)}`, 14, 32);
-  doc.text(`Generat: ${new Date(report.generatedAt).toLocaleString('ro-RO')}`, 14, 37);
+  doc.text(`Date: ${displayDate(report.date)}`, 14, 32);
+  doc.text(`Generated: ${new Date(report.generatedAt).toLocaleString('en-GB')}`, 14, 37);
 
   const cards = [
-    ['Sold deschidere', pounds(report.openingBalance)],
-    ['Total intrări', pounds(report.totalIn)],
-    ['Total ieșiri', pounds(report.totalOut)],
-    [report.isClosed ? 'Sold final' : 'Sold curent', pounds(report.balance)],
+    ['Opening balance', pounds(report.openingBalance)],
+    ['Total cash in', pounds(report.totalIn)],
+    ['Total cash out', pounds(report.totalOut)],
+    [report.isClosed ? 'Closing balance' : 'Current balance', pounds(report.balance)],
   ];
   cards.forEach(([label, value], index) => {
     const x = 14 + index * 46;
@@ -67,15 +79,15 @@ export function generateDailyCashPdf(report: DailyCashReportSnapshot): Uint8Arra
   doc.setFont('Arial', 'bold');
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
-  doc.text(`Flux net: ${report.netCashFlow >= 0 ? '+' : ''}${pounds(report.netCashFlow)}`, 14, 72);
-  doc.text(`Tranzacții: ${report.transactionCount}`, 92, 72);
+  doc.text(`Net cash flow: ${report.netCashFlow >= 0 ? '+' : ''}${pounds(report.netCashFlow)}`, 14, 72);
+  doc.text(`Transactions: ${report.transactionCount}`, 92, 72);
 
   autoTable(doc, {
     startY: 78,
-    head: [['Categorie', 'Tip', 'Total']],
+    head: [['Category', 'Type', 'Total']],
     body: report.categoryTotals.length > 0
-      ? report.categoryTotals.map((item) => [text(item.label), item.type, pounds(item.amount)])
-      : [['Fără tranzacții', '-', pounds(0)]],
+      ? report.categoryTotals.map((item) => [text(categoryLabels[item.category] || item.label), item.type, pounds(item.amount)])
+      : [['No transactions', '-', pounds(0)]],
     theme: 'grid',
     styles: { font: 'Arial', fontSize: 8, cellPadding: 2 },
     headStyles: { font: 'Arial', fontStyle: 'bold', fillColor: [30, 41, 59], textColor: [255, 255, 255] },
@@ -88,20 +100,20 @@ export function generateDailyCashPdf(report: DailyCashReportSnapshot): Uint8Arra
   doc.setFont('Arial', 'bold');
   doc.setFontSize(11);
   doc.setTextColor(15, 23, 42);
-  doc.text('Tranzacții detaliate', 14, transactionStartY - 3);
+  doc.text('Transaction details', 14, transactionStartY - 3);
 
   autoTable(doc, {
     startY: transactionStartY,
-    head: [['Ora', 'Tip', 'Categorie', 'Referință / Detalii', 'Sumă']],
+    head: [['Time', 'Type', 'Category', 'Reference / Details', 'Amount']],
     body: report.transactions.length > 0
       ? report.transactions.map((item) => [
           item.time,
           item.type,
-          text(item.categoryLabel),
+          text(categoryLabels[item.category] || item.categoryLabel),
           text([item.reference, item.notes].filter(Boolean).join(' — ')),
           `${item.type === 'IN' ? '+' : '-'}${pounds(item.amount)}`,
         ])
-      : [['-', '-', 'Fără tranzacții', '-', pounds(0)]],
+      : [['-', '-', 'No transactions', '-', pounds(0)]],
     theme: 'striped',
     styles: { font: 'Arial', fontSize: 7.5, cellPadding: 1.8, overflow: 'linebreak' },
     headStyles: { font: 'Arial', fontStyle: 'bold', fillColor: [5, 150, 105], textColor: [255, 255, 255] },
@@ -119,7 +131,7 @@ export function generateDailyCashPdf(report: DailyCashReportSnapshot): Uint8Arra
       doc.setFontSize(7.5);
       doc.setTextColor(100, 116, 139);
       doc.text(`VR - Hub Management • Daily Cash • ${displayDate(report.date)}`, 14, 290);
-      doc.text(`Pagina ${pageNumber}`, 196, 290, { align: 'right' });
+      doc.text(`Page ${pageNumber}`, 196, 290, { align: 'right' });
     },
   });
 

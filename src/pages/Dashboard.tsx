@@ -54,16 +54,16 @@ export default function Dashboard() {
   };
 
   const handleExportInventarPDF = () => {
-    const headers = ['Denumire', 'Categorie', 'Stoc Curent', 'Stoc Minim', 'UM', 'Status'];
+    const headers = ['Name', 'Category', 'Current Stock', 'Minimum Stock', 'Unit', 'Status'];
     const data = rawMaterials.map(rm => [
       rm.name,
       rm.category_name || '-',
       rm.current_stock.toString(),
       rm.minimum_stock.toString(),
       rm.unit,
-      rm.current_stock <= rm.minimum_stock ? 'ALERTĂ' : 'OK'
+      rm.current_stock <= rm.minimum_stock ? 'ALERT' : 'OK'
     ]);
-    exportToPDF(headers, data, `Inventar_${new Date().toISOString().slice(0, 10)}`, 'Raport Inventar Materii Prime');
+    exportToPDF(headers, data, `Inventory_${new Date().toISOString().slice(0, 10)}`, 'Raw Materials Inventory Report');
   };
 
   const handleExportProductieExcel = () => {
@@ -78,7 +78,7 @@ export default function Dashboard() {
   };
 
   const handleExportProductiePDF = () => {
-    const headers = ['Data', 'Produs Finit', 'Cantitate Produsă', 'UM', 'Note'];
+    const headers = ['Date', 'Finished Product', 'Quantity Produced', 'Unit', 'Notes'];
     const data = productions.map(p => [
       p.production_date,
       p.product_name,
@@ -86,7 +86,7 @@ export default function Dashboard() {
       p.production_unit,
       p.notes || ''
     ]);
-    exportToPDF(headers, data, `Productie_${new Date().toISOString().slice(0, 10)}`, 'Raport Producție');
+    exportToPDF(headers, data, `Production_${new Date().toISOString().slice(0, 10)}`, 'Production Report');
   };
 
   const alertItems = rawMaterials.filter((r: any) => r.current_stock <= r.minimum_stock);

@@ -26,6 +26,7 @@ export interface ProtectedInvoiceItem {
 }
 
 export interface ProtectedInvoice {
+  issuerChangeRequest?: import('../../src/shared/invoiceIssuerChange.ts').InvoiceIssuerChangeInput<string>;
   id: string;
   operationId: string;
   reference: string;

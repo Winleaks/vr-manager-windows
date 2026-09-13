@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { DocumentSyncStatus } from '../src/shared/documentSyncTypes'
+import type { InvoiceIssuerChangeInput, InvoiceIssuerChangeOptions } from '../src/shared/invoiceIssuerChange'
 
 type EventCallback = (...args: any[]) => void
 
@@ -116,7 +117,7 @@ export const desktopApi = {
     getPublicationStatus: () => ipcRenderer.invoke('billing:publicationStatus'),
     publishNow: () => ipcRenderer.invoke('billing:publishNow'),
     getInvoice: (invoiceId: number) => ipcRenderer.invoke('billing:getInvoice', invoiceId),
-    getInvoiceProducts: (invoiceId: number) => ipcRenderer.invoke('billing:getInvoiceProducts', invoiceId),
+    getInvoiceProducts: (invoiceId: number, verifyPrices = true): Promise<import('./integrations/invoiceCatalogPricing').PricedInvoiceCatalogProduct[]> => ipcRenderer.invoke('billing:getInvoiceProducts', invoiceId, verifyPrices),
     getClients: () => ipcRenderer.invoke('billing:getClients'),
     createClient: (data: any) => ipcRenderer.invoke('billing:createClient', data),
     updateClient: (data: any) => ipcRenderer.invoke('billing:updateClient', data),
@@ -141,6 +142,8 @@ export const desktopApi = {
     setTestMode: (enabled: boolean, confirmation: string) => ipcRenderer.invoke('billing:setTestMode', { enabled, confirmation }),
     deleteTestInvoice: (invoiceId: number, confirmation: string) => ipcRenderer.invoke('billing:deleteTestInvoice', { invoiceId, confirmation }),
     reissueCancelledInvoice: (invoiceId: number) => ipcRenderer.invoke('billing:reissueCancelledInvoice', invoiceId),
+    getInvoiceIssuerChangeOptions: (invoiceId: number): Promise<InvoiceIssuerChangeOptions> => ipcRenderer.invoke('billing:getInvoiceIssuerChangeOptions', invoiceId),
+    changeInvoiceIssuer: (input: InvoiceIssuerChangeInput): Promise<{ invoiceId: number; invoiceNumber: string }> => ipcRenderer.invoke('billing:changeInvoiceIssuer', input),
     getStats: (issuerId?: number, from?: string, to?: string) => ipcRenderer.invoke('billing:getStats', issuerId, from, to),
     getPaymentReport: (from: string, to: string) => ipcRenderer.invoke('billing:getPaymentReport', from, to),
     statementDocument: (companyId: number, issuerId: number, from: string, to: string, action: 'open' | 'print' | 'share') => ipcRenderer.invoke('billing:statementDocument', companyId, issuerId, from, to, action),
@@ -193,6 +196,8 @@ export const desktopApi = {
     getInvoices: () => ipcRenderer.invoke('protectedRegistry:getInvoices'),
     cancelInvoice: (invoiceId: string, reason: string, operationId: string) => ipcRenderer.invoke('protectedRegistry:cancelInvoice', { invoiceId, reason, operationId }),
     reissueInvoice: (invoiceId: string, operationId: string) => ipcRenderer.invoke('protectedRegistry:reissueInvoice', { invoiceId, operationId }),
+    getInvoiceIssuerChangeOptions: (invoiceId: string): Promise<InvoiceIssuerChangeOptions> => ipcRenderer.invoke('protectedRegistry:getInvoiceIssuerChangeOptions', invoiceId),
+    changeInvoiceIssuer: (input: InvoiceIssuerChangeInput<string>): Promise<{ success: true; invoice: import('./protectedRegistry/types').ProtectedInvoice; pdf: { success: boolean; error?: string } }> => ipcRenderer.invoke('protectedRegistry:changeInvoiceIssuer', input),
     deleteTestInvoice: (invoiceId: string, confirmation: string, operationId: string) => ipcRenderer.invoke('protectedRegistry:deleteTestInvoice', { invoiceId, confirmation, operationId }),
     recordPayment: (data: any) => ipcRenderer.invoke('protectedRegistry:recordPayment', data),
     getPayments: () => ipcRenderer.invoke('protectedRegistry:getPayments'),

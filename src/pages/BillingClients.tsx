@@ -521,7 +521,7 @@ export function BillingClients() {
                           const issuerCredit = Number((profileData.issuerCredits || []).find((credit: any) => credit.issuer_id === inv.issuer_id)?.balance || 0);
                           return (
                             <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
-                              <td className="py-3.5 px-4 font-bold text-slate-900">#{inv.invoice_number}</td>
+                              <td className="py-3.5 px-4 font-bold text-slate-900">#{inv.invoice_number}{inv.replaces_reference && <small className="block text-indigo-600">Înlocuiește {inv.replaces_reference}</small>}{inv.replacement_reference && <small className="block text-indigo-600">Înlocuită cu {inv.replacement_reference}</small>}</td>
                               <td className="py-3.5 px-4 text-slate-600">{inv.invoice_date}</td>
                               <td className="py-3.5 px-4 font-semibold text-slate-800">{inv.store_name}</td>
                               <td className="py-3.5 px-4 font-medium">£{Number(inv.netAmount ?? inv.total_amount).toFixed(2)}</td>
@@ -570,7 +570,7 @@ export function BillingClients() {
 
                       return (
                         <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="py-3.5 px-4 font-bold text-slate-900">#{inv.invoice_number}</td>
+                          <td className="py-3.5 px-4 font-bold text-slate-900">#{inv.invoice_number}{inv.replaces_reference && <small className="block text-indigo-600">Înlocuiește {inv.replaces_reference}</small>}{inv.replacement_reference && <small className="block text-indigo-600">Înlocuită cu {inv.replacement_reference}</small>}</td>
                           <td className="py-3.5 px-4 text-slate-600">{inv.invoice_date}</td>
                           <td className="py-3.5 px-4 font-semibold text-slate-800">{inv.store_name}</td>
                           <td className="py-3.5 px-4 font-bold">£{Number(inv.netAmount ?? inv.total_amount).toFixed(2)}{Number(inv.creditedAmount || 0) > 0 && <div className="text-[10px] font-normal text-amber-700">creditat £{Number(inv.creditedAmount).toFixed(2)}</div>}</td>

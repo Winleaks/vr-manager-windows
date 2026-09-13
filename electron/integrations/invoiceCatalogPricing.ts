@@ -9,19 +9,45 @@ export interface InvoiceCatalogProduct {
   price_standard: number;
 }
 
+export type PricedInvoiceCatalogProduct = InvoiceCatalogProduct & {
+  unitPrice: number | null;
+  priceSource: 'vr-baker' | 'standard' | 'unverified';
+  priceIssue?: 'unavailable' | 'missing' | 'invalid';
+};
+
+type CatalogContext = { storeExternalId: string | null; products: InvoiceCatalogProduct[] };
+
+export function localInvoiceCatalog(context: CatalogContext): PricedInvoiceCatalogProduct[] {
+  return context.products.map((product) => {
+    const standardValid = Number.isFinite(product.price_standard) && product.price_standard >= 0;
+    const needsVerification = Boolean(context.storeExternalId && product.supabase_product_id);
+    return { ...product, unitPrice: !needsVerification && standardValid ? product.price_standard : null,
+      priceSource: !needsVerification && standardValid ? 'standard' : 'unverified',
+      ...(!needsVerification && !standardValid ? { priceIssue: 'invalid' as const } : {}),
+    };
+  });
+}
+
 // A failed lookup is not evidence that the client has no preferential tariff.
 export async function priceInvoiceCatalog(
-  context: { storeExternalId: string | null; products: InvoiceCatalogProduct[] },
+  context: CatalogContext,
   fetchPrices: (storeId: string) => Promise<Map<string, number>>,
-) {
-  const prices = context.storeExternalId ? await fetchPrices(context.storeExternalId) : null;
-  return context.products.map((product) => {
+): Promise<PricedInvoiceCatalogProduct[]> {
+  const catalog = localInvoiceCatalog(context);
+  if (!catalog.some((product) => product.priceSource === 'unverified' && product.supabase_product_id) || !context.storeExternalId) return catalog;
+  let prices: Map<string, number>;
+  try { prices = await fetchPrices(context.storeExternalId); }
+  catch {
+    // Do not send raw provider errors/credentials to the renderer, and never
+    // interpret a failed request as confirmation of a standard client tariff.
+    return catalog.map((product) => product.priceSource === 'unverified' ? { ...product, priceIssue: 'unavailable' } : product);
+  }
+  return catalog.map((product) => {
     const externalId = product.supabase_product_id?.toLowerCase();
-    if (prices && externalId && !prices.has(externalId)) {
-      throw new Error('Un produs lipsește din tarifele VR Baker. Sincronizează catalogul și redeschide editorul.');
-    }
-    const unitPrice = prices && externalId ? prices.get(externalId)! : product.price_standard;
-    if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Prețul produsului este invalid.');
-    return { ...product, unitPrice, priceSource: prices && externalId ? 'vr-baker' as const : 'standard' as const };
+    if (!externalId) return product;
+    if (!prices.has(externalId)) return { ...product, unitPrice: null, priceSource: 'unverified', priceIssue: 'missing' };
+    const unitPrice = prices.get(externalId)!;
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) return { ...product, unitPrice: null, priceSource: 'unverified', priceIssue: 'invalid' };
+    return { ...product, unitPrice, priceSource: 'vr-baker' };
   });
 }

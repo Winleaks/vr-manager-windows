@@ -11,6 +11,7 @@ import { assertUploadedFileMatches } from './cloudSyncPolicy.ts';
 import * as singleInvoice from '../integrations/singleInvoiceDriveDocument.ts';
 import Database from 'better-sqlite3';
 import {installInvoiceDriveIdentity,invoiceCopyCleanupError,retryInvoiceCopyCleanup} from './invoiceDriveIdentity.ts';
+import * as privateCloudOperation from '../integrations/privateCloudOperation.ts';
 
 const requireBuiltin = createRequire(import.meta.url);
 const source = readFileSync(new URL('./cloudSync.ts', import.meta.url), 'utf8');
@@ -39,6 +40,7 @@ function fixture() {
   }) };
   const databaseModule = { db: connection, dbPath: '/test/fixture.db' };
   const mocks: Record<string, unknown> = {
+    '../integrations/privateCloudOperation.ts': privateCloudOperation,
     '../integrations/singleInvoiceDriveDocument': singleInvoice,
     './db': databaseModule,
     '../integrations/driveFolderLock': { withDriveFolderLock: async (_parent: unknown, _name: unknown, action: () => unknown) => action() },

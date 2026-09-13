@@ -1,7 +1,6 @@
 import { notify } from './feedback';
 import ExcelJS from 'exceljs';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import { generateTablePdf } from './tablePdf';
 import { api } from '../shared/api';
 
 export async function exportToExcel(data: any[], filename: string, sheetName: string = 'Sheet1') {
@@ -31,25 +30,7 @@ export async function exportToPDF(
   filename: string, 
   title: string
 ) {
-  const doc = new jsPDF();
-  
-  // Title
-  doc.setFontSize(18);
-  doc.text(title, 14, 22);
-  doc.setFontSize(11);
-  doc.setTextColor(100);
-  doc.text(`Generat la: ${new Date().toLocaleString('ro-RO')}`, 14, 30);
-  
-  // Table
-  autoTable(doc, {
-    startY: 40,
-    head: [headers],
-    body: data,
-    theme: 'striped',
-    headStyles: { fillColor: [15, 23, 42] } // slate-900
-  });
-  
-  const pdfBuffer = doc.output('arraybuffer');
+  const pdfBuffer = generateTablePdf(headers, data, title);
   
   const res = await api.system.saveFile({
     buffer: new Uint8Array(pdfBuffer),

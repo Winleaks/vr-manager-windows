@@ -21,11 +21,11 @@ export function generateCreditNotePdf(note: any): Uint8Array {
   doc.setFont('Arial', 'bold'); doc.setTextColor(15, 23, 42); doc.setFontSize(21); doc.text('CREDIT NOTE', 14, 22);
   doc.setFontSize(12); doc.text(text(note.reference), 14, 30);
   doc.setFont('Arial', 'normal'); doc.setFontSize(9); doc.setTextColor(71, 85, 105);
-  doc.text(`Data emiterii: ${formatPdfDate(note.issue_date)}`, 14, 37);
-  doc.text(`Creat în sistem: ${new Date(note.created_at).toLocaleString('ro-RO')}`, 14, 42);
-  if (note.status === 'cancelled') { doc.setTextColor(190, 18, 60); doc.setFont('Arial', 'bold'); doc.text('ANULAT INTERN - NUMĂR PĂSTRAT ÎN REGISTRU', 14, 49); }
+  doc.text(`Issue date: ${formatPdfDate(note.issue_date)}`, 14, 37);
+  doc.text(`Created in system: ${new Date(note.created_at).toLocaleString('en-GB')}`, 14, 42);
+  if (note.status === 'cancelled') { doc.setTextColor(190, 18, 60); doc.setFont('Arial', 'bold'); doc.text('CANCELLED INTERNALLY - NUMBER RETAINED IN REGISTER', 14, 49); }
 
-  doc.setFont('Arial', 'bold'); doc.setTextColor(15, 23, 42); doc.setFontSize(10); doc.text('EMITENT', 14, 60); doc.text('CLIENT', 112, 60);
+  doc.setFont('Arial', 'bold'); doc.setTextColor(15, 23, 42); doc.setFontSize(10); doc.text('ISSUER', 14, 60); doc.text('CUSTOMER', 112, 60);
   doc.setFont('Arial', 'normal'); doc.setFontSize(8.5);
   const issuerLines = [issuer.issuerName, issuer.issuerAddress, `Company No: ${issuer.issuerCrn}`, issuer.vatRegistered ? `VAT No: ${issuer.issuerVat}` : 'Not VAT registered'];
   const customerLines = [customer.companyName, customer.companyAddress, customer.companyRegistrationNumber ? `Company No: ${customer.companyRegistrationNumber}` : '', customer.companyVatNumber ? `VAT No: ${customer.companyVatNumber}` : ''].filter(Boolean);
@@ -33,15 +33,15 @@ export function generateCreditNotePdf(note: any): Uint8Array {
   customerLines.forEach((line, i) => doc.text(text(line), 112, 67 + i * 5));
 
   const invoiceRefs = note.invoices.map((invoice: any) => `${invoice.invoice_number} (${formatPdfDate(invoice.invoice_date)})`).join(', ');
-  doc.setFont('Arial', 'bold'); doc.text('Facturi originale:', 14, 91); doc.setFont('Arial', 'normal'); doc.text(text(invoiceRefs), 45, 91, { maxWidth: 150 });
-  doc.setFont('Arial', 'bold'); doc.text('Motiv:', 14, 101); doc.setFont('Arial', 'normal'); doc.text(text(note.reason), 28, 101, { maxWidth: 167 });
-  if (note.backdate_reason) { doc.setFont('Arial', 'bold'); doc.text('Motiv antedatare:', 14, 111); doc.setFont('Arial', 'normal'); doc.text(text(note.backdate_reason), 43, 111, { maxWidth: 152 }); }
+  doc.setFont('Arial', 'bold'); doc.text('Original invoices:', 14, 91); doc.setFont('Arial', 'normal'); doc.text(text(invoiceRefs), 45, 91, { maxWidth: 150 });
+  doc.setFont('Arial', 'bold'); doc.text('Reason:', 14, 101); doc.setFont('Arial', 'normal'); doc.text(text(note.reason), 28, 101, { maxWidth: 167 });
+  if (note.backdate_reason) { doc.setFont('Arial', 'bold'); doc.text('Backdating reason:', 14, 111); doc.setFont('Arial', 'normal'); doc.text(text(note.backdate_reason), 46, 111, { maxWidth: 149 }); }
 
   const footerLayout = preparePdfFooter(doc, `VR - Hub Management - Credit Note ${text(note.reference)}`);
   const totalsReservedHeight = 38;
   autoTable(doc, {
     startY: note.backdate_reason ? 120 : 110,
-    head: [['Factura', 'Magazin', 'Produs', 'Cant.', 'Preț creditat', 'VAT', 'Total']],
+    head: [['Invoice', 'Store', 'Product', 'Qty', 'Unit credit', 'VAT', 'Total']],
     body: note.items.map((item: any) => [
       note.invoices.find((invoice: any) => invoice.id === item.source_invoice_id)?.invoice_number || '-',
       text(item.store_name),
@@ -68,11 +68,11 @@ export function generateCreditNotePdf(note: any): Uint8Array {
     y = 18;
   }
   doc.setFont('Arial', 'normal'); doc.setFontSize(9); doc.setTextColor(71, 85, 105);
-  doc.text(`Subtotal creditat: ${money(note.net_amount)}`, 196, y, { align: 'right' });
-  doc.text(issuer.vatRegistered ? `VAT creditat (0%): ${money(note.vat_amount)}` : 'Emitent neînregistrat VAT', 196, y + 6, { align: 'right' });
-  doc.setFont('Arial', 'bold'); doc.setTextColor(15, 23, 42); doc.setFontSize(12); doc.text(`TOTAL CREDITAT: ${money(note.total_amount)}`, 196, y + 14, { align: 'right' });
+  doc.text(`Credited subtotal: ${money(note.net_amount)}`, 196, y, { align: 'right' });
+  doc.text(issuer.vatRegistered ? `VAT credited (0%): ${money(note.vat_amount)}` : 'Issuer not VAT registered', 196, y + 6, { align: 'right' });
+  doc.setFont('Arial', 'bold'); doc.setTextColor(15, 23, 42); doc.setFontSize(12); doc.text(`TOTAL CREDITED: ${money(note.total_amount)}`, 196, y + 14, { align: 'right' });
   doc.setFont('Arial', 'normal'); doc.setFontSize(8); doc.setTextColor(71, 85, 105);
-  doc.text(text('Acest document ajustează facturile originale enumerate mai sus. Păstrați-l împreună cu documentele sursă.'), 14, y + 26, { maxWidth: 182 });
+  doc.text('This document adjusts the original invoices listed above. Keep it with the source documents.', 14, y + 26, { maxWidth: 182 });
   drawPdfFooters(doc, footerLayout);
   if (note.testDocument === true) {
     for (let page = 1; page <= doc.getNumberOfPages(); page += 1) {

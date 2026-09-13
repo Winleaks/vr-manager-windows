@@ -15,6 +15,7 @@ import {
   deleteInvoiceForTestingTransaction,
   setBillingTestModeTransaction,
   updateInvoiceTransaction,
+  changeInvoiceIssuerTransaction,
 } from './repositories/billingTransactions.ts';
 
 function today() {
@@ -74,6 +75,7 @@ test('invoice corrections remain blocked for issued Credit Notes and active appl
       const before = connection.prepare('SELECT * FROM invoices WHERE id = ?').get(target.invoiceId);
       const beforeItems = connection.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(target.invoiceId);
       assert.throws(() => updateInvoiceTransaction(connection, target.invoiceId, 'TGB-31', today(), [{ id: target.itemId, productName: 'Bread', quantity: 2, unitPrice: 8 }]), /Credit Notes sau credit aplicat/);
+      assert.throws(() => changeInvoiceIssuerTransaction(connection, { invoiceId: target.invoiceId, expectedReference: (before as any).invoice_number, targetIssuerId: issuerId + 1, invoiceDate: today(), reason: 'Corecție', operationId: 'change-blocked-credit-01' }), /Credit Notes|credit aplicat/);
       assert.deepEqual(connection.prepare('SELECT * FROM invoices WHERE id = ?').get(target.invoiceId), before);
       assert.deepEqual(connection.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(target.invoiceId), beforeItems);
     }

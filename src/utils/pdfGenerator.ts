@@ -269,7 +269,7 @@ export function generateInvoicePDF(
     const row = [
       (index + 1).toString(),
       descriptionText,
-      fixRomanianDiacritics(item.unit || "buc"),
+      fixRomanianDiacritics(item.unit || "pcs"),
       item.quantity.toString(),
       item.unitPrice.toFixed(2),
     ];
