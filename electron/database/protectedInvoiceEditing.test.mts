@@ -69,7 +69,7 @@ test('explicit removal keeps source orders, invalid dates/numbers and arbitrary 
 function harness() {
   const f = fixture();
   const state = { cloud: structuredClone(f.vault), pending: null as any, role: 'writer', writes: 0, failCommit: false, failPdf: false, lockOnPdf: false };
-  const sessions = new Map<number, any>([[1, { webContentsId: 1, lastActivity: Date.now(), vault: structuredClone(f.vault), envelope: {}, driveVersion: '1' }]]);
+  const sessions = new Map<number, any>([[1, { role: 'writer', webContentsId: 1, lastActivity: Date.now(), vault: structuredClone(f.vault), envelope: {}, driveVersion: '1' }]]);
   const source = readFileSync(new URL('../protectedRegistry/service.ts', import.meta.url), 'utf8');
   const section = (start: string, end: string) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
   const script = ['let routingOperationQueue = Promise.resolve();', section('export async function withRegistryRoutingLock', 'function assertWriter'),
@@ -78,7 +78,7 @@ function harness() {
     section('export async function updateProtectedInvoice', 'export async function getProtectedIssuerChangeOptions')].join('\n').replaceAll('export ', '');
   const bindings = {
     withPrivateCloudOperation, sessions, SESSION_MS: 60000, lockProtectedRegistry: (id: number) => sessions.delete(id),
-    setSession: (session: any) => { session.lastActivity = Date.now(); sessions.set(session.webContentsId, session); }, requireText,
+    setSession: (session: any) => { session.role ??= state.role; session.lastActivity = Date.now(); sessions.set(session.webContentsId, session); }, requireText,
     keyBuffer: () => Buffer.alloc(32), getDeviceRole: () => state.role, assertWriter: () => { if (state.role !== 'writer') throw Error('Writer required'); },
     reconcilePending: async () => { if (state.pending) { state.cloud = structuredClone(state.pending.payload); state.pending = null; } },
     loadVaultFromCloud: async () => ({ vault: structuredClone(state.cloud), envelope: { recovery: {} }, driveVersion: '1' }),
@@ -130,7 +130,8 @@ test('interrupted vault persistence recovers same edit; failed PDF never trigger
 });
 
 test('Viewer and locked registry deny editing and new IPC capabilities', async () => {
-  for (const channel of ['getInvoiceForEdit', 'getInvoiceProducts', 'updateInvoice', 'printDocument']) assert.equal(isChannelAllowedForRole('viewer', `protectedRegistry:${channel}`), false);
+  for (const channel of ['getInvoiceForEdit', 'getInvoiceProducts', 'updateInvoice']) assert.equal(isChannelAllowedForRole('viewer', `protectedRegistry:${channel}`), false);
+  assert.equal(isChannelAllowedForRole('viewer', 'protectedRegistry:printDocument'), true);
   const h = harness(); h.state.role = 'viewer'; await assert.rejects(h.invoke(), /Writer/); assert.equal(h.state.writes, 0);
   h.state.role = 'writer'; h.sessions.clear(); await assert.rejects(h.invoke(), /expir/); assert.equal(h.state.writes, 0);
   assert.equal(protectedInvoiceEditBlock(h.vault, h.invoice), null);
@@ -142,13 +143,14 @@ test('document preparation regenerates invoice before reading cached PDF and nev
   const end = source.indexOf('export async function exportProtectedRegistryMonth', start);
   const script = source.slice(start, end).replaceAll('export ', '');
   const invoice = fixture().invoice;
-  const session = { vault: { invoices: [invoice], creditNotes: [] } };
+  const session = { role: 'writer', lastActivity: Date.now(), vault: { invoices: [invoice], creditNotes: [] } };
   const sessions = new Map([[1, session]]), calls: string[] = [];
   let fail = false, lock = false;
   const bindings = {
     freshSession: async () => { if (!sessions.has(1)) throw Error('locked'); return session; }, sessions,
     refreshProtectedInvoiceDocument: async () => { calls.push('refresh'); if (fail) throw Error('PDF upload unavailable'); },
     readProtectedDocumentPdf: async () => { calls.push('read'); if (lock) sessions.delete(1); return { buffer: Buffer.from('%PDF-fresh') }; },
+    getDeviceRole: () => 'writer', SESSION_MS: 60000,
     assertWriter: () => {}, path: { join: (...args: string[]) => args.join('/') }, app: { getPath: () => '/synthetic' }, randomUUID: () => 'uuid',
     fs: { writeFileSync: () => calls.push('temporary-file') }, toValidatedPdfBuffer: (buffer: Buffer) => buffer,
     temporaryFiles: new Map(), requireText, shell: { openPath: async () => { calls.push('open'); return ''; } },

@@ -5,6 +5,7 @@ import { initialSchema } from './schema.ts';
 import { ensureBillingIssuerSchema } from './billingIssuers.ts';
 import {
   applyCompanyCreditTransaction,
+  applyAvailableCreditToNewInvoice,
   cancelCreditNoteTransaction,
   createCreditNoteTransaction,
   ensureCreditNoteSchema,
@@ -16,6 +17,9 @@ import {
   setBillingTestModeTransaction,
   updateInvoiceTransaction,
   changeInvoiceIssuerTransaction,
+  createInvoiceBatchTransaction,
+  createManualInvoiceTransaction,
+  createWeeklyInvoiceBatchTransaction,
 } from './repositories/billingTransactions.ts';
 
 function today() {
@@ -54,6 +58,72 @@ function fixture() {
   }
   return { connection, companyId, otherCompanyId, store1, store2, otherStore, issuerId: goodness.id, productId, invoice };
 }
+
+test('new invoices automatically consume scoped credit once, preserve gross/cash and leave historical invoices alone', () => {
+  const f = fixture();
+  const { connection } = f;
+  try {
+    const old = f.invoice(f.store1, 'HIST-999');
+    const other = f.invoice(f.otherStore, 'OTHER-998');
+    connection.prepare('UPDATE companies SET issuer_id=? WHERE id=?').run(f.issuerId, f.companyId);
+    const result = createInvoiceBatchTransaction(connection, [
+      { storeId: f.store1, items: [{ productName: 'Bread', quantity: 1, unitPrice: 10 }] },
+      { storeId: f.store2, items: [{ productName: 'Bread', quantity: 1, unitPrice: 20 }] },
+    ], today());
+    assert.equal(getInvoiceFinancials(connection, result[0].invoiceId).outstanding, 0);
+    assert.equal(getInvoiceFinancials(connection, result[1].invoiceId).outstanding, 17.5);
+    assert.equal(getInvoiceFinancials(connection, old.invoiceId).outstanding, 20);
+    assert.equal(getInvoiceFinancials(connection, other.invoiceId).outstanding, 20);
+    assert.deepEqual(connection.prepare('SELECT total_amount, paid_amount, status FROM invoices WHERE id=?').get(result[0].invoiceId), { total_amount: 10, paid_amount: 0, status: 'paid' });
+    assert.equal(connection.transaction(() => applyAvailableCreditToNewInvoice(connection, result[0].invoiceId))(), 0);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS n FROM invoice_credit_applications').get() as any).n, 2);
+    assert.throws(() => applyAvailableCreditToNewInvoice(connection, result[0].invoiceId), /tranzacția/);
+  } finally { connection.close(); }
+});
+
+test('manual and imported issuance use remaining credit; duplicate imports cannot consume it twice', () => {
+  const f = fixture();
+  try {
+    f.connection.prepare('UPDATE companies SET issuer_id=? WHERE id=?').run(f.issuerId, f.companyId);
+    const productId = Number(f.connection.prepare("INSERT INTO cloud_products (name) VALUES ('Bread')").run().lastInsertRowid);
+    const manual = createManualInvoiceTransaction(f.connection, { storeId: f.store1, invoiceDate: today(), items: [{ productId, quantity: 1, unitPrice: 5 }] });
+    assert.equal(getInvoiceFinancials(f.connection, manual.invoiceId).outstanding, 0);
+    const input = { storeId: f.store2, storeExternalId: 'shop-2', periodStart: '2026-09-07', periodEnd: '2026-09-13', sourceFingerprint: 'test-source', sourceOrders: [{ id: 'order-1', updatedAt: '2026-09-07T12:00:00Z' }], items: [{ productName: 'Bread', quantity: 1, unitPrice: 20 }] };
+    const weekly = createWeeklyInvoiceBatchTransaction(f.connection, [input], today());
+    assert.equal(getInvoiceFinancials(f.connection, weekly[0].invoiceId).outstanding, 12.5);
+    const applications = f.connection.prepare('SELECT * FROM invoice_credit_applications').all();
+    assert.throws(() => createWeeklyInvoiceBatchTransaction(f.connection, [input], today()), /deja/);
+    assert.deepEqual(f.connection.prepare('SELECT * FROM invoice_credit_applications').all(), applications);
+  } finally { f.connection.close(); }
+});
+
+test('automatic normal credit cannot use another issuer or company balance', () => {
+  const f = fixture();
+  try {
+    const foreign = f.invoice(f.otherStore, 'FOREIGN-100');
+    assert.equal(f.connection.transaction(() => applyAvailableCreditToNewInvoice(f.connection, foreign.invoiceId))(), 0);
+    const own = f.invoice(f.store1, 'OWN-101');
+    const otherIssuer = f.connection.prepare("SELECT id FROM billing_issuers WHERE code='vatra'").get() as any;
+    f.connection.prepare('UPDATE invoice_identities SET issuer_id=? WHERE invoice_id=?').run(otherIssuer.id, own.invoiceId);
+    assert.equal(f.connection.transaction(() => applyAvailableCreditToNewInvoice(f.connection, own.invoiceId))(), 0);
+    assert.equal((f.connection.prepare('SELECT available_amount FROM company_credit_entries').get() as any).available_amount, 12.5);
+  } finally { f.connection.close(); }
+});
+
+test('automatic credit rolls back with failed issuance, including balances and counters', () => {
+  const f = fixture();
+  try {
+    f.connection.prepare('UPDATE companies SET issuer_id=? WHERE id=?').run(f.issuerId, f.companyId);
+    const before = f.connection.prepare('SELECT * FROM company_credit_entries').all();
+    const counter = f.connection.prepare('SELECT next_invoice_number FROM billing_issuers WHERE id=?').get(f.issuerId);
+    f.connection.exec("CREATE TRIGGER reject_issue BEFORE INSERT ON billing_audit_events WHEN NEW.event_type='invoice_batch_issued' BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END;");
+    assert.throws(() => createInvoiceBatchTransaction(f.connection, [{ storeId: f.store1, items: [{ productName: 'Bread', quantity: 1, unitPrice: 10 }] }], today()), /synthetic failure/);
+    assert.deepEqual(f.connection.prepare('SELECT * FROM company_credit_entries').all(), before);
+    assert.deepEqual(f.connection.prepare('SELECT next_invoice_number FROM billing_issuers WHERE id=?').get(f.issuerId), counter);
+    assert.equal((f.connection.prepare('SELECT COUNT(*) AS n FROM invoices').get() as any).n, 0);
+    assert.equal((f.connection.prepare('SELECT COUNT(*) AS n FROM invoice_credit_applications').get() as any).n, 0);
+  } finally { f.connection.close(); }
+});
 
 test('v13 migration preserves an existing issuer credit once and suggests unconfirmed series', () => {
   const { connection, companyId, issuerId } = fixture();

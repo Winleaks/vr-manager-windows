@@ -518,6 +518,21 @@ export function getCreditNote(connection: SqliteDatabase, creditNoteIdInput: num
   return { ...note, issuerSnapshot: JSON.parse(note.issuer_snapshot_json), customerSnapshot: JSON.parse(note.customer_snapshot_json), invoices, items };
 }
 
+/** Internal issuance hook. Must run inside the transaction that inserts the invoice. */
+export function applyAvailableCreditToNewInvoice(connection: SqliteDatabase, invoiceId: number) {
+  if (!connection.inTransaction) throw new Error('Aplicarea automată necesită tranzacția de emitere.');
+  // Legacy schemas do not yet have a credit ledger.
+  if (!connection.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_credit_entries'").get()) return 0;
+  const reason = 'Automatic credit applied on invoice issuance';
+  if (connection.prepare('SELECT 1 FROM invoice_credit_applications WHERE invoice_id = ? AND reason = ?').get(invoiceId, reason)) return 0;
+  const scope = connection.prepare(`SELECT s.company_id, ii.issuer_id FROM invoices i JOIN stores s ON s.id=i.store_id JOIN invoice_identities ii ON ii.invoice_id=i.id WHERE i.id=? AND i.status <> 'cancelled'`).get(invoiceId) as { company_id: number; issuer_id: number } | undefined;
+  if (!scope) throw new Error('Factura nouă nu are o identitate validă.');
+  const available = connection.prepare(`SELECT COALESCE(SUM(available_amount), 0) AS amount FROM company_credit_entries WHERE company_id=? AND issuer_id=? AND status='active'`).get(scope.company_id, scope.issuer_id) as { amount: number };
+  const pennies = Math.min(Math.round(available.amount * 100), Math.round(getInvoiceFinancials(connection, invoiceId).outstanding * 100));
+  if (pennies <= 0) return 0;
+  return applyCompanyCreditTransaction(connection, { companyId: scope.company_id, issuerId: scope.issuer_id, invoiceId, amount: pennies / 100, reason }).amount;
+}
+
 export function applyCompanyCreditTransaction(connection: SqliteDatabase, input: ApplyCompanyCreditInput) {
   const companyId = requirePositiveInteger(input.companyId, 'Compania');
   const issuerId = requirePositiveInteger(input.issuerId, 'Emitentul');

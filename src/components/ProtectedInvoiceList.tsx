@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { ArrowRightLeft, Ban, Banknote, Edit3, FileMinus2, Receipt, RefreshCw, RotateCw, Search, Trash2 } from 'lucide-react';
 import { ProtectedDocumentActions } from './ProtectedDocumentActions';
 
-export function ProtectedInvoiceList({ invoices, loading, error, reload, notify, onEdit, onIssuerChange, onCancel, onRemove, onReissue, onCreditNote, onPayment }: {
+export function ProtectedInvoiceList({ invoices, loading, error, reload, notify, readOnly = false, onEdit, onIssuerChange, onCancel, onRemove, onReissue, onCreditNote, onPayment }: {
+  readOnly?: boolean;
   invoices: any[]; loading: boolean; error: string; reload: () => void; notify: (message: string) => void;
   onEdit: (invoice: any) => void; onIssuerChange: (invoice: any) => void; onCancel: (invoice: any) => void;
   onRemove: (invoice: any) => void; onReissue: (invoice: any) => void; onCreditNote: (invoice: any) => void; onPayment: (invoice: any) => void;
@@ -41,15 +42,15 @@ export function ProtectedInvoiceList({ invoices, loading, error, reload, notify,
           <td className="px-5 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold whitespace-nowrap ${invoice.status === 'paid' ? 'bg-emerald-50 text-emerald-700' : invoice.status === 'cancelled' ? 'bg-slate-100 text-slate-500' : 'bg-amber-50 text-amber-700'}`}>{labels[invoice.status] || invoice.status}</span></td>
           <td className="px-5 py-4"><div className="flex flex-wrap items-center gap-1 min-w-36">
             <ProtectedDocumentActions id={invoice.id} status={invoice.status} notify={notify} />
-            {invoice.status !== 'cancelled' && <>
+            {!readOnly && invoice.status !== 'cancelled' && <>
               <Action label="Editează factura" icon={Edit3} onClick={() => onEdit(invoice)} />
               <Action label="Schimbă emitentul" icon={ArrowRightLeft} onClick={() => onIssuerChange(invoice)} />
               <Action label="Înregistrează plata" icon={Banknote} onClick={() => onPayment(invoice)} />
               <Action label="Emite Credit Note" icon={FileMinus2} onClick={() => onCreditNote(invoice)} />
               <Action label="Anulează factura" icon={Ban} onClick={() => onCancel(invoice)} />
             </>}
-            {invoice.status === 'cancelled' && !invoice.replacedByInvoiceId && <Action label="Reemite cu număr nou" icon={RotateCw} onClick={() => onReissue(invoice)} />}
-            {invoice.testDocument && <Action label="Șterge factura de test" icon={Trash2} onClick={() => onRemove(invoice)} />}
+            {!readOnly && invoice.status === 'cancelled' && !invoice.replacedByInvoiceId && <Action label="Reemite cu număr nou" icon={RotateCw} onClick={() => onReissue(invoice)} />}
+            {!readOnly && invoice.testDocument && <Action label="Șterge factura de test" icon={Trash2} onClick={() => onRemove(invoice)} />}
           </div></td>
         </tr>)}</tbody></table></div>
       {!filtered.length && <p role="status" className="p-12 text-center text-slate-500">{loading ? 'Se încarcă facturile...' : 'Nu există facturi pentru filtrele selectate.'}</p>}

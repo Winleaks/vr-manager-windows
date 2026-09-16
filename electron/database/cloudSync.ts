@@ -658,6 +658,16 @@ async function findExactCloudFile(drive: any, parentId: string, filename: string
  */
 export async function readVerifiedPrivateCloudFile(folderNames: string[], filename: string): Promise<VerifiedCloudBuffer | null> {
   if (getDeviceRole() !== 'writer') throw new Error('Calculatorul Viewer nu poate accesa registrul separat.');
+  return readVerifiedPrivateCloudFileInternal(folderNames, filename);
+}
+
+/** Read-only, fixed target. No caller-supplied path or folder creation on Viewer. */
+export async function readProtectedViewerVault(): Promise<VerifiedCloudBuffer | null> {
+  if (getDeviceRole() !== 'viewer') throw new Error('Operațiune disponibilă numai pe Viewer.');
+  return readVerifiedPrivateCloudFileInternal(['Duplicat'], 'registru-separat.vault');
+}
+
+async function readVerifiedPrivateCloudFileInternal(folderNames: string[], filename: string): Promise<VerifiedCloudBuffer | null> {
   if (!loadTokens()) throw new Error('Google Drive nu este conectat.');
   validatePrivateCloudPath(folderNames, filename);
   try {

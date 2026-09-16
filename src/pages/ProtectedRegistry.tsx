@@ -3,6 +3,7 @@ import { FeedbackHost } from '../components/FeedbackHost';
 import { ProtectedInvoiceEditor } from '../components/ProtectedInvoiceEditor';
 import { ProtectedInvoiceList } from '../components/ProtectedInvoiceList';
 import { ProtectedDocumentActions } from '../components/ProtectedDocumentActions';
+import { ProtectedViewer } from '../components/ProtectedViewer';
 import { BillingSettings } from './BillingSettings';
 import { InvoiceIssuerChangeModal } from '../components/InvoiceIssuerChangeModal';
 import { createContext, useContext, useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
@@ -148,13 +149,15 @@ function ProtectedAccess({ onUnlocked, status }: AccessProps) {
   const submit = async () => {
     setBusy(true); setError('');
     try {
-      if (!status.configured) {
+      if (!status.configured && !status.readOnly) {
         const result = await api.protectedRegistry.configure(pin, confirmation);
         setOneTimeKey(result.recoveryKey);
         return;
       }
-      if (recoveryMode) await api.protectedRegistry.recover(recoveryKey, pin, confirmation);
+      if (recoveryMode && status.readOnly) await api.protectedRegistry.activateViewer(recoveryKey, pin, confirmation);
+      else if (recoveryMode) await api.protectedRegistry.recover(recoveryKey, pin, confirmation);
       else await api.protectedRegistry.unlock(pin);
+      setRecoveryKey(''); setPin(''); setConfirmation('');
       onUnlocked();
     } catch (nextError) { setError(errorMessage(nextError)); }
     finally { setBusy(false); }
@@ -173,14 +176,14 @@ function ProtectedAccess({ onUnlocked, status }: AccessProps) {
   return <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
     <div className="max-w-md w-full rounded-3xl bg-white p-8 shadow-2xl space-y-5">
       <div className="h-12 w-12 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center"><Lock /></div>
-      <div><h1 className="text-2xl font-bold text-slate-900">Registru separat</h1><p className="text-sm text-slate-500 mt-1">Acces administrativ Writer, protejat de PIN și Google Drive.</p></div>
+      <div><h1 className="text-2xl font-bold text-slate-900">Registru separat</h1><p className="text-sm text-slate-500 mt-1">{status.readOnly ? 'Viewer — doar consultare și documente. La prima activare introdu cheia de recuperare și alege PIN-ul acestui calculator. PIN-ul Writer-ului nu se modifică.' : 'Acces administrativ Writer, protejat de PIN și Google Drive.'}</p></div>
       {!status.secureStorageAvailable && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">Stocarea securizată a sistemului nu este disponibilă.</p>}
       {status.lockedUntil && <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">Acces blocat până la {new Date(status.lockedUntil).toLocaleTimeString('ro-RO')}.</p>}
-      {recoveryMode && <label className="block text-sm font-semibold text-slate-700">Cheie de recuperare<input value={recoveryKey} onChange={(event) => setRecoveryKey(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono" autoComplete="off" /></label>}
+      {recoveryMode && <label className="block text-sm font-semibold text-slate-700">Cheie de recuperare<input type="password" value={recoveryKey} onChange={(event) => setRecoveryKey(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono" autoComplete="off" /></label>}
       <label className="block text-sm font-semibold text-slate-700">{recoveryMode ? 'PIN nou' : status.configured ? 'PIN' : 'PIN nou'}<PinInput value={pin} onValueChange={setPin} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-3 text-center text-xl tracking-[.5em]" autoFocus /></label>
       {(!status.configured || recoveryMode) && <label className="block text-sm font-semibold text-slate-700">Confirmă PIN-ul<PinInput value={confirmation} onValueChange={setConfirmation} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-3 text-center text-xl tracking-[.5em]" /></label>}
       {error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-      <button disabled={busy || Boolean(status.lockedUntil)} onClick={submit} className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white disabled:opacity-50">{busy ? 'Se verifică…' : !status.configured ? 'Configurează registrul' : recoveryMode ? 'Recuperează accesul' : 'Deblochează'}</button>
+      <button disabled={busy || Boolean(status.lockedUntil)} onClick={submit} className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white disabled:opacity-50">{busy ? 'Se verifică…' : !status.configured ? 'Configurează registrul' : recoveryMode ? (status.readOnly ? 'Activează accesul Viewer' : 'Recuperează accesul') : 'Deblochează'}</button>
       {status.configured && <button onClick={() => setRecoveryMode((value) => !value)} className="w-full text-sm text-indigo-700">{recoveryMode ? 'Înapoi la PIN' : 'Folosește cheia de recuperare'}</button>}
       <button onClick={() => { window.location.hash = '/'; }} className="w-full text-sm text-slate-500">Înapoi la Hub</button>
     </div>
@@ -565,5 +568,6 @@ export function ProtectedRegistry() {
   if (denied) return <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6"><div className="rounded-2xl bg-white p-8 max-w-md"><Lock className="text-red-600 mb-4" /><h1 className="text-2xl font-bold">Acces indisponibil</h1><p className="text-slate-600 mt-2">{denied}</p><button onClick={() => { window.location.hash = '/'; }} className="mt-5 flex gap-2 text-indigo-700"><ArrowLeft size={18} />Înapoi la Hub</button></div></div>;
   if (!status) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center"><RefreshCw className="animate-spin" /></div>;
   if (!status.unlocked) return <ProtectedAccess status={status} onUnlocked={reload} />;
+  if (status.readOnly) return <ProtectedViewer onLocked={() => setStatus((current: any) => ({ ...current, unlocked: false }))} />;
   return <ProtectedWorkspace onLocked={() => setStatus((current: any) => ({ ...current, unlocked: false }))} />;
 }

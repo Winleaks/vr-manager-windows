@@ -177,6 +177,8 @@ export const desktopApi = {
     syncEntities: () => ipcRenderer.invoke('billing:syncEntities'),
   },
   protectedRegistry: {
+    activateViewer: (recoveryKey: string, pin: string, confirmation: string): Promise<unknown> => ipcRenderer.invoke('protectedRegistry:activateViewer', { recoveryKey, pin, confirmation }),
+    refreshViewer: (): Promise<{ success: boolean; revision: number }> => ipcRenderer.invoke('protectedRegistry:refreshViewer'),
     getInvoiceForEdit: (id: string): Promise<import('./protectedRegistry/types').ProtectedInvoice & { expectedVersion: string; blockedReason: string | null; appliedCredit: number }> => ipcRenderer.invoke('protectedRegistry:getInvoiceForEdit', id),
     getInvoiceProducts: (id: string, verifyPrices = true): Promise<import('./integrations/invoiceCatalogPricing').PricedInvoiceCatalogProduct[]> => ipcRenderer.invoke('protectedRegistry:getInvoiceProducts', id, verifyPrices),
     updateInvoice: (input: import('../src/shared/protectedInvoiceEdit').ProtectedInvoiceEditInput): Promise<{ success: true; invoice: import('./protectedRegistry/types').ProtectedInvoice; pdf: { success: boolean; error?: string } }> => ipcRenderer.invoke('protectedRegistry:updateInvoice', input),

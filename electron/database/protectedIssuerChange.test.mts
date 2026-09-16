@@ -5,6 +5,7 @@ import ts from 'typescript';
 import { requireText } from './businessValidation.ts';
 import { createEmptyProtectedVault, type ProtectedInvoice } from '../protectedRegistry/types.ts';
 import { applyProtectedIssuerChange, protectedIssuerChangeBlock, protectedIssuerChangeReplay, validateProtectedIssuerChange } from '../protectedRegistry/issuerChange.ts';
+import { applyAutomaticProtectedCredit } from '../protectedRegistry/automaticCredit.ts';
 import { issuerSnapshot, type BillingIssuerRow } from './billingIssuers.ts';
 import { withPrivateCloudOperation } from '../integrations/privateCloudOperation.ts';
 
@@ -88,7 +89,7 @@ test('failed protected persistence discards candidate, retry can commit the same
 function serviceHarness() {
   const { vault, request } = fixture();
   const state = { cloud: structuredClone(vault), pending: null as any, role: 'writer', failVaultWrite: false, failPdf: false, writes: 0, lockOnCommit: false };
-  const sessions = new Map<number, any>([[1, { webContentsId: 1, lastActivity: Date.now(), vault: structuredClone(vault), envelope: {}, driveVersion: '1' }]]);
+  const sessions = new Map<number, any>([[1, { role: 'writer', webContentsId: 1, lastActivity: Date.now(), vault: structuredClone(vault), envelope: {}, driveVersion: '1' }]]);
   const code = readFileSync(new URL('../protectedRegistry/service.ts', import.meta.url), 'utf8');
   const section = (start: string, end: string) => code.slice(code.indexOf(start), code.indexOf(end, code.indexOf(start)));
   const script = [
@@ -98,9 +99,10 @@ function serviceHarness() {
     section('export async function changeProtectedInvoiceIssuer', 'export async function cancelProtectedInvoice'),
   ].join('\n').replaceAll('export ', '');
   const bindings = {
+    assertWriter: () => { if (state.role !== 'writer') throw Error('Writer required'); },
     withPrivateCloudOperation,
     sessions, SESSION_MS: 60000, lockProtectedRegistry: (id: number) => sessions.delete(id),
-    setSession: (session: any) => { session.lastActivity = Date.now(); sessions.set(session.webContentsId, session); },
+    setSession: (session: any) => { session.role ??= state.role; session.lastActivity = Date.now(); sessions.set(session.webContentsId, session); },
     requireText, keyBuffer: () => Buffer.alloc(32),
     reconcilePending: async () => { if (state.pending) { state.cloud = structuredClone(state.pending.payload); state.pending = null; } },
     loadVaultFromCloud: async () => ({ vault: structuredClone(state.cloud), envelope: { recovery: {} }, driveVersion: '1' }),
@@ -117,7 +119,7 @@ function serviceHarness() {
     },
     uploadManifest: async () => { if (state.lockOnCommit) sessions.delete(1); }, deletePrivateCloudFile: async () => { state.pending = null; },
     FOLDER: [], PENDING_FILE: 'pending', VAULT_FILE: 'vault', MANIFEST_FILE: 'manifest',
-    validateProtectedIssuerChange, protectedIssuerChangeReplay, applyProtectedIssuerChange,
+    validateProtectedIssuerChange, protectedIssuerChangeReplay, applyProtectedIssuerChange, applyAutomaticProtectedCredit,
     readStoreSnapshot: () => ({ company_id: 7 }), companyKey: () => 'local:7', readIssuer: () => issuer('vatra'),
     uploadProtectedInvoicePdf: async () => { if (state.failPdf) throw Error('PDF upload unavailable'); return { filename: 'VRL-2930.pdf' }; },
   };
@@ -128,9 +130,14 @@ function serviceHarness() {
 
 test('real protected service serializes concurrent retries and refreshes the session after replay', async () => {
   const h = serviceHarness();
+  const source = h.state.cloud.invoices[0];
+  h.state.cloud.creditEntries.push({ id: 'available-credit', companyKey: source.companyKey, issuerCode: 'vatra', sourceType: 'payment_overpayment', sourceId: 'payment-test', originalAmount: 3, availableAmount: 3, createdAt: '2026-09-01', testEntry: source.testDocument });
   const [first, second] = await Promise.all([h.invoke(), h.invoke()]);
   assert.equal(first.invoice.id, second.invoice.id); assert.equal(h.state.cloud.invoices.length, 2);
   assert.equal(h.state.cloud.counters.VRL, 2931); assert.equal(h.state.writes, 2);
+  assert.equal(h.state.cloud.creditApplications.length, 1);
+  assert.equal(h.state.cloud.creditApplications[0].amount, 3);
+  assert.equal(h.state.cloud.creditEntries[0].availableAmount, 0);
   h.sessions.get(1).vault = createEmptyProtectedVault();
   assert.equal((await h.invoke()).invoice.id, first.invoice.id);
   assert.equal(h.sessions.get(1).vault.invoices.length, 2);

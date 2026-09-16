@@ -16,6 +16,7 @@ import {
 } from '../billingIssuers.ts';
 import {
   addPaymentCreditEntry,
+  applyAvailableCreditToNewInvoice,
   cancelCreditNoteTransaction,
   getInvoiceFinancials,
   syncCompanyCreditBalance,
@@ -286,6 +287,7 @@ export function createInvoiceBatchTransaction(
         const snapshot = issuerSnapshot(row.issuer);
         insertIdentity.run(invoiceId, row.issuer.id, row.issuer.invoice_series, sequence, reference, JSON.stringify(snapshot));
         for (const item of row.items) insertItem.run(invoiceId, item.productName, item.name_ro, item.variant_label, item.unit, item.quantity, item.unitPrice, item.totalPrice, item.productOrder, item.externalProductId, item.externalProductId);
+        applyAvailableCreditToNewInvoice(connection, invoiceId);
         created.push({ invoiceId, invoiceNumber: reference, totalAmount: row.totalAmount, issuerId: row.issuer.id, issuerSettings: snapshot });
         nextByIssuer.set(row.issuer.id, sequence + 1);
       }
@@ -472,6 +474,7 @@ export function createWeeklyInvoiceBatchTransaction(
         for (const item of row.items) insertItem.run(invoiceId, item.productName, item.name_ro, item.variant_label, item.unit, item.quantity, item.unitPrice, item.totalPrice, item.productOrder, item.externalProductId, item.externalProductId);
         const batchId = Number(insertBatch.run(invoiceId, row.externalId, row.periodStart, row.periodEnd, requireText(row.order.sourceFingerprint, 'Amprenta sursei', 128)).lastInsertRowid);
         for (const source of row.order.sourceOrders) insertSource.run(batchId, requireText(source.id, 'ID comandă', 64), requireText(source.updatedAt, 'Actualizarea comenzii', 100));
+        applyAvailableCreditToNewInvoice(connection, invoiceId);
         created.push({ invoiceId, invoiceNumber: reference, invoiceSequence: sequence, totalAmount: row.totalAmount, storeExternalId: row.externalId, issuerId: row.issuer.id, issuerSettings: snapshot });
         nextByIssuer.set(row.issuer.id, sequence + 1);
       }
@@ -1103,6 +1106,7 @@ function replaceCancelledInvoice(connection: SqliteDatabase, invoiceIdInput: num
       ORDER BY CASE WHEN product_order IS NULL THEN 1 ELSE 0 END, product_order, id
     `).run(replacementInvoiceId, cancelledInvoiceId);
     connection.prepare('INSERT INTO invoice_replacements (cancelled_invoice_id, replacement_invoice_id) VALUES (?, ?)').run(cancelledInvoiceId, replacementInvoiceId);
+    applyAvailableCreditToNewInvoice(connection, replacementInvoiceId);
     if (connection.prepare('UPDATE billing_issuers SET next_invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND next_invoice_number = ?').run(sequence + 1, issuer.id, sequence).changes !== 1) {
       throw new Error('Contorul emitentului a fost modificat concurent.');
     }

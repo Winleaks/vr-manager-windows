@@ -8,6 +8,7 @@ import '../../src/index.css';
 
 const calls: unknown[] = [];
 const role = new URLSearchParams(location.search).get('role') || 'writer';
+let protectedUnlocked = !new URLSearchParams(location.search).has('activation');
 const invoice = {
   id: 1, company_id: 1, issuer_id: 1, invoice_number: 'TEST-1', invoice_date: '2026-01-01',
   company_name: 'Fixture Company', store_name: 'Fixture Store', issuer_name: 'Fixture Issuer',
@@ -39,7 +40,12 @@ window.desktopApi = {
   },
   drivers: { getAll: async () => [] }, employees: { getAll: async () => [] },
   protectedRegistry: {
-    status: async () => ({ unlocked: true }), getOverview: async () => ({ mode: 'test' }),
+    status: async () => ({ unlocked: protectedUnlocked, readOnly: role === 'viewer', configured: true, needsRecovery: !protectedUnlocked, secureStorageAvailable: true }), getOverview: async () => ({ mode: 'test' }),
+    activateViewer: async () => { calls.push('activate-viewer'); protectedUnlocked = true; },
+    refreshViewer: async () => ({ success: true, revision: 1 }),
+    openDocument: async () => { calls.push('protected-open'); return { success: true }; },
+    shareDocument: async () => { calls.push('protected-share'); return { success: true }; },
+    printDocument: async () => { calls.push('protected-print'); return { success: true }; },
     lock: async () => {}, touch: async () => {}, getCreditNotes: async () => [],
     getCreditNoteDraft: async () => [protectedInvoice],
     getCompanies: async () => [{ ...company, assigned: true, companyKey: 'fixture-company' }, { id: 2, name: 'Other Company', stores: [], assigned: true, companyKey: 'other' }],

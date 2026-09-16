@@ -10,7 +10,7 @@ import { assertUploadedFileMatches } from './cloudSyncPolicy.ts';
 function harness() {
   const source = readFileSync(new URL('./cloudSync.ts', import.meta.url), 'utf8');
   const code = source.slice(source.indexOf('async function fetchUploadedMetadata'), source.indexOf('export async function saveToCloud')).replaceAll('export ', '');
-  const state = { folders: 0, lists: 0, uploads: 0, role: 'writer', corrupt: false, version: '1', tokens: true };
+  const state = { folders: 0, creates: 0, lists: 0, uploads: 0, role: 'writer', corrupt: false, version: '1', tokens: true };
   let bytes = Buffer.from('encrypted fixture');
   const metadata = () => ({ id: 'file', name: 'fixture.vault', version: state.version, parents: ['folder'], md5Checksum: state.corrupt ? 'wrong' : createHash('md5').update(bytes).digest('hex'), size: String(bytes.length) });
   const drive = { files: {
@@ -21,7 +21,7 @@ function harness() {
   const oauth2Client = { credentials: { refresh_token: 'synthetic-account' } };
   const bindings = {
     createHash, Readable, Buffer, resolvePrivateFolderInOperation, oauth2Client,
-    findFolder: async () => { state.folders++; return 'folder'; }, getOrCreateFolder: async () => { state.folders++; return 'folder'; },
+    findFolder: async () => { state.folders++; return 'folder'; }, getOrCreateFolder: async () => { state.folders++; state.creates++; return 'folder'; },
     getDeviceRole: () => state.role, loadTokens: () => state.tokens,
     google: { drive: () => drive }, CLOUD_ROOT_FOLDER_NAME: 'VR - Management',
     escapeDriveQueryValue: (s: string) => s, InvoiceDriveDocumentError: Error,
@@ -29,11 +29,21 @@ function harness() {
     assertUploadedFileMatches, documentRequestOptions: { timeout: 30000, retry: false },
   };
   const compiled = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
-  const api = new Function(...Object.keys(bindings), compiled + '\nreturn {readVerifiedPrivateCloudFile, writeVerifiedPrivateCloudFile};')(...Object.values(bindings));
+  const api = new Function(...Object.keys(bindings), compiled + '\nreturn {readVerifiedPrivateCloudFile, writeVerifiedPrivateCloudFile, readProtectedViewerVault};')(...Object.values(bindings));
   const read = () => api.readVerifiedPrivateCloudFile(['Duplicat'], 'fixture.vault');
   const write = (expectedVersion: string) => api.writeVerifiedPrivateCloudFile({ folderNames: ['Duplicat'], filename: 'fixture.vault', mimeType: 'application/octet-stream', buffer: Buffer.from('next encrypted fixture'), expectedVersion });
-  return { state, oauth2Client, read, write };
+  return { state, oauth2Client, read, write, readViewer: () => api.readProtectedViewerVault() };
 }
+
+test('Viewer reads the fixed encrypted vault without creating folders or uploading, and cannot use Writer primitives', async () => {
+  const h = harness(); h.state.role = 'viewer';
+  const file = await h.readViewer(); assert.ok(file.buffer.length);
+  assert.equal(h.state.creates, 0); assert.equal(h.state.uploads, 0);
+  await assert.rejects(h.read(), /Viewer/);
+  await assert.rejects(h.write('1'), /Viewer/);
+  h.state.corrupt = true; await assert.rejects(h.readViewer());
+  assert.equal(h.state.creates, 0); assert.equal(h.state.uploads, 0);
+});
 
 test('real private Drive adapter resolves folders once per operation, but reads file versions afresh', async () => {
   const h = harness();

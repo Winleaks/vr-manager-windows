@@ -1,3 +1,11 @@
+### VR - Hub Management v0.1.110
+
+- Creditul disponibil se aplică automat la emiterea facturilor noi, manuale sau importate, în ambele registre. Se folosesc numai fondurile aceleiași companii și aceluiași emitent; registrele și datele test/live rămân separate. Valoarea facturii și încasările nu se modifică, iar surplusul rămâne disponibil.
+- Aplicarea creditului se salvează atomic cu factura, cu istoric și protecție la reîncercare. Facturile existente nu sunt modificate automat. Anularea unei facturi din registrul separat cu credit aplicat necesită mai întâi reversarea creditului.
+- Viewer poate consulta registrul separat după activarea cu cheia de recuperare și un PIN local. Poate vedea clienți, facturi, plăți și Credit Notes și poate deschide, imprima sau trimite documente. Modificările rămân exclusiv pe Writer.
+- Viewer citește seiful verificat din Drive fără încărcări sau modificări; datele decriptate rămân în memorie. Credencialele protejate de sistem și PDF-urile temporare pentru acțiunile native sunt tratate separat.
+- Include toate modificările v0.1.109, fără migrare de bază de date/seif și fără modificări în platforma clienților.
+
 ### VR - Hub Management v0.1.109
 
 - Facturile folosesc mai eficient spațiul paginii, păstrând fontul și denumirile bilingve. Totalul este rezervat numai după ultimele produse; în exemplul verificat încap 22 de produse și totalul pe prima pagină, în loc de 17 produse.

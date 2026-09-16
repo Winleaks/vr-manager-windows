@@ -215,7 +215,8 @@ test('protected invoices use the validated persistent native share host, not the
   assert.match(service, /if \(result.canceled\) return result/);
   assert.match(service, /stopWindowsDocumentProcessesForFile\(filePath\);\s*try \{ if \(fs.existsSync\(filePath\)\) fs.unlinkSync\(filePath\)/);
   assert.match(service, /sessions.get\(webContentsId\) !== session/);
-  assert.match(service, /writeFileSync\(tempPath, toValidatedPdfBuffer\(file.buffer\)/);
+  assert.match(service, /storeTemporaryProtectedPdf\(webContentsId, session, file.buffer\)/);
+  assert.match(service, /writeFileSync\(tempPath, toValidatedPdfBuffer\(buffer\)/);
 });
 
 test('stalled print selection cannot leave the invoice loading indefinitely', async () => {
