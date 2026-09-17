@@ -54,7 +54,7 @@ export interface VrBakerOrderItem {
 export interface VrBakerOrder {
   id: string;
   deliveryDate: string;
-  status: 'open' | 'locked';
+  status: 'open' | 'locked' | 'delivered';
   updatedAt: string;
   store: VrBakerStore;
   items: VrBakerOrderItem[];
@@ -217,7 +217,7 @@ function parseProduct(value: unknown): VrBakerProduct {
 function parseOrder(value: unknown): VrBakerOrder {
   const order = requireRecord(value, 'Comanda VR Baker');
   const status = requireString(order.status, 'Statusul comenzii', 20);
-  if (status !== 'open' && status !== 'locked') {
+  if (status !== 'open' && status !== 'locked' && status !== 'delivered') {
     throw new Error('API-ul a returnat un status de comandă neacceptat.');
   }
   if (!ISO_DATE_PATTERN.test(String(order.delivery_date || ''))) throw new Error('Data livrării este invalidă.');
@@ -319,13 +319,15 @@ export class VrBakerApiClient {
     const zones = new Map<string, VrBakerZone>();
     let cursor: string | null = null;
     for (let page = 0; page < 100; page += 1) {
-      const data = await this.request<{ orders: unknown[]; zones?: unknown[]; next_cursor?: string | null }>('orders.weekly_export', {
+      const data = await this.request<{ orders: unknown[]; zones?: unknown[]; next_cursor?: string | null; includes_delivered?: boolean }>('orders.weekly_export', {
         week_start: startDate,
         week_end: endDate,
         cursor,
         limit: 1000,
+        include_delivered: true,
       });
       if (!data || !Array.isArray(data.orders)) throw new Error('Exportul săptămânal VR Baker este invalid.');
+      if (data.includes_delivered !== true) throw new Error('API-ul VR Baker trebuie actualizat pentru a include comenzile livrate. Importul a fost oprit pentru a evita facturarea incompletă.');
       const parsed = data.orders.map(parseOrder);
       collected.push(...parsed);
       if (data.zones !== undefined) {

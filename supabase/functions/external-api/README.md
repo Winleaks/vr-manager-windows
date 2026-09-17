@@ -13,7 +13,9 @@ Configure Supabase Edge Function secrets outside source control:
 
 During rotation, add the new hashed credential, verify it from the Writer, then disable the old credential. Paste the raw token only into the desktop settings screen; Electron stores it through `safeStorage`. Do not put the raw token in this repository, SQLite, logs, tickets, or chat.
 
-Before enabling invoice emission, compare a Monday–Sunday preview against SQL aggregates for order count, non-zero line count, and snapshot-price total. The current desktop contract imports only `open` and `locked`; `delivered` stays reserved for the future driver application and `cancelled` is excluded.
+Before enabling invoice emission, compare a Monday–Sunday preview against SQL aggregates for order count, non-zero line count, and snapshot-price total. Updated Hubs send `include_delivered: true` and require `includes_delivered: true` on every response page. These requests import `open`, `locked` and `delivered`; legacy callers retain `open`/`locked`. `cancelled` remains excluded. Deploy the compatible API before releasing the updated Hub; an updated Hub talking to the old API refuses incomplete imports.
+
+The billed quantity is `qty_delivered ?? qty_ordered`, regardless of whether an admin or driver changed it. Explicit zero means no billable units, never fallback to the ordered quantity. Prices remain `unit_price_snapshot`. Confirmation actor and app activation date are not filters. Existing invoices are not rewritten: a later source change requires explicit reviewed correction, retaining original source-order identities and duplicate guards. No driver application, permissions, schema or live order changes are needed for this correction.
 
 ## Store/company association compatibility
 

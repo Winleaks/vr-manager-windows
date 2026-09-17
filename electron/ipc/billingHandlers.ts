@@ -355,7 +355,7 @@ export function registerBillingHandlers() {
   handleTrustedIpc('billing:previewWeeklyInvoices', async (_, startDate: string, endDate: string) => {
     try {
       const { ordersByStore, zones } = await prepareWeeklyPreview(startDate, endDate, true);
-      return { success: true, message: `Au fost găsite ${ordersByStore.length} magazine cu comenzi open/locked.`, ordersByStore, zones };
+      return { success: true, message: `Au fost găsite ${ordersByStore.length} magazine cu comenzi deschise, blocate sau livrate.`, ordersByStore, zones };
     } catch (error) {
       return { success: false, message: message(error), ordersByStore: [], zones: [] };
     }

@@ -1,3 +1,11 @@
+### VR - Hub Management v0.1.111
+
+- Sincronizarea facturării include comenzile livrate, indiferent dacă livrarea este confirmată de șofer sau de admin, în ambele registre. Comenzile deschise și blocate rămân eligibile; cele anulate sunt excluse.
+- Cantitățile livrate au prioritate față de cele comandate; zero livrat nu este facturat. Dacă livrarea nu este completată, se păstrează cantitatea comandată. Prețurile originale ale comenzilor sunt păstrate.
+- Hubul verifică explicit suportul platformei pentru comenzile livrate și oprește importul dacă API-ul este vechi, evitând rezultate incomplete. Platforma păstrează compatibilitatea cu versiunile vechi de hub.
+- Facturile deja emise nu sunt rescrise automat. Modificările sursei rămân supuse verificării manuale, cu păstrarea protecției împotriva facturării duplicate.
+- Include toate modificările v0.1.110, fără migrare de bază de date sau seif și fără modificarea datelor de livrare ori a aplicației șoferilor.
+
 ### VR - Hub Management v0.1.110
 
 - Creditul disponibil se aplică automat la emiterea facturilor noi, manuale sau importate, în ambele registre. Se folosesc numai fondurile aceleiași companii și aceluiași emitent; registrele și datele test/live rămân separate. Valoarea facturii și încasările nu se modifică, iar surplusul rămâne disponibil.

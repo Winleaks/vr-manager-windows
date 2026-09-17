@@ -331,6 +331,9 @@ const actions: Record<string, ActionDefinition> = {
     scope: "orders:read",
     mutates: false,
     handler: async (payload) => {
+      // Opt-in keeps older installed Hubs (which reject delivered) compatible.
+      // Delivery quantities are authoritative regardless of who confirmed them.
+      const includeDelivered = parseBoolean(payload.include_delivered, false, "include_delivered");
       const weekStart = requireDate(payload.week_start, "week_start");
       const weekEnd = requireDate(payload.week_end, "week_end");
       const start = new Date(`${weekStart}T00:00:00Z`);
@@ -357,7 +360,7 @@ const actions: Record<string, ActionDefinition> = {
         )
         .gte("delivery_date", weekStart)
         .lte("delivery_date", weekEnd)
-        .in("status", ["open", "locked"])
+        .in("status", includeDelivered ? ["open", "locked", "delivered"] : ["open", "locked"])
         .order("id", { ascending: true })
         .limit(limit + 1);
       if (cursor) query = query.gt("id", cursor);
@@ -390,6 +393,7 @@ const actions: Record<string, ActionDefinition> = {
       }));
       return {
         orders: page,
+        includes_delivered: includeDelivered,
         ...(zones ? { zones } : {}),
         next_cursor: hasMore && page.length > 0
           ? String((page[page.length - 1] as Record<string, unknown>).id)

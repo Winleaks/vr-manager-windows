@@ -21,7 +21,7 @@ export interface WeeklyInvoiceGroup {
 export function aggregateWeeklyOrders(orders: VrBakerOrder[]): WeeklyInvoiceGroup[] {
   const stores = new Map<string, { store: VrBakerStore; items: Map<string, WeeklyInvoiceGroup['items'][number]>; sourceOrders: WeeklyInvoiceGroup['sourceOrders'] }>();
   for (const order of orders) {
-    if (order.status !== 'open' && order.status !== 'locked') continue;
+    if (order.status !== 'open' && order.status !== 'locked' && order.status !== 'delivered') continue;
     let group = stores.get(order.store.id);
     if (!group) {
       group = { store: order.store, items: new Map(), sourceOrders: [] };
