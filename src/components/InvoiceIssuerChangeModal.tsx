@@ -25,13 +25,13 @@ export function InvoiceIssuerChangeModal(props: Props) {
     mounted.current = true;
     let active = true;
     const previous = document.activeElement as HTMLElement | null;
-    dialog.current?.focus();
+    dialog.current?.focus({ preventScroll: true });
     const request = registry === 'normal'
       ? api.billing.getInvoiceIssuerChangeOptions(invoiceId as number)
       : api.protectedRegistry.getInvoiceIssuerChangeOptions(invoiceId as string);
     request.then((data) => { if (active) { setOptions(data); setIssuerId(String(data.issuers[0]?.id || '')); } })
       .catch((failure) => { if (active) setError(failure.message || 'Datele facturii nu pot fi verificate.'); });
-    return () => { active = false; mounted.current = false; previous?.focus(); };
+    return () => { active = false; mounted.current = false; previous?.focus({ preventScroll: true }); };
   }, [registry, invoiceId]);
   const issuer = options?.issuers.find((row) => String(row.id) === issuerId);
   const submit = async () => {

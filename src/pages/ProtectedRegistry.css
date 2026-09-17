@@ -10,7 +10,8 @@
 .protected-content :is(section, .border, .border-t, .divide-y > *) { border-color: #e2e8f0; }
 .protected-content h2 { font-size: 1.25rem; line-height: 1.75rem; }
 .protected-content label { color: #475569; font-size: .875rem; font-weight: 500; }
-.protected-content > div > :is(section, div.bg-white) {
+.protected-content > div > :is(section, div.bg-white),
+.protected-content [data-navigation-view] > div > :is(section, div.bg-white) {
   border-color: #e2e8f0;
   box-shadow: 0 1px 2px rgb(15 23 42 / .05);
 }

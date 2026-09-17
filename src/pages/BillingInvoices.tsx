@@ -13,6 +13,7 @@ import { prepareInvoiceDocument } from '../utils/prepareInvoiceDocument';
 import { InvoiceEditorModal } from '../components/InvoiceEditorModal';
 import { TextConfirmationModal } from '../components/TextConfirmationModal';
 import { InvoiceDocumentActions } from '../components/InvoiceDocumentActions';
+import { useNavigationState } from '../hooks/navigationMemory';
 
 interface InvoiceItem {
   id?: number;
@@ -65,18 +66,18 @@ interface Invoice {
 export function BillingInvoices() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [issuerFilter, setIssuerFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useNavigationState('search', '');
+  const [statusFilter, setStatusFilter] = useNavigationState('status', 'all');
+  const [issuerFilter, setIssuerFilter] = useNavigationState('issuer', 'all');
   const [issuers, setIssuers] = useState<any[]>([]);
   const [testMode, setTestMode] = useState(false);
   const [isWriter, setIsWriter] = useState(false);
   const [pendingInvoiceAction, setPendingInvoiceAction] = useState<Invoice | null>(null);
   
   // Date filter (opțional, default toate sau ultimele 30 zile)
-  const [useDateFilter, setUseDateFilter] = useState(false);
-  const [startDate, setStartDate] = useState<Date>(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
-  const [endDate, setEndDate] = useState<Date>(new Date());
+  const [useDateFilter, setUseDateFilter] = useNavigationState('date-filter', false);
+  const [startDate, setStartDate] = useNavigationState('start-date', () => new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+  const [endDate, setEndDate] = useNavigationState('end-date', () => new Date());
 
   const [invoiceNotice, setInvoiceNotice] = useState('');
 
@@ -287,7 +288,7 @@ export function BillingInvoices() {
 
       {/* Tabel cu facturi */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        {loading ? (
+        {loading && !invoices.length ? (
           <div className="p-12 text-center text-slate-500 flex items-center justify-center gap-3">
             <Loader2 size={24} className="animate-spin text-indigo-600" />
             <span>Se încarcă facturile...</span>

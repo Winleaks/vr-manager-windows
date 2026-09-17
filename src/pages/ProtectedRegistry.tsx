@@ -4,6 +4,8 @@ import { ProtectedInvoiceEditor } from '../components/ProtectedInvoiceEditor';
 import { ProtectedInvoiceList } from '../components/ProtectedInvoiceList';
 import { ProtectedDocumentActions } from '../components/ProtectedDocumentActions';
 import { ProtectedViewer } from '../components/ProtectedViewer';
+import { NavigationMemory, NavigationView } from '../components/NavigationMemory';
+import { useNavigationState, useRememberedScroll } from '../hooks/navigationMemory';
 import { BillingSettings } from './BillingSettings';
 import { InvoiceIssuerChangeModal } from '../components/InvoiceIssuerChangeModal';
 import { createContext, useContext, useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
@@ -90,7 +92,7 @@ function InputDialog({ title, message, fields, onClose }: { title: string; messa
     const previous = document.activeElement;
     const element = dialogRef.current!;
     element.showModal();
-    return () => { element.close(); if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
+    return () => { element.close(); if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true }); };
   }, []);
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(fields.map((field) => [field.name, field.initialValue || ''])));
   const submit = (event: FormEvent) => {
@@ -213,9 +215,11 @@ function DashboardPanel() {
 function ClientsPanel() {
   const run = useContext(CloudActionContext);
   const [companies, setCompanies] = useState<any[]>([]);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useNavigationState('search', '');
   const [busy, setBusy] = useState<number | null>(null);
-  const [selectedCompany, setSelectedCompany] = useState<any>(null);
+  const [selectedCompanyId, setSelectedCompanyId] = useNavigationState<number | null>('company', null);
+  const selectedCompany = companies.find(company => company.id === selectedCompanyId);
+  const scrollRef = useRememberedScroll('list', undefined, !selectedCompanyId);
   const reload = useCallback(() => api.protectedRegistry.getCompanies().then(setCompanies), []);
   useEffect(() => { void reload(); }, [reload]);
   const toggle = async (company: any) => {
@@ -224,8 +228,8 @@ function ClientsPanel() {
     catch (error) { notify(errorMessage(error)); } finally { setBusy(null); }
   };
   const filtered = companies.filter(company => matchesProtectedCompany(company, search));
-  if (selectedCompany) return <ClientProfile key={selectedCompany.id} company={selectedCompany} onBack={() => setSelectedCompany(null)} />;
-  return <div className="space-y-5">
+  if (selectedCompany) return <NavigationView name={`company-${selectedCompany.id}`} restore={false}><ClientProfile key={selectedCompany.id} company={selectedCompany} onBack={() => setSelectedCompanyId(null)} /></NavigationView>;
+  return <div ref={scrollRef} className="space-y-5">
     <PanelHeading title="Clienți atribuiți" description="Atribuirea include toate magazinele companiei și exclude comenzile din facturarea normală." icon={Users} />
     <div className="rounded-2xl bg-white border border-slate-200 p-4">
       <label className="block text-xs font-semibold uppercase text-slate-500" htmlFor="protected-client-search">Caută companie sau magazin</label>
@@ -233,7 +237,7 @@ function ClientsPanel() {
     </div>
     <div className="rounded-2xl bg-white border border-slate-200 divide-y divide-slate-100">
       {filtered.map(company => <div key={company.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="min-w-0"><button type="button" onClick={() => setSelectedCompany(company)} className="font-bold break-words text-indigo-600 hover:underline" aria-label={`Deschide profilul ${company.name}`}>{company.name}</button><p className="text-sm text-slate-500">{company.issuerName || 'Emitent implicit'} · {company.stores.length} {company.stores.length === 1 ? 'magazin' : 'magazine'}</p>
+        <div className="min-w-0"><button type="button" onClick={() => setSelectedCompanyId(company.id)} className="font-bold break-words text-indigo-600 hover:underline" aria-label={`Deschide profilul ${company.name}`}>{company.name}</button><p className="text-sm text-slate-500">{company.issuerName || 'Emitent implicit'} · {company.stores.length} {company.stores.length === 1 ? 'magazin' : 'magazine'}</p>
           <ul aria-label={`Magazinele companiei ${company.name}`} className="mt-2 flex flex-wrap gap-2">{company.stores.map((store: { id: number; name: string }) => <li key={store.id} className="inline-flex items-start gap-1.5 min-w-0 max-w-full rounded-lg bg-slate-50 border border-slate-100 px-2.5 py-1 text-sm text-slate-600"><Store size={15} aria-hidden="true" className="shrink-0 mt-0.5 text-indigo-500" /><span className="break-words">{store.name || 'Magazin fără nume'}</span></li>)}</ul>
         </div>
         <button disabled={busy === company.id} onClick={() => toggle(company)} className={`shrink-0 self-start sm:self-auto rounded-xl px-4 py-2 font-semibold ${company.assigned ? 'bg-red-50 text-red-700' : 'bg-indigo-600 text-white'}`}>{company.assigned ? 'Elimină din registru' : 'Adaugă în registru'}</button>
@@ -244,8 +248,9 @@ function ClientsPanel() {
 }
 
 function ClientProfile({ company, onBack }: { company: any; onBack: () => void }) {
-  const [tab, setTab] = useState('invoices');
-  const [issuer, setIssuer] = useState('all');
+  const [tab, setTab] = useNavigationState('tab', 'invoices');
+  const [issuer, setIssuer] = useNavigationState('issuer', 'all');
+  const scrollRef = useRememberedScroll(tab);
   const [data, setData] = useState<{ invoices: any[]; payments: any[]; balances: any[]; notes: any[] } | null>(null);
   const [error, setError] = useState('');
   const [paymentInvoice, setPaymentInvoice] = useState<any>();
@@ -278,7 +283,7 @@ function ClientProfile({ company, onBack }: { company: any; onBack: () => void }
   const notes = scoped(data?.notes || []);
   const balances = scoped(data?.balances || []);
   const profileTabs = [['invoices', 'Facturi', Receipt], ['payments', 'Istoric încasări', Banknote], ['notes', 'Credit Notes', FileMinus2], ['credits', 'Registru Credit', ShieldCheck], ['stores', 'Magazine & detalii', Store]] as const;
-  return <div className="space-y-6">
+  return <div ref={scrollRef} className="space-y-6">
     <button type="button" onClick={onBack} className="flex items-center gap-2 text-indigo-600 text-sm font-semibold"><ArrowLeft size={16} />Înapoi la lista de clienți</button>
     <header className="flex flex-wrap items-start justify-between gap-4"><div><PanelHeading title={company.name} icon={Users} /><p className="text-sm text-slate-500 mt-2">{company.address}</p><p className="text-sm text-slate-500">{company.cui && `VAT No: ${company.cui} · `}{company.reg_com && `CRN: ${company.reg_com} · `}{company.stores.length} magazine · {company.issuerName || 'Emitent implicit'}</p></div><label className="text-sm font-semibold">Societate emitentă<select className="block mt-2" value={issuer} onChange={event => { setIssuer(event.target.value); setPaymentInvoice(undefined); setCreditInvoiceId(undefined); }}><option value="all">Toate societățile</option><option value="goodness">THE GOODNESS BAKER LTD</option><option value="vatra">VATRA ROMANEASCA LTD</option></select></label></header>
     {error && <div role="alert" className="rounded-xl bg-rose-50 p-4 text-rose-700">{error}<button type="button" onClick={() => void reload()} className="ml-3 underline">Reîncearcă</button></div>}
@@ -557,7 +562,7 @@ function ProtectedWorkspace({ onLocked }: { onLocked: () => void }) {
     return () => { window.removeEventListener('pointerdown', touch); window.removeEventListener('keydown', touch); };
   }, [onLocked]);
   const exit = async () => { await api.protectedRegistry.lock().catch(() => undefined); onLocked(); window.location.hash = '/'; };
-  return <CloudActionContext.Provider value={run}><div className="protected-workspace h-screen flex bg-slate-50 overflow-hidden"><aside className="protected-sidebar w-64 bg-slate-900 text-white flex flex-col shadow-xl"><header className="p-5 border-b border-slate-800"><div className="flex gap-3 items-center"><ShieldCheck className="text-indigo-400" /><b>Registru separat</b></div><span className={`inline-block mt-3 rounded-full px-2 py-1 text-xs font-bold ${overview?.mode === 'live' ? 'bg-emerald-600' : 'bg-amber-500'}`}>{overview?.mode?.toUpperCase() || '…'}</span></header><nav className="flex-1 p-3 overflow-y-auto">{tabs.map(([id, label, Icon]) => <button key={id} disabled={saving} aria-current={active === id ? "page" : undefined} onClick={() => { setCreditInvoiceId(undefined); setPaymentInvoice(undefined); setActive(id); }} className={`w-full rounded-xl px-3 py-2.5 flex gap-3 items-center text-sm mb-1 ${active === id ? 'bg-indigo-600' : 'text-slate-300 hover:bg-slate-800'}`}><Icon size={18} />{label}</button>)}</nav><button onClick={exit} className="m-3 rounded-xl bg-slate-800 p-3 flex gap-2 justify-center"><LogOut size={18} />Blochează și ieși</button></aside><FeedbackHost controller={protectedFeedback} /><main className="protected-main flex-1 overflow-y-auto p-8">{saving && <div role="status" className="sticky top-0 z-20 mb-4 flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800"><RefreshCw size={18} className="animate-spin motion-reduce:animate-none" />Se salvează și se verifică în Google Drive. Nu închide aplicația.<span className="sr-only">Datele nu se salvează local.</span></div>}<fieldset disabled={saving} aria-busy={saving} className="protected-content">{active === 'dashboard' && <DashboardPanel />}{active === 'clients' && <ClientsPanel />}{active === 'orders' && <OrdersPanel />}{active === 'invoices' && <InvoicesPanel onCreditNote={id => { setCreditInvoiceId(id); setActive('credit-notes'); }} onPayment={invoice => { setPaymentInvoice(invoice); setActive('payments'); }} />}{active === 'manual' && <ManualInvoicePanel />}{active === 'payments' && <PaymentsPanel initialInvoice={paymentInvoice} />}{active === 'settings' && <SettingsPanel overview={overview} reloadOverview={reloadOverview} />}{active === 'credit-notes' && <CreditNotesPanel invoiceId={creditInvoiceId} />}{active === 'exports' && <ExportsPanel />}</fieldset></main></div></CloudActionContext.Provider>;
+  return <CloudActionContext.Provider value={run}><div className="protected-workspace h-screen flex bg-slate-50 overflow-hidden"><aside className="protected-sidebar w-64 bg-slate-900 text-white flex flex-col shadow-xl"><header className="p-5 border-b border-slate-800"><div className="flex gap-3 items-center"><ShieldCheck className="text-indigo-400" /><b>Registru separat</b></div><span className={`inline-block mt-3 rounded-full px-2 py-1 text-xs font-bold ${overview?.mode === 'live' ? 'bg-emerald-600' : 'bg-amber-500'}`}>{overview?.mode?.toUpperCase() || '…'}</span></header><nav className="flex-1 p-3 overflow-y-auto">{tabs.map(([id, label, Icon]) => <button key={id} disabled={saving} aria-current={active === id ? "page" : undefined} onClick={() => { setCreditInvoiceId(undefined); setPaymentInvoice(undefined); setActive(id); }} className={`w-full rounded-xl px-3 py-2.5 flex gap-3 items-center text-sm mb-1 ${active === id ? 'bg-indigo-600' : 'text-slate-300 hover:bg-slate-800'}`}><Icon size={18} />{label}</button>)}</nav><button onClick={exit} className="m-3 rounded-xl bg-slate-800 p-3 flex gap-2 justify-center"><LogOut size={18} />Blochează și ieși</button></aside><FeedbackHost controller={protectedFeedback} /><main data-navigation-scroll className="protected-main flex-1 overflow-y-auto p-8">{saving && <div role="status" className="sticky top-0 z-20 mb-4 flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800"><RefreshCw size={18} className="animate-spin motion-reduce:animate-none" />Se salvează și se verifică în Google Drive. Nu închide aplicația.<span className="sr-only">Datele nu se salvează local.</span></div>}<fieldset disabled={saving} aria-busy={saving} className="protected-content"><NavigationView name={active} restore={active !== 'clients'}>{active === 'dashboard' && <DashboardPanel />}{active === 'clients' && <ClientsPanel />}{active === 'orders' && <OrdersPanel />}{active === 'invoices' && <InvoicesPanel onCreditNote={id => { setCreditInvoiceId(id); setActive('credit-notes'); }} onPayment={invoice => { setPaymentInvoice(invoice); setActive('payments'); }} />}{active === 'manual' && <ManualInvoicePanel />}{active === 'payments' && <PaymentsPanel initialInvoice={paymentInvoice} />}{active === 'settings' && <SettingsPanel overview={overview} reloadOverview={reloadOverview} />}{active === 'credit-notes' && <CreditNotesPanel invoiceId={creditInvoiceId} />}{active === 'exports' && <ExportsPanel />}</NavigationView></fieldset></main></div></CloudActionContext.Provider>;
 }
 
 export function ProtectedRegistry() {
@@ -568,6 +573,6 @@ export function ProtectedRegistry() {
   if (denied) return <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6"><div className="rounded-2xl bg-white p-8 max-w-md"><Lock className="text-red-600 mb-4" /><h1 className="text-2xl font-bold">Acces indisponibil</h1><p className="text-slate-600 mt-2">{denied}</p><button onClick={() => { window.location.hash = '/'; }} className="mt-5 flex gap-2 text-indigo-700"><ArrowLeft size={18} />Înapoi la Hub</button></div></div>;
   if (!status) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center"><RefreshCw className="animate-spin" /></div>;
   if (!status.unlocked) return <ProtectedAccess status={status} onUnlocked={reload} />;
-  if (status.readOnly) return <ProtectedViewer onLocked={() => setStatus((current: any) => ({ ...current, unlocked: false }))} />;
-  return <ProtectedWorkspace onLocked={() => setStatus((current: any) => ({ ...current, unlocked: false }))} />;
+  if (status.readOnly) return <NavigationMemory key="viewer"><ProtectedViewer onLocked={() => setStatus((current: any) => ({ ...current, unlocked: false }))} /></NavigationMemory>;
+  return <NavigationMemory key="writer"><ProtectedWorkspace onLocked={() => setStatus((current: any) => ({ ...current, unlocked: false }))} /></NavigationMemory>;
 }

@@ -1,5 +1,5 @@
 import { notify } from '../utils/feedback';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../shared/api';
 import { 
   Building2, Store, RefreshCw, AlertCircle, FileText, ArrowLeft, 
@@ -12,6 +12,7 @@ import { NumericInput } from '../components/NumericInput';
 import { TextConfirmationModal } from '../components/TextConfirmationModal';
 import { InvoiceDocumentActions } from '../components/InvoiceDocumentActions';
 import { StatementActions } from '../components/StatementActions';
+import { useNavigationState, useRememberedScroll } from '../hooks/navigationMemory';
 
 interface Company {
   id: number;
@@ -36,14 +37,17 @@ export function BillingClients() {
   const [syncing, setSyncing] = useState(false);
   const [syncNotice, setSyncNotice] = useState('');
   const [syncError, setSyncError] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useNavigationState('search', '');
 
   // Profil companie selectat
-  const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
+  const [selectedCompanyId, setSelectedCompanyId] = useNavigationState<number | null>('company', null);
   const [profileData, setProfileData] = useState<any | null>(null);
+  const profileRequest = useRef(0);
   const [, setLoadingProfile] = useState(false);
-  const [activeTab, setActiveTab] = useState<'unpaid' | 'all' | 'payments' | 'credits' | 'stores'>('unpaid');
-  const [profileIssuerFilter, setProfileIssuerFilter] = useState('all');
+  const [activeTab, setActiveTab] = useNavigationState<'unpaid' | 'all' | 'payments' | 'credits' | 'stores'>(`company-${selectedCompanyId}/tab`, 'unpaid');
+  const [profileIssuerFilter, setProfileIssuerFilter] = useNavigationState(`company-${selectedCompanyId}/issuer`, 'all');
+  const profileReady = profileData?.company?.id === selectedCompanyId;
+  const scrollRef = useRememberedScroll(selectedCompanyId ? `company-${selectedCompanyId}/${activeTab}` : 'list', selectedCompanyId ? profileReady : !loading);
 
   const [editingInvoiceId, setEditingInvoiceId] = useState<number | null>(null);
   const [invoiceNotice, setInvoiceNotice] = useState('');
@@ -84,6 +88,7 @@ export function BillingClients() {
   }, []);
 
   useEffect(() => {
+    profileRequest.current++;
     if (selectedCompanyId) {
       setIssuerAssignmentNotice('');
       setInvoiceNotice('');
@@ -106,10 +111,11 @@ export function BillingClients() {
   };
 
   const loadCompanyProfile = async (companyId: number) => {
+    const request = ++profileRequest.current;
     try {
       setLoadingProfile(true);
       const data = await api.billing.getCompanyProfile(companyId);
-      setProfileData(data);
+      if (request === profileRequest.current) setProfileData(data);
     } catch (e) {
       console.error('Eroare încărcare profil companie:', e);
     } finally {
@@ -292,7 +298,7 @@ export function BillingClients() {
   ).sort((a, b) => Number(b.unpaidTotal || 0) - Number(a.unpaidTotal || 0) || a.name.localeCompare(b.name));
 
   // --- VIZUALIZARE 1: PROFIL COMPANIE ---
-  if (selectedCompanyId && profileData) {
+  if (selectedCompanyId && profileReady) {
     const { company, stores, invoices: allInvoices, payments: allPayments } = profileData;
     const defaultIssuer = (profileData.issuers || []).find((issuer: any) => issuer.is_default === 1);
     const issuerSelectionValue = company.issuer_assignment_mode === 'explicit'
@@ -313,7 +319,7 @@ export function BillingClients() {
     };
 
     return (
-      <div className="p-8 max-w-7xl mx-auto space-y-8">
+      <div ref={scrollRef} className="p-8 max-w-7xl mx-auto space-y-8">
         {invoiceNotice && <p role="status" className="rounded-xl bg-indigo-50 p-4 text-sm text-indigo-800">{invoiceNotice}</p>}
         {editingInvoiceId !== null && <InvoiceEditorModal
           key={editingInvoiceId}
@@ -884,7 +890,7 @@ export function BillingClients() {
 
   // --- VIZUALIZARE 2: LISTA GENERALĂ DE COMPANII ---
   return (
-    <div className="p-8 max-w-7xl mx-auto">
+    <div ref={scrollRef} className="p-8 max-w-7xl mx-auto">
       <div className="flex justify-between items-center flex-wrap gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Clienți & Entități</h1>
@@ -917,7 +923,7 @@ export function BillingClients() {
         </div>
       </div>
 
-      {loading ? (
+      {loading && !companies.length ? (
         <div className="flex justify-center items-center h-64 text-indigo-600 gap-3">
           <Loader2 className="animate-spin" size={32} />
           <span className="font-semibold text-slate-600">Se încarcă companiile...</span>

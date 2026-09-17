@@ -3,6 +3,7 @@ import { Banknote, FileMinus2, LogOut, Receipt, RefreshCw, ShieldCheck, Users } 
 import { api } from '../shared/api';
 import { ProtectedInvoiceList } from './ProtectedInvoiceList';
 import { ProtectedDocumentActions } from './ProtectedDocumentActions';
+import { useRememberedScroll } from '../hooks/navigationMemory';
 
 const money = (value: number) => `£${Number(value || 0).toFixed(2)}`;
 const denied = () => { throw new Error('Viewer — operațiune de modificare indisponibilă.'); };
@@ -11,6 +12,7 @@ const navigation = [['invoices', 'Facturi', Receipt], ['payments', 'Istoric Plă
 /** Read-only composition: it never mounts Writer forms, settings, or import/catalog flows. */
 export function ProtectedViewer({ onLocked }: { onLocked: () => void }) {
   const [tab, setTab] = useState('invoices');
+  const scrollRef = useRememberedScroll(tab);
   const [companyKey, setCompanyKey] = useState('');
   const [search, setSearch] = useState('');
   const [data, setData] = useState<{ companies: any[]; invoices: any[]; payments: any[]; notes: any[]; balances: any[] } | null>(null);
@@ -57,7 +59,7 @@ export function ProtectedViewer({ onLocked }: { onLocked: () => void }) {
   const sum = (rows: any[], field: string) => rows.reduce((total, row) => total + Math.round(Number(row[field] || 0) * 100), 0) / 100;
   return <div className="protected-workspace h-screen flex bg-slate-50 overflow-hidden">
     <aside className="protected-sidebar w-64 bg-slate-900 text-white flex flex-col"><header className="p-5"><ShieldCheck className="text-indigo-400 mb-2" />Registru separat<p className="text-sm text-slate-300 mt-2">Viewer · Doar citire</p></header><nav className="flex-1 p-3">{navigation.map(([id, label, Icon]) => <button type="button" key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)} className={`w-full flex items-center gap-3 rounded-xl px-3 py-3 mb-1 ${tab === id ? 'bg-indigo-600' : 'hover:bg-slate-800'}`}><Icon size={18} />{label}</button>)}</nav><button type="button" onClick={() => void exit()} className="m-3 p-3 rounded-xl bg-slate-800 flex gap-2"><LogOut size={18} />Blochează registrul</button><button type="button" onClick={async () => { await exit(); window.location.hash = '/'; }} className="p-3 mb-3">Înapoi la Hub</button></aside>
-    <main className="protected-main flex-1 overflow-y-auto p-8"><div className="protected-content space-y-5">
+    <main data-navigation-scroll className="protected-main flex-1 overflow-y-auto p-8"><div ref={scrollRef} className="protected-content space-y-5">
       <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-4 text-sm text-indigo-800">Doar consultare, deschidere, printare și trimitere. Baza registrului rămâne în Drive; PDF-urile se pregătesc temporar și sunt șterse la blocare. Nu se fac modificări în Drive.</div>
       <div className="flex flex-wrap items-end gap-3"><label className="flex-1 min-w-0 text-sm font-semibold">Companie<select className="block mt-2 w-full" value={companyKey} onChange={event => setCompanyKey(event.target.value)}><option value="">Toate companiile</option>{data?.companies.map(company => <option key={company.companyKey} value={company.companyKey}>{company.name}</option>)}</select></label><button type="button" disabled={loading} onClick={() => void reload()} title="Actualizează din Drive" aria-label="Actualizează din Drive" className="p-3 rounded-xl bg-indigo-600 text-white"><RefreshCw size={20} className={loading ? 'animate-spin' : ''} /></button></div>
       {updated && <p className="text-xs text-slate-500">Ultima citire verificată: {updated}. Actualizează pentru modificările recente. Documentele sunt reverificate la deschidere.</p>}

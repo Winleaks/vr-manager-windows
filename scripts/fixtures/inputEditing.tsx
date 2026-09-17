@@ -1,6 +1,7 @@
 // Synthetic renderer-only fixture. No Electron process, real DB or external API.
 import React, { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { HashRouter, Routes, Route } from 'react-router-dom';
 import { FeedbackHost } from '../../src/components/FeedbackHost';
 import { confirmAction, notify } from '../../src/utils/feedback';
 import { NumericInput } from '../../src/components/NumericInput';
@@ -59,11 +60,35 @@ window.desktopApi = {
   },
 } as any;
 
-const [{ BillingCreditNotes }, { ProtectedRegistry }, { BillingClients }, { InvoiceEditorModal }, { SettingsEntities }, { DocumentSyncBanner }] = await Promise.all([
+if (new URLSearchParams(location.search).has('navigation')) {
+  const companies = Array.from({ length: 80 }, (_, index) => ({ ...company, id: index + 1,
+    name: `Fixture Company ${String(index + 1).padStart(2, '0')}`, assigned: true, companyKey: `company-${index + 1}` }));
+  const invoices = Array.from({ length: 80 }, (_, index) => ({ ...invoice, id: index + 1,
+    invoice_number: `TEST-${index + 1}`, total_amount: 25, paid_amount: 0 }));
+  const protectedInvoices = invoices.map(row => ({ ...protectedInvoice, id: String(row.id),
+    reference: row.invoice_number, companyId: 40, companyKey: 'company-40', companyName: companies[39].name }));
+  const delayed = async <T,>(value: T) => { await new Promise(resolve => setTimeout(resolve, 150)); return structuredClone(value); };
+  Object.assign(window.desktopApi.billing, {
+    getAllCompaniesAndStores: () => delayed(companies), getInvoices: () => delayed(invoices),
+    getTestMode: async () => ({ enabled: false }),
+    getCompanyProfile: (id: number) => delayed({ company: companies[id - 1], stores: company.stores,
+      invoices, payments: [], issuers: [{ id: 1, legal_name: 'Fixture Issuer' }] }),
+    getInvoice: (id: number) => delayed(invoices[id - 1]), getSettings: async () => ({}),
+    updateInvoice: async (input: { id: number }) => ({ invoice: invoices[input.id - 1] }),
+  });
+  Object.assign(window.desktopApi.protectedRegistry, {
+    unlock: async () => {},
+    getCompanies: () => delayed(companies), getInvoices: () => delayed(protectedInvoices),
+  });
+  if (new URLSearchParams(location.search).get('case') === 'navigation') location.hash = '/facturare/clienti';
+}
+
+const [{ BillingCreditNotes }, { ProtectedRegistry }, { BillingClients }, { InvoiceEditorModal }, { SettingsEntities }, { DocumentSyncBanner }, { BillingLayout }] = await Promise.all([
   import('../../src/pages/BillingCreditNotes'), import('../../src/pages/ProtectedRegistry'),
   import('../../src/pages/BillingClients'), import('../../src/components/InvoiceEditorModal'),
   import('../../src/pages/SettingsEntities'),
   import('../../src/components/DocumentSyncBanner'),
+  import('../../src/pages/BillingLayout'),
 ]);
 
 export function Harness() {
@@ -71,6 +96,7 @@ export function Harness() {
   const [price, setPrice] = useState('2.50');
   const [confirmation, setConfirmation] = useState('none');
   const testCase = new URLSearchParams(location.search).get('case');
+  if (testCase === 'navigation') return <HashRouter><Routes><Route path="/facturare/*" element={<BillingLayout />} /></Routes></HashRouter>;
   return <>
     {testCase === 'sync' ? <DocumentSyncBanner /> : null}
     {testCase !== 'protected' && <>

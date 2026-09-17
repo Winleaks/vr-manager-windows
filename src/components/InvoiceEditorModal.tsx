@@ -41,7 +41,7 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved, adapter }: ({
   useEffect(() => {
     let active = true;
     const previousFocus = document.activeElement as HTMLElement | null;
-    dialog.current?.focus();
+    dialog.current?.focus({ preventScroll: true });
     Promise.all([adapter ? adapter.getInvoice() : api.billing.getInvoice(Number(invoiceId)), api.system.getDeviceRole()])
       .then(([row, device]) => {
         if (!active) return;
@@ -52,7 +52,7 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved, adapter }: ({
         if (device.role !== 'writer' || row.status === 'cancelled') { setCatalogLoading(false); return; }
       })
       .catch((failure) => { if (active) setError(failure.message || 'Factura nu a putut fi încărcată.'); });
-    return () => { active = false; previousFocus?.focus(); };
+    return () => { active = false; previousFocus?.focus({ preventScroll: true }); };
   }, [invoiceId, adapter]);
 
   useEffect(() => {
@@ -81,7 +81,7 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved, adapter }: ({
     const original = invoice.items[index];
     return !original || item.id !== original.id || item.productName !== original.productName || String(item.quantity) !== String(original.quantity) || String(item.unitPrice) !== String(original.unitPrice);
   })));
-  useEffect(() => { if (!changingIssuer) dialog.current?.focus(); }, [changingIssuer]);
+  useEffect(() => { if (!changingIssuer) dialog.current?.focus({ preventScroll: true }); }, [changingIssuer]);
   const total = items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unitPrice), 0);
   const changeItem = (index: number, field: string, value: string) => setItems((previous) => previous.map((item, i) => i === index ? { ...item, [field]: value } : item));
   const searchText = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();

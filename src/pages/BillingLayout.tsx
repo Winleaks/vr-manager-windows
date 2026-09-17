@@ -9,6 +9,7 @@ import { BillingProducts } from './BillingProducts';
 import { BillingCreditNotes } from './BillingCreditNotes';
 import { BillingManualInvoice } from './BillingManualInvoice';
 import { BillingPayments } from './BillingPayments';
+import { NavigationMemory, NavigationView } from '../components/NavigationMemory';
 
 function Sidebar() {
   const location = useLocation();
@@ -63,10 +64,12 @@ function Sidebar() {
 }
 
 export function BillingLayout() {
+  const { pathname } = useLocation();
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden font-sans">
+    <NavigationMemory><div className="flex h-screen bg-slate-50 overflow-hidden font-sans">
       <Sidebar />
-      <main className="flex-1 min-w-0 overflow-y-auto">
+      <main data-navigation-scroll className="flex-1 min-w-0 overflow-y-auto">
+        <NavigationView name={pathname} restore={!pathname.endsWith('/clienti')}>
         <Routes>
           <Route path="/dashboard" element={<BillingDashboard />} />
           <Route path="/plati" element={<BillingPayments />} />
@@ -79,7 +82,8 @@ export function BillingLayout() {
           <Route path="/setari" element={<BillingSettings />} />
           <Route path="*" element={<div className="p-8">În lucru...</div>} />
         </Routes>
+        </NavigationView>
       </main>
-    </div>
+    </div></NavigationMemory>
   );
 }

@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.112
+
+- Revenirea în Clienți & Entități și Facturi păstrează poziția listei, căutarea, filtrele și fila profilului, în registrul normal și în registrul separat.
+- Restaurarea poziției așteaptă încărcarea datelor; reîncărcarea după salvare păstrează lista vizibilă. Închiderea editorului și a dialogului de schimbare a emitentului restabilește focusul fără deplasarea paginii.
+- Preferințele de navigare există numai în memoria sesiunii. Registrul separat le șterge la blocare, atât pentru Writer, cât și pentru Viewer; drepturile de acces rămân neschimbate.
+- Include toate modificările v0.1.111, fără migrare sau modificare a datelor financiare, fără schimbări în platformă ori în sincronizarea Drive.
+
 ### VR - Hub Management v0.1.111
 
 - Sincronizarea facturării include comenzile livrate, indiferent dacă livrarea este confirmată de șofer sau de admin, în ambele registre. Comenzile deschise și blocate rămân eligibile; cele anulate sunt excluse.

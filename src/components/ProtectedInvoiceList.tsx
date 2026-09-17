@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useNavigationState } from '../hooks/navigationMemory';
 import { ArrowRightLeft, Ban, Banknote, Edit3, FileMinus2, Receipt, RefreshCw, RotateCw, Search, Trash2 } from 'lucide-react';
 import { ProtectedDocumentActions } from './ProtectedDocumentActions';
 
@@ -8,11 +8,11 @@ export function ProtectedInvoiceList({ invoices, loading, error, reload, notify,
   onEdit: (invoice: any) => void; onIssuerChange: (invoice: any) => void; onCancel: (invoice: any) => void;
   onRemove: (invoice: any) => void; onReissue: (invoice: any) => void; onCreditNote: (invoice: any) => void; onPayment: (invoice: any) => void;
 }) {
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('all');
-  const [issuer, setIssuer] = useState('all');
-  const [start, setStart] = useState('');
-  const [end, setEnd] = useState('');
+  const [search, setSearch] = useNavigationState('invoice-search', '');
+  const [status, setStatus] = useNavigationState('invoice-status', 'all');
+  const [issuer, setIssuer] = useNavigationState('invoice-issuer', 'all');
+  const [start, setStart] = useNavigationState('invoice-start', '');
+  const [end, setEnd] = useNavigationState('invoice-end', '');
   const normalize = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
   const filtered = invoices.filter(row => normalize(`${row.reference} ${row.companyName} ${row.storeName}`).includes(normalize(search.trim()))
     && (status === 'all' || row.status === status) && (issuer === 'all' || row.issuerCode === issuer)
