@@ -190,6 +190,7 @@ export const desktopApi = {
     touch: () => ipcRenderer.invoke('protectedRegistry:touch'),
     recover: (recoveryKey: string, newPin: string, newPinConfirmation: string) => ipcRenderer.invoke('protectedRegistry:recover', { recoveryKey, newPin, newPinConfirmation }),
     changePin: (currentPin: string, newPin: string, newPinConfirmation: string) => ipcRenderer.invoke('protectedRegistry:changePin', { currentPin, newPin, newPinConfirmation }),
+    rotateRecoveryKey: (currentPin: string, confirmed: boolean): Promise<{ success: true; recoveryKey: string }> => ipcRenderer.invoke('protectedRegistry:rotateRecoveryKey', { currentPin, confirmed }),
     getOverview: () => ipcRenderer.invoke('protectedRegistry:getOverview'),
     getCompanies: () => ipcRenderer.invoke('protectedRegistry:getCompanies'),
     setAssignment: (companyId: number, assigned: boolean, operationId: string) => ipcRenderer.invoke('protectedRegistry:setAssignment', { companyId, assigned, operationId }),

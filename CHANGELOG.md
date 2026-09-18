@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.113
+
+- Writer poate genera o cheie nouă de recuperare din Registru separat → Setări, după confirmarea PIN-ului actual. Cheia permite activarea unui Viewer nou, cu PIN propriu.
+- Cheia este afișată o singură dată, după verificarea salvării în Drive, și dispare la părăsirea paginii, blocarea registrului sau după două minute. Nu este păstrată în clar în fișiere, loguri ori memoria de navigare.
+- Facturile, plățile, numerotarea, PIN-ul Writer și accesul Viewer-elor deja activate rămân neschimbate. Operația include un backup criptat, protecție împotriva cererilor simultane și reluare sigură după întreruperi.
+- Include toate modificările v0.1.112, fără migrare de bază de date sau schimbări în platformă. Actualizarea nu generează automat o cheie și nu revocă accesul calculatoarelor deja autorizate.
+
 ### VR - Hub Management v0.1.112
 
 - Revenirea în Clienți & Entități și Facturi păstrează poziția listei, căutarea, filtrele și fila profilului, în registrul normal și în registrul separat.

@@ -8,6 +8,7 @@ import { NumericInput } from '../../src/components/NumericInput';
 import '../../src/index.css';
 
 const calls: unknown[] = [];
+let recoveryFailure = false;
 const role = new URLSearchParams(location.search).get('role') || 'writer';
 let protectedUnlocked = !new URLSearchParams(location.search).has('activation');
 const invoice = {
@@ -32,6 +33,7 @@ window.desktopApi = {
     retryDocumentSync:async()=>{calls.push('retry-documents');return structuredClone(documentStatus)},
   },
   billing: {
+    getSettings: async () => ({}),
     getCreditNotes: async () => [], getCreditNoteDraft: async () => [invoice],
     getIssuers: async () => [{ id: 1, legal_name: 'Fixture Issuer' }],
     getAllCompaniesAndStores: async () => [company],
@@ -41,6 +43,13 @@ window.desktopApi = {
   },
   drivers: { getAll: async () => [] }, employees: { getAll: async () => [] },
   protectedRegistry: {
+    rotateRecoveryKey: async (pin: string, confirmed: boolean) => {
+      calls.push('rotate-recovery');
+      await new Promise(resolve => setTimeout(resolve, 250));
+      if (pin !== '482719' || !confirmed) throw new Error('PIN-ul actual este incorect.');
+      if (recoveryFailure) throw new Error('Confirmarea Drive a eșuat (test sintetic).');
+      return { success: true, recoveryKey: 'SYNTHETIC-RECOVERY-TEST-ONLY' };
+    },
     status: async () => ({ unlocked: protectedUnlocked, readOnly: role === 'viewer', configured: true, needsRecovery: !protectedUnlocked, secureStorageAvailable: true }), getOverview: async () => ({ mode: 'test' }),
     activateViewer: async () => { calls.push('activate-viewer'); protectedUnlocked = true; },
     refreshViewer: async () => ({ success: true, revision: 1 }),
@@ -118,5 +127,5 @@ export function Harness() {
               </div>}
   </>;
 }
-(window as any).__inputTest = { calls, notify, confirmAction, setDocumentStatus:(value:unknown)=>Object.assign(documentStatus,value) };
+(window as any).__inputTest = { calls, notify, confirmAction, setDocumentStatus:(value:unknown)=>Object.assign(documentStatus,value), setRecoveryFailure:(value:boolean)=>{recoveryFailure=value;} };
 createRoot(document.getElementById('root')!).render(<StrictMode><Harness /></StrictMode>);

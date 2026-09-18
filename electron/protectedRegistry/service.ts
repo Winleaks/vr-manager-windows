@@ -104,6 +104,7 @@ const sessions = new Map<number, Session>();
 const sessionGenerations = new Map<number, number>();
 const temporaryFiles = new Map<number, Set<string>>();
 const sessionTimers = new Map<number, ReturnType<typeof setTimeout>>();
+const recoveryRotations = new Set<number>();
 let routingOperationQueue: Promise<void> = Promise.resolve();
 
 function setSession(session: Session) {
@@ -302,10 +303,14 @@ async function mutate(
   eventType: string,
   apply: (vault: ProtectedRegistryVault, operationId: string) => void,
   findReplay?: (vault: ProtectedRegistryVault) => boolean,
+  rotateRecovery?: () => string,
 ) {
   return withRegistryRoutingLock(() => withPrivateCloudOperation(async () => {
     assertWriter();
     const initialSession = await freshSession(webContentsId);
+    // Only the dedicated Writer operation supplies this callback. Reauthenticate
+    // inside the same queue as the cloud commit, never in the renderer.
+    const newRecoveryKey = rotateRecovery?.();
     const operationId = requireText(operationIdInput, 'Identificatorul operației', 100);
     if (!/^[a-zA-Z0-9_-]{16,100}$/.test(operationId)) throw new Error('Identificatorul operației este invalid.');
     const key = keyBuffer();
@@ -327,7 +332,16 @@ async function mutate(
     next.processedOperations.push(operationId);
     if (next.processedOperations.length > 10000) next.processedOperations.splice(0, next.processedOperations.length - 10000);
     addAudit(next, eventType, operationId, { revision: next.revision });
-    const nextEnvelope = encryptVaultWithExistingRecovery(encode(next), key, next.revision, latest.envelope.recovery);
+    const nextEnvelope = newRecoveryKey
+      ? encryptVault(encode(next), key, newRecoveryKey, next.revision)
+      : encryptVaultWithExistingRecovery(encode(next), key, next.revision, latest.envelope.recovery);
+    if (newRecoveryKey) {
+      // Keep an encrypted recovery point. Never write the recovery string or
+      // change the data key/PIN: existing Writer and Viewer access must survive.
+      await writeVerifiedPrivateCloudFile({ folderNames: ['Duplicat', 'Backups'],
+        filename: `registru-separat-recovery-${randomUUID()}.vault`, mimeType: 'application/octet-stream',
+        buffer: encode(latest.envelope), expectedVersion: null });
+    }
     const pendingExisting = await readVerifiedPrivateCloudFile(FOLDER, PENDING_FILE);
     await writeVerifiedPrivateCloudFile({
       folderNames: FOLDER,
@@ -526,6 +540,46 @@ export async function changeProtectedRegistryPin(webContentsId: number, currentP
   auth.lockUntil = null;
   saveAuthState(auth);
   return { success: true };
+}
+
+export async function rotateProtectedRecoveryKey(webContentsId: number, currentPinInput: unknown, confirmed: unknown) {
+  assertWriter();
+  if (confirmed !== true) throw new Error('Confirmă înlocuirea cheii de recuperare.');
+  if (recoveryRotations.size) throw new Error('Generarea unei chei este deja în curs. Așteaptă finalizarea.');
+  recoveryRotations.add(webContentsId);
+  let recoveryKey = '';
+  let authorized = false;
+  try {
+    await mutate(webContentsId, randomUUID(), 'recovery_key_rotated', () => undefined, undefined, () => {
+      const auth = readAuthState();
+      if (!auth) throw new Error('Autentificarea Writer lipsește. Deblochează din nou registrul.');
+      if (auth.lockUntil && Date.parse(auth.lockUntil) > Date.now()) throw new Error('Acces blocat temporar. Încearcă după expirarea blocării.');
+      if (typeof currentPinInput !== 'string' || !/^\d{6}$/.test(currentPinInput) || !verifyPin(currentPinInput, auth.pin)) {
+        const failed = registerFailedPinAttempt(auth.failedAttempts, Date.now(), MAX_ATTEMPTS, LOCKOUT_MS);
+        Object.assign(auth, failed);
+        saveAuthState(auth);
+        if (auth.lockUntil) lockProtectedRegistry(webContentsId);
+        throw new Error(auth.lockUntil ? 'Prea multe încercări greșite. Accesul a fost blocat 15 minute.' : 'PIN-ul actual este incorect.');
+      }
+      auth.failedAttempts = 0; auth.lockUntil = null;
+      saveAuthState(auth);
+      authorized = true;
+      recoveryKey = generateRecoveryKey();
+      return recoveryKey;
+    });
+    await freshSession(webContentsId);
+    assertWriter();
+    return { success: true as const, recoveryKey };
+  } catch (error) {
+    if (!authorized) throw error;
+    // A lost cloud response can leave a committed pending envelope. The next
+    // attempt reconciles it and generates another key; never show an unverified
+    // key, persist plaintext for replay or claim a failed commit was rolled back.
+    throw new Error('Noua cheie nu a putut fi confirmată și nu este afișată. Deblochează registrul dacă este necesar și reîncearcă generarea. Accesul existent cu PIN nu este schimbat.');
+  } finally {
+    recoveryKey = '';
+    recoveryRotations.delete(webContentsId);
+  }
 }
 
 export async function getProtectedRegistryOverview(webContentsId: number) {
