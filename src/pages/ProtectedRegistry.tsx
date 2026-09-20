@@ -5,6 +5,9 @@ import { ProtectedInvoiceList } from '../components/ProtectedInvoiceList';
 import { ProtectedDocumentActions } from '../components/ProtectedDocumentActions';
 import { ProtectedViewer } from '../components/ProtectedViewer';
 import { RecoveryKeySettings } from '../components/RecoveryKeySettings';
+import { BillingPeriodFilter } from '../components/BillingPeriodFilter';
+import { billingDashboardRange, type BillingDashboardPeriod } from '../utils/billingDashboardPeriod';
+import { format, parseISO, startOfWeek } from 'date-fns';
 import { NavigationMemory, NavigationView } from '../components/NavigationMemory';
 import { useNavigationState, useRememberedScroll } from '../hooks/navigationMemory';
 import { BillingSettings } from './BillingSettings';
@@ -206,11 +209,27 @@ const tabs = [
 ] as const;
 
 function DashboardPanel() {
-  const [data, setData] = useState<any>(null);
-  useEffect(() => { api.protectedRegistry.getOverview().then(setData).catch((error) => notify(errorMessage(error))); }, []);
-  if (!data) return <p className="text-slate-500">Se încarcă…</p>;
-  const cards = [['Clienți atribuiți', data.assignedCompanies], ['Facturi', data.invoices], ['Facturat', money(data.invoiced)], ['Creditat', money(data.credited)], ['Încasat', money(data.paid)], ['Credit disponibil', money(data.availableCredit)], ['Rest de plată', money(data.outstanding)]];
-  return <div className="space-y-6"><PanelHeading title="Dashboard registru separat" description="Evidență oficială independentă de registrul normal." icon={LayoutDashboard} /><div className="grid md:grid-cols-4 gap-4">{cards.map(([label, value], index) => <div key={String(label)} className="rounded-2xl bg-white border border-slate-200 p-5"><div className="flex items-center justify-between gap-3"><p className="text-sm text-slate-500">{label}</p><span className="rounded-lg bg-indigo-50 text-indigo-600 p-2">{index === 0 ? <Users size={20} /> : index === 1 ? <Receipt size={20} /> : index === 3 ? <FileMinus2 size={20} /> : <Banknote size={20} />}</span></div><p className="text-2xl font-bold mt-2">{value}</p></div>)}</div><div className="grid md:grid-cols-2 gap-4">{([['THE GOODNESS BAKER LTD', data.byIssuer?.goodness], ['VATRA ROMANEASCA LTD', data.byIssuer?.vatra]] as const).map(([name, values]) => <section key={name} className="rounded-2xl bg-white border p-5"><h2 className="font-bold mb-3">{name}</h2><div className="grid grid-cols-2 gap-2 text-sm"><span>Facturat</span><b className="text-right">{money(values?.invoiced)}</b><span>Creditat</span><b className="text-right">{money(values?.credited)}</b><span>Încasat</span><b className="text-right">{money(values?.paid)}</b><span>Credit disponibil</span><b className="text-right">{money(values?.availableCredit)}</b><span>Rest de plată</span><b className="text-right">{money(values?.outstanding)}</b></div></section>)}</div></div>;
+  const [period, setPeriod] = useNavigationState<BillingDashboardPeriod>('period', 'month');
+  const [weekDate, setWeekDate] = useNavigationState('week', () => localToday());
+  const week = startOfWeek(parseISO(weekDate), { weekStartsOn: 1 });
+  const { from, to } = billingDashboardRange(period, week);
+  const [result, setResult] = useState<{ from?: string; to?: string; data: Awaited<ReturnType<typeof api.protectedRegistry.getOverview>> } | null>(null);
+  const [failure, setFailure] = useState<{ from?: string; to?: string; message: string } | null>(null);
+  useEffect(() => {
+    let active = true;
+    setResult(null); setFailure(null);
+    void api.protectedRegistry.getOverview(from, to).then(data => {
+      if (active) setResult({ from, to, data });
+    }).catch(error => { if (active) setFailure({ from, to, message: errorMessage(error) }); });
+    return () => { active = false; };
+  }, [from, to]);
+  const data = result?.from === from && result?.to === to ? result?.data : null;
+  const error = failure?.from === from && failure?.to === to ? failure?.message : null;
+  const filter = <BillingPeriodFilter period={period} week={week} setPeriod={setPeriod} setWeek={date => setWeekDate(format(date, 'yyyy-MM-dd'))} />;
+  const heading = <PanelHeading title="Dashboard registru separat" description="Facturile sunt filtrate după data emiterii. Soldurile actuale includ tot istoricul." icon={LayoutDashboard} />;
+  if (!data) return <div className="space-y-6">{heading}{filter}{error ? <p role="alert" className="text-rose-700">{error}</p> : <p role="status" className="text-slate-500">Se încarcă statisticile…</p>}</div>;
+  const cards = [['Clienți atribuiți', data.assignedCompanies], ['Facturi', data.invoices], ['Facturat', money(data.invoiced)], ['Creditat', money(data.credited)], ['Încasat', money(data.paid)], ['Credit disponibil · Tot istoricul', money(data.availableCredit)], ['Rest de plată actual · Tot istoricul', money(data.outstanding)]];
+  return <div className="space-y-6">{heading}{filter}<div className="grid md:grid-cols-4 gap-4">{cards.map(([label, value], index) => <div key={String(label)} className="rounded-2xl bg-white border border-slate-200 p-5"><div className="flex items-center justify-between gap-3"><p className="text-sm text-slate-500">{label}</p><span className="rounded-lg bg-indigo-50 text-indigo-600 p-2">{index === 0 ? <Users size={20} /> : index === 1 ? <Receipt size={20} /> : index === 3 ? <FileMinus2 size={20} /> : <Banknote size={20} />}</span></div><p className="text-2xl font-bold mt-2">{value}</p></div>)}</div><div className="grid md:grid-cols-2 gap-4">{([['THE GOODNESS BAKER LTD', data.byIssuer?.goodness], ['VATRA ROMANEASCA LTD', data.byIssuer?.vatra]] as const).map(([name, values]) => <section key={name} className="rounded-2xl bg-white border p-5"><h2 className="font-bold mb-3">{name}</h2><div className="grid grid-cols-2 gap-2 text-sm"><span>Facturat</span><b className="text-right">{money(values?.invoiced)}</b><span>Creditat</span><b className="text-right">{money(values?.credited)}</b><span>Încasat</span><b className="text-right">{money(values?.paid)}</b><span>Credit disponibil · Tot istoricul</span><b className="text-right">{money(values?.availableCredit)}</b><span>Rest de plată actual · Tot istoricul</span><b className="text-right">{money(values?.outstanding)}</b></div></section>)}</div></div>;
 }
 
 function ClientsPanel() {

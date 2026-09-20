@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.114
+
+- Dashboardul registrului separat permite filtrarea după luna curentă, o săptămână aleasă (luni–duminică) sau tot istoricul, cu același design ca dashboardul principal. Implicit este selectată luna curentă.
+- Numărul și valoarea facturilor, Credit Notes și încasările urmăresc perioada selectată. Creditul disponibil și restul de plată rămân solduri actuale pentru tot istoricul, etichetate explicit; totalurile pe emitent respectă aceleași reguli.
+- Selecția se păstrează la revenirea pe dashboard numai în memoria sesiunii și se șterge la blocarea registrului. Răspunsurile întârziate sau erorile nu afișează totaluri pentru o altă perioadă.
+- Include toate modificările v0.1.113. Filtrarea este doar de consultare, fără modificarea datelor financiare, scrieri în Drive, migrare sau schimbări în platformă.
+
 ### VR - Hub Management v0.1.113
 
 - Writer poate genera o cheie nouă de recuperare din Registru separat → Setări, după confirmarea PIN-ului actual. Cheia permite activarea unui Viewer nou, cu PIN propriu.

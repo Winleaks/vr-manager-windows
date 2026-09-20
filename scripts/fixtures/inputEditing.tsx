@@ -9,6 +9,18 @@ import '../../src/index.css';
 
 const calls: unknown[] = [];
 let recoveryFailure = false;
+const overviewCalls: { from?: string; to?: string }[] = [];
+let overviewFailure = false;
+async function dashboardOverview(from?: string, to?: string) {
+  if (arguments.length === 2) overviewCalls.push({ from, to });
+  const fail = overviewFailure;
+  await new Promise(resolve => setTimeout(resolve, from ? 30 : 250));
+  if (fail) throw new Error('Statistici indisponibile (test sintetic).');
+  const invoiced = !from ? 999 : (Date.parse(to!) - Date.parse(from)) / 86400000 === 6 ? 70 : 120;
+  const values = { invoiced: invoiced / 2, credited: 2, paid: 4, availableCredit: 3, outstanding: 400 };
+  return { mode: 'test', counters: {}, assignedCompanies: 1, invoices: 2, invoiced, credited: 4, paid: 8, availableCredit: 6, outstanding: 800,
+    byIssuer: { goodness: values, vatra: values } };
+}
 const role = new URLSearchParams(location.search).get('role') || 'writer';
 let protectedUnlocked = !new URLSearchParams(location.search).has('activation');
 const invoice = {
@@ -50,7 +62,7 @@ window.desktopApi = {
       if (recoveryFailure) throw new Error('Confirmarea Drive a eșuat (test sintetic).');
       return { success: true, recoveryKey: 'SYNTHETIC-RECOVERY-TEST-ONLY' };
     },
-    status: async () => ({ unlocked: protectedUnlocked, readOnly: role === 'viewer', configured: true, needsRecovery: !protectedUnlocked, secureStorageAvailable: true }), getOverview: async () => ({ mode: 'test' }),
+    status: async () => ({ unlocked: protectedUnlocked, readOnly: role === 'viewer', configured: true, needsRecovery: !protectedUnlocked, secureStorageAvailable: true }), getOverview: dashboardOverview,
     activateViewer: async () => { calls.push('activate-viewer'); protectedUnlocked = true; },
     refreshViewer: async () => ({ success: true, revision: 1 }),
     openDocument: async () => { calls.push('protected-open'); return { success: true }; },
@@ -127,5 +139,5 @@ export function Harness() {
               </div>}
   </>;
 }
-(window as any).__inputTest = { calls, notify, confirmAction, setDocumentStatus:(value:unknown)=>Object.assign(documentStatus,value), setRecoveryFailure:(value:boolean)=>{recoveryFailure=value;} };
+(window as any).__inputTest = { calls, overviewCalls, setOverviewFailure:(value:boolean)=>{overviewFailure=value;}, notify, confirmAction, setDocumentStatus:(value:unknown)=>Object.assign(documentStatus,value), setRecoveryFailure:(value:boolean)=>{recoveryFailure=value;} };
 createRoot(document.getElementById('root')!).render(<StrictMode><Harness /></StrictMode>);

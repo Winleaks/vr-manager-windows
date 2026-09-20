@@ -7,6 +7,7 @@ import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
 import { testNavigationMemory } from './testNavigationMemory.mjs';
 import { testRecoveryKeySettings } from './testRecoveryKeySettings.mjs';
+import { testProtectedDashboard } from './testProtectedDashboard.mjs';
 
 const serveOnly = process.argv.includes('--serve');
 const externalUrl = process.argv.find((arg) => arg.startsWith('--url='))?.slice(6);
@@ -57,6 +58,7 @@ if (serveOnly) {
       assert.equal(await field.evaluate((element) => document.activeElement === element), true);
     };
 
+    await testProtectedDashboard(page, open);
     await testRecoveryKeySettings(page, open);
     await testNavigationMemory(page, open);
     await open('sync');

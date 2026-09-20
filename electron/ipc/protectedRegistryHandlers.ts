@@ -66,7 +66,7 @@ export function registerProtectedRegistryHandlers() {
   handleTrustedIpc('protectedRegistry:recover', (event, data) => recoverProtectedRegistry(event.sender.id, data?.recoveryKey, data?.newPin, data?.newPinConfirmation));
   handleTrustedIpc('protectedRegistry:changePin', (event, data) => changeProtectedRegistryPin(event.sender.id, data?.currentPin, data?.newPin, data?.newPinConfirmation));
   handleTrustedIpc('protectedRegistry:rotateRecoveryKey', (event, data) => rotateProtectedRecoveryKey(event.sender.id, data?.currentPin, data?.confirmed));
-  handleTrustedIpc('protectedRegistry:getOverview', (event) => getProtectedRegistryOverview(event.sender.id));
+  handleTrustedIpc('protectedRegistry:getOverview', (event, data) => getProtectedRegistryOverview(event.sender.id, data?.from, data?.to));
   handleTrustedIpc('protectedRegistry:getCompanies', (event) => listProtectedRegistryCompanies(event.sender.id));
   handleTrustedIpc('protectedRegistry:setAssignment', (event, data) => setProtectedRegistryAssignment(event.sender.id, data?.companyId, data?.assigned, data?.operationId));
   handleTrustedIpc('protectedRegistry:setMode', (event, data) => setProtectedRegistryMode(event.sender.id, data?.mode, data?.confirmation, data?.operationId));

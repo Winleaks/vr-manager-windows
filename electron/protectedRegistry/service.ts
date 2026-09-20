@@ -6,6 +6,7 @@ import { applyProtectedInvoiceEdit, protectedInvoiceEditBlock, protectedInvoiceE
 import type { ProtectedInvoiceEditInput } from '../../src/shared/protectedInvoiceEdit.ts';
 import { protectedInvoiceOutstanding } from './invoiceOutstanding.ts';
 import { protectedPaymentDisplay } from './paymentDisplay.ts';
+import { protectedRegistryOverview } from './overview.ts';
 import { applyAutomaticProtectedCredit } from './automaticCredit.ts';
 import { localInvoiceCatalog, priceInvoiceCatalog } from '../integrations/invoiceCatalogPricing.ts';
 import fs from 'node:fs';
@@ -582,37 +583,9 @@ export async function rotateProtectedRecoveryKey(webContentsId: number, currentP
   }
 }
 
-export async function getProtectedRegistryOverview(webContentsId: number) {
+export async function getProtectedRegistryOverview(webContentsId: number, from?: unknown, to?: unknown) {
   const session = await freshSession(webContentsId);
-  const activeInvoices = session.vault.invoices.filter((invoice) => invoice.status !== 'cancelled');
-  const activeCreditNotes = session.vault.creditNotes.filter((note) => note.status === 'issued');
-  const activePayments = session.vault.payments.filter((payment) => !payment.reversedAt);
-  const financials = (issuerCode?: ProtectedIssuerCode) => {
-    const invoices = issuerCode ? activeInvoices.filter((invoice) => invoice.issuerCode === issuerCode) : activeInvoices;
-    const notes = issuerCode ? activeCreditNotes.filter((note) => note.issuerCode === issuerCode) : activeCreditNotes;
-    const payments = issuerCode ? activePayments.filter((payment) => payment.issuerCode === issuerCode) : activePayments;
-    const credits = session.vault.creditEntries.filter((entry) => !issuerCode || entry.issuerCode === issuerCode);
-    return {
-      invoiced: invoices.reduce((sum, invoice) => sum + invoice.totalAmount, 0),
-      credited: notes.reduce((sum, note) => sum + note.totalAmount, 0),
-      paid: payments.reduce((sum, payment) => sum + payment.amount, 0),
-      availableCredit: credits.reduce((sum, entry) => sum + entry.availableAmount, 0),
-      outstanding: invoices.reduce((sum, invoice) => sum + Math.max(0, invoice.totalAmount - invoice.paidAmount - invoice.creditedAmount - activeCreditApplied(session.vault, invoice.id)), 0),
-    };
-  };
-  const combined = financials();
-  return {
-    mode: session.vault.mode,
-    liveStartedAt: session.vault.liveStartedAt,
-    counters: session.vault.counters,
-    assignedCompanies: session.vault.assignments.length,
-    invoices: activeInvoices.length,
-    ...combined,
-    byIssuer: {
-      goodness: financials('goodness'),
-      vatra: financials('vatra'),
-    },
-  };
+  return protectedRegistryOverview(session.vault, from, to);
 }
 
 export async function listProtectedRegistryCompanies(webContentsId: number) {
