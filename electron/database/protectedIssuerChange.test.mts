@@ -1,13 +1,9 @@
 import test from 'node:test';
+import { protectedOutboxHarness } from '../security/fixtures/protectedOutboxHarness.mts';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import ts from 'typescript';
-import { requireText } from './businessValidation.ts';
 import { createEmptyProtectedVault, type ProtectedInvoice } from '../protectedRegistry/types.ts';
 import { applyProtectedIssuerChange, protectedIssuerChangeBlock, protectedIssuerChangeReplay, validateProtectedIssuerChange } from '../protectedRegistry/issuerChange.ts';
-import { applyAutomaticProtectedCredit } from '../protectedRegistry/automaticCredit.ts';
 import { issuerSnapshot, type BillingIssuerRow } from './billingIssuers.ts';
-import { withPrivateCloudOperation } from '../integrations/privateCloudOperation.ts';
 
 const issuer = (code: 'goodness' | 'vatra'): BillingIssuerRow => ({
   id: code === 'goodness' ? 1 : 2, code, legal_name: code === 'goodness' ? 'GOODNESS' : 'VATRA', address: 'Test address', company_number: '123',
@@ -83,91 +79,53 @@ test('failed protected persistence discards candidate, retry can commit the same
   assert.equal(vault.invoices.length, 2); assert.equal(vault.counters.VRL, 2931);
 });
 
-// Exercise the real service orchestration without Electron, credentials or Drive.
-// Storage adapters below deliberately model pending-write recovery, not encryption
-// (the encryption implementation has its own independent tests).
-function serviceHarness() {
+// Real service + encrypted outbox; external adapters remain synthetic.
+function serviceHarness(t: any) {
   const { vault, request } = fixture();
-  const state = { cloud: structuredClone(vault), pending: null as any, role: 'writer', failVaultWrite: false, failPdf: false, writes: 0, lockOnCommit: false };
-  const sessions = new Map<number, any>([[1, { role: 'writer', webContentsId: 1, lastActivity: Date.now(), vault: structuredClone(vault), envelope: {}, driveVersion: '1' }]]);
-  const code = readFileSync(new URL('../protectedRegistry/service.ts', import.meta.url), 'utf8');
-  const section = (start: string, end: string) => code.slice(code.indexOf(start), code.indexOf(end, code.indexOf(start)));
-  const script = [
-    'let routingOperationQueue = Promise.resolve();',
-    section('export async function withRegistryRoutingLock', 'function assertWriter'),
-    section('async function freshSession', 'export function isProtectedRegistryEnabled'),
-    section('export async function changeProtectedInvoiceIssuer', 'export async function cancelProtectedInvoice'),
-  ].join('\n').replaceAll('export ', '');
-  const bindings = {
-    assertWriter: () => { if (state.role !== 'writer') throw Error('Writer required'); },
-    withPrivateCloudOperation,
-    sessions, SESSION_MS: 60000, lockProtectedRegistry: (id: number) => sessions.delete(id),
-    setSession: (session: any) => { session.role ??= state.role; session.lastActivity = Date.now(); sessions.set(session.webContentsId, session); },
-    requireText, keyBuffer: () => Buffer.alloc(32),
-    reconcilePending: async () => { if (state.pending) { state.cloud = structuredClone(state.pending.payload); state.pending = null; } },
-    loadVaultFromCloud: async () => ({ vault: structuredClone(state.cloud), envelope: { recovery: {} }, driveVersion: '1' }),
-    getDeviceRole: () => state.role,
-    addAudit: (next: any, eventType: string, operationId: string, details: any) => next.audit.push({ eventType, operationId, details }),
-    encryptVaultWithExistingRecovery: (buffer: Buffer) => ({ payload: JSON.parse(buffer.toString()), recovery: {} }),
-    encode: (value: unknown) => Buffer.from(JSON.stringify(value)),
-    readVerifiedPrivateCloudFile: async () => null,
-    writeVerifiedPrivateCloudFile: async ({ filename, buffer }: any) => {
-      state.writes++;
-      const envelope = JSON.parse(buffer.toString());
-      if (filename === 'pending') state.pending = envelope;
-      if (filename === 'vault') { if (state.failVaultWrite) throw Error('vault write unavailable'); state.cloud = envelope.payload; }
-    },
-    uploadManifest: async () => { if (state.lockOnCommit) sessions.delete(1); }, deletePrivateCloudFile: async () => { state.pending = null; },
-    FOLDER: [], PENDING_FILE: 'pending', VAULT_FILE: 'vault', MANIFEST_FILE: 'manifest',
-    validateProtectedIssuerChange, protectedIssuerChangeReplay, applyProtectedIssuerChange, applyAutomaticProtectedCredit,
+  const h = protectedOutboxHarness(t, undefined, vault, {
     readStoreSnapshot: () => ({ company_id: 7 }), companyKey: () => 'local:7', readIssuer: () => issuer('vatra'),
-    uploadProtectedInvoicePdf: async () => { if (state.failPdf) throw Error('PDF upload unavailable'); return { filename: 'VRL-2930.pdf' }; },
-  };
-  const javascript = ts.transpileModule(script, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
-  const invoke = new Function(...Object.keys(bindings), javascript + '\nreturn changeProtectedInvoiceIssuer;')(...Object.values(bindings));
-  return { state, sessions, request, invoke: (input = request) => invoke(1, input) };
+  });
+  return { ...h, request, invoke: (input = request) => h.api.changeProtectedInvoiceIssuer(1, input) };
 }
 
-test('real protected service serializes concurrent retries and refreshes the session after replay', async () => {
-  const h = serviceHarness();
-  const source = h.state.cloud.invoices[0];
-  h.state.cloud.creditEntries.push({ id: 'available-credit', companyKey: source.companyKey, issuerCode: 'vatra', sourceType: 'payment_overpayment', sourceId: 'payment-test', originalAmount: 3, availableAmount: 3, createdAt: '2026-09-01', testEntry: source.testDocument });
+test('issuer change serializes pending retries, preserves credit, and recovers the same replacement after unlock', async t => {
+  const h = serviceHarness(t); const cloud = h.current(); const source = cloud.invoices[0];
+  cloud.creditEntries.push({ id: 'available-credit', companyKey: source.companyKey, issuerCode: 'vatra', sourceType: 'payment_overpayment', sourceId: 'payment-test', originalAmount: 3, availableAmount: 3, createdAt: '2026-09-01', testEntry: source.testDocument });
+  h.replaceCloud(cloud); await h.api.unlockProtectedRegistry(1, 'synthetic-pin');
   const [first, second] = await Promise.all([h.invoke(), h.invoke()]);
-  assert.equal(first.invoice.id, second.invoice.id); assert.equal(h.state.cloud.invoices.length, 2);
-  assert.equal(h.state.cloud.counters.VRL, 2931); assert.equal(h.state.writes, 2);
-  assert.equal(h.state.cloud.creditApplications.length, 1);
-  assert.equal(h.state.cloud.creditApplications[0].amount, 3);
-  assert.equal(h.state.cloud.creditEntries[0].availableAmount, 0);
-  h.sessions.get(1).vault = createEmptyProtectedVault();
+  assert.equal(first.invoice.id, second.invoice.id); await h.worker.start();
+  assert.equal(h.current().invoices.length, 2); assert.equal(h.current().counters.VRL, 2931);
+  assert.equal(h.state.writes.filter(name => name === 'registru-separat.vault').length, 1);
+  assert.equal(h.current().creditApplications.length, 1); assert.equal(h.current().creditApplications[0].amount, 3);
+  assert.equal(h.current().creditEntries[0].availableAmount, 0);
+  h.sessions.clear(); await h.api.unlockProtectedRegistry(1, 'synthetic-pin');
   assert.equal((await h.invoke()).invoice.id, first.invoice.id);
   assert.equal(h.sessions.get(1).vault.invoices.length, 2);
   await assert.rejects(h.invoke({ ...h.request, operationId: 'another-operation-001' }), /înlocuitoare/);
 });
 
-test('a cloud commit finishing after lock never restores the protected session', async () => {
-  const h = serviceHarness(); h.state.lockOnCommit = true;
-  await assert.rejects(h.invoke(), /Sesiunea/);
+test('accepted issuer change can finish after lock without restoring the protected session', async t => {
+  const h = serviceHarness(t); const accepted = await h.invoke();
+  assert.equal(accepted.pdf.pending, true); h.sessions.clear(); await h.worker.start();
   assert.equal(h.sessions.has(1), false);
-  assert.equal(h.state.cloud.invoices.length, 2, 'the confirmed cloud operation is retained');
-  assert.equal(h.state.cloud.counters.VRL, 2931);
+  assert.equal(h.current().invoices.length, 2); assert.equal(h.current().counters.VRL, 2931);
 });
 
-test('real protected service recovers an interrupted write and treats PDF failure as committed issuance', async () => {
-  const h = serviceHarness(); h.state.failVaultWrite = true;
-  await assert.rejects(h.invoke(), /vault write unavailable/);
-  assert.equal(h.state.cloud.invoices.length, 1); assert.equal(h.state.cloud.invoices[0].status, 'unpaid');
-  assert.equal(h.sessions.get(1).vault.invoices.length, 1);
-  h.state.failVaultWrite = false; h.state.failPdf = true;
-  const recovered = await h.invoke();
-  assert.equal(recovered.success, true); assert.equal(recovered.pdf.success, false);
-  assert.equal(h.state.cloud.invoices.length, 2); assert.equal(h.state.cloud.counters.VRL, 2931);
+test('interrupted issuer change/PDF upload retries a saved replacement, not issuance', async t => {
+  const h = serviceHarness(t); h.state.failAt = 'registru-separat.vault';
+  const accepted = await h.invoke(); await h.worker.start();
+  assert.equal(h.current().invoices.length, 1); assert.equal(h.store.count(), 1);
   assert.equal(h.sessions.get(1).vault.invoices.length, 2);
-  assert.equal((await h.invoke()).invoice.id, recovered.invoice.id);
+  h.state.failAt = 'pdf'; await h.worker.start();
+  assert.equal(h.current().invoices.length, 2); assert.equal(h.store.count(), 1);
+  h.state.failAt = ''; await h.worker.start();
+  assert.equal(h.current().counters.VRL, 2931); assert.equal(h.store.count(), 0);
+  assert.equal((await h.invoke()).invoice.id, accepted.invoice.id);
 });
 
-test('real protected service rejects locked sessions and Viewer without writing', async () => {
-  const locked = serviceHarness(); locked.sessions.clear();
-  await assert.rejects(locked.invoke(), /Sesiunea/); assert.equal(locked.state.writes, 0);
-  const viewer = serviceHarness(); viewer.state.role = 'viewer';
-  await assert.rejects(viewer.invoke(), /Writer/); assert.equal(viewer.state.writes, 0);
+test('real protected issuer change rejects locked sessions and Viewer without writing', async t => {
+  const locked = serviceHarness(t); locked.sessions.clear();
+  await assert.rejects(locked.invoke(), /Sesiunea/); assert.equal(locked.state.writes.length, 0);
+  const viewer = serviceHarness(t); viewer.state.role = 'viewer';
+  await assert.rejects(viewer.invoke(), /Writer/); assert.equal(viewer.state.writes.length, 0);
 });

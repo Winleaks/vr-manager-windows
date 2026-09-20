@@ -1,3 +1,12 @@
+### VR - Hub Management v0.1.115
+
+- Registrul separat salvează temporar și criptat pe Writer operațiunile obișnuite, apoi încarcă registrul și PDF-urile în fundal. Poți continua lucrul în timpul încărcării; copiile temporare sunt șterse după confirmare.
+- Sincronizarea afișează starea și permite reîncercarea. Întreruperile păstrează operațiunile acceptate, iar reluarea nu consumă alte numere de factură. Operațiunile noi necesită conexiune; la eroare sau conflict sunt oprite. După repornire, reluarea se face la deblocarea registrului.
+- Printarea, trimiterea și exportul așteaptă sincronizarea. Setările sensibile, atribuirile și operațiunile cu retur de stoc păstrează confirmarea completă. Datele financiare protejate nu sunt adăugate în baza normală sau în stocarea browserului.
+- Companiile atribuite registrului separat sunt excluse din facturarea normală, rapoarte și statistici fără ștergerea istoricului. Un marcaj minim de vizibilitate se sincronizează în baza normală și funcționează pe Viewer și offline, după primirea replicii actualizate.
+- Câmpurile de preț păstrează punctul zecimal în timpul editării. Catalogul și producția includ eticheta variantei produsului. Profilul companiei permite selectarea magazinului pentru afișarea facturilor acestuia.
+- Include toate modificările v0.1.114. Actualizează întâi Writer-ul, verifică facturarea și sincronizează baza în Drive, apoi actualizează și sincronizează Viewer-ele. Nu reveni la un build vechi și nu șterge profilul aplicației cât există salvări criptate în așteptare.
+
 ### VR - Hub Management v0.1.114
 
 - Dashboardul registrului separat permite filtrarea după luna curentă, o săptămână aleasă (luni–duminică) sau tot istoricul, cu același design ca dashboardul principal. Implicit este selectată luna curentă.

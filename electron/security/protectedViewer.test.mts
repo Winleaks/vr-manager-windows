@@ -38,6 +38,8 @@ function fixture() {
     lockProtectedRegistry: (id: number) => sessions.delete(id),
     isProtectedRegistryEnabled: () => false,
     protectedRegistryStatus: async () => ({ readOnly: true, unlocked: sessions.has(1) }),
+    withRegistryRoutingLock: (operation: () => Promise<unknown>) => operation(),
+    assertProtectedCloudSettled: () => undefined,
     readProtectedViewerVault: async () => { state.reads++; if (state.interrupt) sessionGenerations.set(1, 1); return state.available ? { buffer: Buffer.from(JSON.stringify(envelope)), version: '1' } : null; },
     loadVaultFromCloud: async () => { state.reads++; if (state.interrupt) sessions.delete(1); return { vault: { ...structuredClone(vault), revision: state.revision }, envelope, driveVersion: '1' }; },
     reconcilePending: forbidden, uploadProtectedInvoicePdf: forbidden, uploadProtectedCreditNotePdf: forbidden, refreshProtectedInvoiceDocument: forbidden, readProtectedDocumentPdf: forbidden, assertWriter: forbidden,

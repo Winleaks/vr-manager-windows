@@ -1,5 +1,5 @@
 import { notify } from '../utils/feedback';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../shared/api';
 import { 
   Building2, Store, RefreshCw, AlertCircle, FileText, ArrowLeft, 
@@ -46,6 +46,7 @@ export function BillingClients() {
   const [, setLoadingProfile] = useState(false);
   const [activeTab, setActiveTab] = useNavigationState<'unpaid' | 'all' | 'payments' | 'credits' | 'stores'>(`company-${selectedCompanyId}/tab`, 'unpaid');
   const [profileIssuerFilter, setProfileIssuerFilter] = useNavigationState(`company-${selectedCompanyId}/issuer`, 'all');
+  const [profileStoreFilter, setProfileStoreFilter] = useNavigationState(`company-${selectedCompanyId}/store`, 'all');
   const profileReady = profileData?.company?.id === selectedCompanyId;
   const scrollRef = useRememberedScroll(selectedCompanyId ? `company-${selectedCompanyId}/${activeTab}` : 'list', selectedCompanyId ? profileReady : !loading);
 
@@ -87,41 +88,45 @@ export function BillingClients() {
     api.system.getDeviceRole().then((device) => setIsWriter(device.role === 'writer')).catch(console.error);
   }, []);
 
-  useEffect(() => {
-    profileRequest.current++;
-    if (selectedCompanyId) {
-      setIssuerAssignmentNotice('');
-      setInvoiceNotice('');
-      loadCompanyProfile(selectedCompanyId);
-    } else {
-      setProfileData(null);
-    }
-  }, [selectedCompanyId]);
-
   const fetchCompanies = async () => {
     try {
       setLoading(true);
       const data = await api.billing.getAllCompaniesAndStores();
       setCompanies(data || []);
     } catch (e) {
+      setCompanies([]);
+      setSyncError(true);
+      setSyncNotice(e instanceof Error ? e.message : 'Companiile nu pot fi încărcate.');
       console.error(e);
     } finally {
       setLoading(false);
     }
   };
 
-  const loadCompanyProfile = async (companyId: number) => {
+  const loadCompanyProfile = useCallback(async (companyId: number) => {
     const request = ++profileRequest.current;
     try {
       setLoadingProfile(true);
       const data = await api.billing.getCompanyProfile(companyId);
       if (request === profileRequest.current) setProfileData(data);
     } catch (e) {
+      if (request === profileRequest.current) { setProfileData(null); setSelectedCompanyId(null); notify(e instanceof Error ? e.message : 'Profilul nu poate fi încărcat.'); }
       console.error('Eroare încărcare profil companie:', e);
     } finally {
       setLoadingProfile(false);
     }
-  };
+  }, [setSelectedCompanyId]);
+
+  useEffect(() => {
+    profileRequest.current++;
+    if (selectedCompanyId) {
+      setIssuerAssignmentNotice('');
+      setInvoiceNotice('');
+      void loadCompanyProfile(selectedCompanyId);
+    } else {
+      setProfileData(null);
+    }
+  }, [selectedCompanyId, loadCompanyProfile]);
 
   const handleSyncWithServer = async () => {
     if (syncing) return;
@@ -304,7 +309,9 @@ export function BillingClients() {
     const issuerSelectionValue = company.issuer_assignment_mode === 'explicit'
       ? String(company.issuer_id || '')
       : 'default';
-    const invoices = profileIssuerFilter === 'all' ? allInvoices : allInvoices.filter((invoice: any) => String(invoice.issuer_id) === profileIssuerFilter);
+    const invoices = allInvoices.filter((invoice: any) =>
+      (profileIssuerFilter === 'all' || String(invoice.issuer_id) === profileIssuerFilter) &&
+      (profileStoreFilter === 'all' || String(invoice.store_id) === profileStoreFilter));
     const unpaidInvoices = invoices.filter((invoice: any) => invoice.status !== 'cancelled' && Number(invoice.outstanding || 0) > 0.005);
     const payments = profileIssuerFilter === 'all' ? allPayments : allPayments.filter((payment: any) => String(payment.issuer_id) === profileIssuerFilter);
     const selectedCredit = (profileData.issuerCredits || []).filter((credit: any) => profileIssuerFilter === 'all' || String(credit.issuer_id) === profileIssuerFilter).reduce((sum: number, credit: any) => sum + Number(credit.balance || 0), 0);
@@ -405,6 +412,7 @@ export function BillingClients() {
         </section>
 
         {/* Carduri Sumar Financiar Companie */}
+        {profileStoreFilter !== 'all' && <p role="status" className="text-sm text-indigo-800">Facturile și totalurile de facturare: {stores.find((store: any) => String(store.id) === profileStoreFilter)?.name || 'magazin selectat'}. Creditul disponibil și istoricul încasărilor rămân la nivel de companie.</p>}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Facturat</span>
@@ -499,13 +507,20 @@ export function BillingClients() {
           </div>
 
           <div className="p-6">
+            {(activeTab === 'all' || activeTab === 'unpaid') && <label className="mb-5 flex flex-wrap items-center gap-3 text-sm font-semibold text-slate-700">
+              Facturi pentru magazin
+              <select aria-label="Filtrează facturile pe magazin" value={profileStoreFilter} onChange={event => setProfileStoreFilter(event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                <option value="all">Toate magazinele</option>
+                {stores.map((store: any) => <option key={store.id} value={store.id}>{store.name}</option>)}
+              </select>
+            </label>}
             {/* TAB 1: FACTURI RESTANTE */}
             {activeTab === 'unpaid' && (
               <div>
                 {unpaidInvoices.length === 0 ? (
                   <div className="p-8 text-center text-slate-500">
                     <CheckCircle2 size={40} className="mx-auto mb-3 text-emerald-500" />
-                    <p className="font-bold text-slate-800 text-lg">Felicitări! Toate facturile acestei companii sunt achitate complet.</p>
+                    <p className="font-bold text-slate-800 text-lg">Nu există facturi restante pentru selecția curentă.</p>
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
@@ -659,7 +674,7 @@ export function BillingClients() {
             {activeTab === 'stores' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {stores.map((s: any) => (
-                  <div key={s.id} className="p-4 border border-slate-200 rounded-xl bg-slate-50/50 flex items-start gap-3">
+                  <button type="button" key={s.id} onClick={() => { setProfileStoreFilter(String(s.id)); setActiveTab('all'); }} aria-label={`Vezi facturile magazinului ${s.name}`} className="p-4 border border-slate-200 rounded-xl bg-slate-50/50 flex items-start gap-3 text-left hover:border-indigo-400 hover:bg-indigo-50 focus-visible:outline-indigo-600">
                     <div className="w-8 h-8 bg-indigo-100 text-indigo-600 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
                       <Store size={18} />
                     </div>
@@ -668,7 +683,7 @@ export function BillingClients() {
                       {s.vrbaker_missing ? <p className="text-xs text-amber-800">Nu mai apare în VR Baker · istoric păstrat</p> : s.platform_active === 0 ? <p className="text-xs text-slate-600">Inactiv în platformă · asocierea și facturarea sunt păstrate</p> : null}
                       {s.address && <p className="text-xs text-slate-500 mt-1">{s.address}</p>}
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}

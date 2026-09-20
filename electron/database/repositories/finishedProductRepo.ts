@@ -1,12 +1,13 @@
 import { db } from '../db';
 import type { VrBakerProduct } from '../../integrations/vrBakerApiClient';
 import { syncFinishedProductCatalog } from '../finishedProductCatalog';
+import { productDisplayName } from '../productDisplayName';
 
 export const finishedProductRepo = {
   getAll: () => {
     const rows = db.prepare(`
       SELECT fp.*, COALESCE(c.name, fp.source_category) as category_name,
-             cp.name AS catalog_name, cp.name_ro AS catalog_name_ro,
+             cp.name AS catalog_name, cp.name_ro AS catalog_name_ro, cp.variant_label,
              COALESCE(cp.display_order, fp.display_order) AS effective_display_order
       FROM finished_products fp
       LEFT JOIN categories c ON fp.category_id = c.id
@@ -18,21 +19,21 @@ export const finishedProductRepo = {
     return rows.map(({ catalog_name, catalog_name_ro, effective_display_order, ...row }) => ({
       ...row,
       display_order: effective_display_order,
-      name: catalog_name || row.name,
-      name_ro: catalog_name_ro || row.name_ro || catalog_name || row.name,
+      name: productDisplayName(catalog_name || row.name, row.variant_label),
+      name_ro: productDisplayName(catalog_name_ro || row.name_ro || catalog_name || row.name, row.variant_label),
     }));
   },
   
   getById: (id: number) => {
     const result = db.prepare(`
-      SELECT fp.*, cp.name AS catalog_name, cp.name_ro AS catalog_name_ro,
+      SELECT fp.*, cp.name AS catalog_name, cp.name_ro AS catalog_name_ro, cp.variant_label,
              COALESCE(cp.display_order, fp.display_order) AS effective_display_order
       FROM finished_products fp LEFT JOIN cloud_products cp ON cp.supabase_product_id = fp.external_product_id
       WHERE fp.id = ?
     `).get(id) as any;
     if (!result) return result;
     const { catalog_name, catalog_name_ro, effective_display_order, ...row } = result;
-    return { ...row, display_order: effective_display_order, name: catalog_name || row.name, name_ro: catalog_name_ro || row.name_ro || catalog_name || row.name };
+    return { ...row, display_order: effective_display_order, name: productDisplayName(catalog_name || row.name, row.variant_label), name_ro: productDisplayName(catalog_name_ro || row.name_ro || catalog_name || row.name, row.variant_label) };
   },
   
   create: (data: any) => {

@@ -1,6 +1,7 @@
 import {installBillingPublication} from './billingPublication';
 import { installDocumentSyncQueue } from './documentSyncQueue';
 import { installInvoiceDriveIdentity } from './invoiceDriveIdentity';
+import { installNormalBillingVisibility } from './normalBillingVisibility';
 import {installEntitySyncState} from './entitySync';
 import Database from 'better-sqlite3'
 import path from 'path'
@@ -168,7 +169,7 @@ export function initDb() {
 
   // Preserve a verified copy before adding the persistent billing publication queue.
   // This also covers older Credit Notes migrations during a direct upgrade.
-  createPreMigrationSnapshotIfNeeded(20)
+  createPreMigrationSnapshotIfNeeded(21)
   
   // 2. Rularea migrărilor de schemă
   runMigrations()
@@ -389,6 +390,7 @@ function runMigrations() {
       ,{version:18,description:'Prezența entităților VR Baker separată de accesul clientului',up:()=>installEntitySyncState(db)}
       ,{version:19,description:'Încărcări PDF persistente și verificate în Drive',up:()=>installDocumentSyncQueue(db)}
       ,{version:20,description:'Un singur PDF Drive per factură',up:()=>installInvoiceDriveIdentity(db)}
+      ,{version:21,description:'Vizibilitate facturare normală replicată pe Viewer',up:()=>installNormalBillingVisibility(db)}
     ];
 
     for (const migration of migrations) {

@@ -70,7 +70,7 @@ export function BillingManualInvoice() {
     const product = products.find((item) => Number(item.id) === line.productId);
     const quantity = Number(line.quantity || 0);
     const unitPrice = Number(line.unitPrice || 0);
-    return { ...line, product, quantity, unitPrice, totalPrice: quantity * unitPrice };
+    return { ...line, product, numericQuantity: quantity, numericUnitPrice: unitPrice, totalPrice: quantity * unitPrice };
   }), [lines, products]);
   const total = resolvedLines.reduce((sum, line) => sum + (Number.isFinite(line.totalPrice) ? line.totalPrice : 0), 0);
 
@@ -101,7 +101,7 @@ export function BillingManualInvoice() {
     if (!issuer) return notify('Compania selectată nu are o societate emitentă atribuită.');
     if (!invoiceDate) return notify('Selectează data facturii.');
     if (resolvedLines.length === 0) return notify('Adaugă cel puțin un produs pe factură.');
-    if (resolvedLines.some((line) => !line.product || line.quantity <= 0 || line.unitPrice < 0 || !Number.isFinite(line.totalPrice))) {
+    if (resolvedLines.some((line) => !line.product || !line.quantity.trim() || !line.unitPrice.trim() || line.numericQuantity <= 0 || line.numericUnitPrice < 0 || !Number.isFinite(line.totalPrice))) {
       return notify('Verifică produsele, cantitățile și prețurile introduse.');
     }
     const estimatedReference = issuer.invoice_series ? `${issuer.invoice_series}-${issuer.next_invoice_number}` : 'numărul următor';
@@ -115,8 +115,8 @@ export function BillingManualInvoice() {
         invoiceDate,
         items: resolvedLines.map((line) => ({
           productId: line.productId,
-          quantity: line.quantity,
-          unitPrice: line.unitPrice,
+          quantity: line.numericQuantity,
+          unitPrice: line.numericUnitPrice,
         })),
       });
     } catch (error) {

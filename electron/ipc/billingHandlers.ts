@@ -1,7 +1,8 @@
 import * as billingRepo from '../database/repositories/billingRepo';
 import { updateSharedIssuerSettings } from '../database/sharedIssuerSettings';
 import { isBillingPublishing } from '../integrations/billingPublisher';
-import { handleTrustedIpc } from './trustedHandler';
+import { handleTrustedIpc as registerTrustedIpc } from './trustedHandler';
+import { normalBillingReadDatabase } from '../database/normalBillingVisibility';
 import { aggregateWeeklyOrders } from '../integrations/weeklyInvoiceImport';
 import { createVrBakerClient, syncVrBakerCatalog, syncVrBakerEntities } from '../integrations/vrBakerIntegration';
 import { hasVrBakerApiToken, removeLegacySupabaseCredential, setVrBakerApiToken } from '../integrations/vrBakerCredentials';
@@ -27,12 +28,24 @@ import {
   getNormalManualInvoiceCompanies,
   loadProtectedRoutingPolicy,
   withRegistryRoutingLock,
+  ensureNormalBillingVisibility,
 } from '../protectedRegistry/service';
 import { assignEstimatedInvoiceReferences } from '../../src/utils/invoicePreviewNumbering';
 import { localInvoiceCatalog, priceInvoiceCatalog } from '../integrations/invoiceCatalogPricing';
 import { synchronizeWeeklySnapshot } from '../integrations/weeklyEntitySync';
 import { getDeviceRole } from '../device/deviceRole';
 import type { InvoiceIssuerChangeInput } from '../../src/shared/invoiceIssuerChange.ts';
+
+const visibilityChannels = new Set(['getClients', 'getCompanies', 'getStores', 'getAllCompaniesAndStores', 'getManualInvoiceCompanies',
+  'getCompanyProfile', 'getInvoices', 'getInvoice', 'getStats', 'getPaymentReport', 'statementDocument',
+  'getCreditNoteDraft', 'getCreditNotes', 'getCreditNote', 'prepareCreditNotePdf', 'openCreditNotePdf', 'publicationStatus',
+  'createManualInvoice', 'createWeeklyInvoices', 'createWeeklyInvoicesByZone', 'updateInvoice', 'cancelInvoice', 'changeInvoiceIssuer',
+  'reissueCancelledInvoice', 'createCreditNote', 'recordCompanyPayment', 'updatePayment', 'applyCompanyCredit']);
+const dbForVisibility = () => db;
+const handleTrustedIpc: typeof registerTrustedIpc = (channel, handler) => registerTrustedIpc(channel, async (event, ...args) => {
+  if (visibilityChannels.has(channel.replace('billing:', ''))) await ensureNormalBillingVisibility();
+  return handler(event, ...args);
+});
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : 'Operațiunea a eșuat.';
@@ -297,6 +310,7 @@ export function registerBillingHandlers() {
   });
 
   handleTrustedIpc('billing:publicationStatus', () => {
+    const db = normalBillingReadDatabase(dbForVisibility());
     const retired = retiredLegacyCompanyIds(db);
     return {
     publishing:isBillingPublishing(),

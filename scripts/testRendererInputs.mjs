@@ -61,6 +61,25 @@ if (serveOnly) {
     await testProtectedDashboard(page, open);
     await testRecoveryKeySettings(page, open);
     await testNavigationMemory(page, open);
+    await open('protected');
+    await page.getByText('Sincronizat în Drive. Nu există salvări locale în așteptare.').waitFor();
+    await page.evaluate(() => window.__inputTest.setProtectedSync({ state: 'syncing', pending: 2 }));
+    await page.getByText(/2 salvări criptate în așteptare/).waitFor();
+    const protectedClients = page.getByRole('button', { name: 'Clienți & Entități', exact: true });
+    assert.equal(await protectedClients.isEnabled(), true, 'background upload must not disable navigation');
+    await protectedClients.click();
+    await page.getByRole('button', { name: 'Deschide profilul Fixture Company', exact: true }).click();
+    await page.getByRole('button', { name: 'Editează factura', exact: true }).click();
+    await edit(page.getByLabel('Cantitate 1', { exact: true }), '3.5');
+    await page.evaluate(() => window.__inputTest.setProtectedSync({ state: 'synced', pending: 0 }));
+    await page.getByText('Sincronizat în Drive. Nu există salvări locale în așteptare.').waitFor();
+    assert.equal(await page.getByLabel('Cantitate 1', { exact: true }).evaluate(element => document.activeElement === element), true);
+    await page.getByRole('button', { name: 'Anulează', exact: true }).click();
+    await page.evaluate(() => window.__inputTest.setProtectedSync({ state: 'error', pending: 1, error: 'Salvarea criptată este păstrată (test).' }));
+    await page.getByText('Salvarea criptată este păstrată (test).').waitFor();
+    await page.getByRole('button', { name: 'Reîncearcă', exact: true }).focus(); await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.__inputTest.calls.includes('retry-protected-sync'));
+    console.log('PASS protected background sync: visible pending/error/synced, navigation and input focus retained, keyboard retry');
     await open('sync');
     await page.getByText(/Salvat local — PDF-uri neconfirmate/).waitFor();
     await page.getByText(/Detalii sincronizare documente/).click();
@@ -112,6 +131,30 @@ if (serveOnly) {
     await edit(search, 'Fixture Company');
     assert.equal(await page.getByRole('heading', { name: 'Fixture Company', exact: true }).count(), 1);
     console.log('PASS actual company search before and after feedback');
+    await page.getByRole('heading', { name: 'Fixture Company', exact: true }).click();
+    await page.getByRole('button', { name: /Magazine Arondate/ }).click();
+    const secondStore = page.getByRole('button', { name: 'Vezi facturile magazinului Second Store' });
+    await secondStore.focus(); await page.keyboard.press('Enter');
+    await page.getByText('#SECOND-2', { exact: true }).waitFor();
+    assert.equal(await page.getByText('#TEST-1', { exact: true }).count(), 0);
+    await page.getByLabel('Filtrează facturile pe magazin').selectOption('all');
+    await page.getByText('#TEST-1', { exact: true }).waitFor();
+    console.log('PASS store selection by keyboard scopes invoices; all stores restores both');
+
+    const replaceDecimals = async field => {
+      await field.fill('1.95');
+      await field.press('End');
+      await field.press('Backspace'); await field.press('Backspace');
+      assert.equal(await field.inputValue(), '1.', 'decimal separator must survive partial deletion');
+      await field.pressSequentially('85');
+      assert.equal(await field.inputValue(), '1.85');
+    };
+    await open('manual');
+    await page.getByLabel('Produs din catalog').selectOption('1');
+    await page.getByRole('button', { name: 'Adaugă produsul pe factură' }).click();
+    await replaceDecimals(page.locator('tbody input').nth(1));
+    await edit(page.locator('tbody input').nth(1), '0,85', '0.85');
+    await edit(page.locator('tbody input').nth(0), '1.25');
 
     for (const suffix of ['', '#/facturare/credit-notes?invoice=1']) {
       await open('credit', suffix);
@@ -140,6 +183,7 @@ if (serveOnly) {
     await open('editor');
     await edit(page.getByLabel('Cantitate 1', { exact: true }), '3.25');
     await edit(page.getByLabel('Preț unitar 1', { exact: true }), '1,75', '1.75');
+    await replaceDecimals(page.getByLabel('Preț unitar 1', { exact: true }));
     await open('editor', '&role=viewer');
     assert.equal(await page.getByLabel('Cantitate 1', { exact: true }).isDisabled(), true);
     console.log('PASS existing invoice editor; Viewer restrictions retained');
@@ -180,6 +224,7 @@ if (serveOnly) {
     await page.getByRole('button', { name: 'Editează factura', exact: true }).click();
     await page.getByLabel('Cantitate 1', { exact: true }).waitFor();
     await edit(page.getByLabel('Cantitate 1', { exact: true }), '4.5');
+    await replaceDecimals(page.getByLabel('Preț unitar 1', { exact: true }));
     await page.getByRole('button', { name: 'Anulează', exact: true }).click();
     await page.getByRole('button', { name: 'Emite Credit Note', exact: true }).click();
     await page.getByLabel('Cantitate creditată · TEST-P1 · Fixture Product').waitFor();

@@ -22,6 +22,8 @@ function fixture() {
   const calls:string[]=[];
   const databaseModule={db,waitForDatabaseReady:async()=>{}};
   const mocks:any={
+    '../database/normalBillingVisibility': { normalBillingReadDatabase: (connection: unknown) => connection },
+    '../protectedRegistry/service': { ensureNormalBillingVisibility: async () => {} },
     '../database/invoiceDriveIdentity':{invoiceCopyCleanupError:()=>null,retryInvoiceCopyCleanup:()=>{}},
     electron:{app:{getPath:()=>'/synthetic',once:()=>{}}},'node:fs':{existsSync:()=>false},
     '../database/db':databaseModule,'../device/deviceRole':{getDeviceRole:()=>role},'../database/documentSyncQueue':queue,

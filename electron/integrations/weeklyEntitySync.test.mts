@@ -60,7 +60,7 @@ function fixture(mode='ok'){
       synchronize:({companies,stores})=>{assertEntitySyncSafe(db,companies,stores);return {};}});
    },
   },
-  '../protectedRegistry/service':{filterNormalWeeklyGroups:async(groups:any)=>groups,withRegistryRoutingLock:async(fn:Function)=>fn()},
+  '../protectedRegistry/service':{filterNormalWeeklyGroups:async(groups:any)=>groups,withRegistryRoutingLock:async(fn:Function)=>fn(),ensureNormalBillingVisibility:async()=>{}},
   '../../src/utils/invoicePreviewNumbering':{assignEstimatedInvoiceReferences:(groups:any)=>groups},
  };
  const exports:any={};runInNewContext(code,{exports,console,require:(id:string)=>mocks[id]||{}});

@@ -10,12 +10,13 @@ import { generateCreditNotePdf } from '../reports/creditNotePdf';
 import { saveCreditNotePdf } from '../reports/creditNoteDelivery';
 import { withInvoiceDriveLock } from './invoiceDriveDocument';
 import { invoiceCopyCleanupError, retryInvoiceCopyCleanup } from '../database/invoiceDriveIdentity';
+import { normalBillingReadDatabase } from '../database/normalBillingVisibility';
 
 let running = false;
 let workerError: string | null = null;
 
 export function getDocumentSyncStatus() {
-  return { ...documentSyncStatus(db), running, workerError:workerError||invoiceCopyCleanupError(db),
+  return { ...documentSyncStatus(normalBillingReadDatabase(db)), running, workerError:workerError||invoiceCopyCleanupError(normalBillingReadDatabase(db)),
     canRetry: getDeviceRole() === 'writer', connected: Boolean(isDocumentDriveConnected()) };
 }
 
@@ -55,9 +56,11 @@ export async function syncPendingDocuments() {
   try {
     await waitForDatabaseReady();
     if (getDeviceRole() !== 'writer' || !isDocumentDriveConnected()) return;
+    const { ensureNormalBillingVisibility } = await import('../protectedRegistry/service');
+    await ensureNormalBillingVisibility();
     const connection = db;
     workerError = null;
-    for (const item of dueDocuments(connection)) {
+    for (const item of dueDocuments(normalBillingReadDatabase(connection))) {
       if (getDeviceRole() !== 'writer' || connection !== db || !connection.open || !isDocumentDriveConnected()) return;
       // A manual upload may have completed since selection. Do not regenerate it.
       const pending = connection.prepare("SELECT 1 FROM document_sync_queue WHERE kind=? AND document_id=? AND generation=? AND state='pending'").get(item.kind,item.document_id,item.generation);

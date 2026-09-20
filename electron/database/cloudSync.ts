@@ -1,6 +1,7 @@
 import {resolveExistingInvoiceFolder,resolveCompanyInvoiceFolder,listInvoiceTree,legacyInvoiceFilenames} from '../integrations/invoiceDriveFolder';
 import { InvoiceDriveDocumentError, updateInvoiceDriveDocument, withInvoiceDriveLock } from '../integrations/invoiceDriveDocument';
 import { syncSingleInvoicePdf, trashConfirmedInvoiceCopy, type InvoicePdfCopy } from '../integrations/singleInvoiceDriveDocument';
+import { normalBillingReadDatabase } from './normalBillingVisibility';
 import { trackDocumentUpload } from './documentSyncQueue';
 import { documentSyncFailure } from '../integrations/documentSyncErrors';
 import { withDriveFolderLock } from '../integrations/driveFolderLock';
@@ -553,13 +554,15 @@ async function fetchUploadedMetadata(drive: any, fileId: string): Promise<Upload
 
 async function uploadVerifiedBuffer(
   drive: any,
-  input: { filename: string; parentId: string; mimeType: string; buffer: Uint8Array; strictParent?: boolean; expectedVersion?: string | null },
+  input: { filename: string; parentId: string; mimeType: string; buffer: Uint8Array; strictParent?: boolean; expectedVersion?: string | null; expectedFileId?: string; assertCurrent?: () => void },
 ) {
   const expectedMd5 = createHash('md5').update(Buffer.from(input.buffer)).digest('hex');
   const expectedSize = input.buffer.byteLength;
   const existing = input.strictParent
     ? await findExactCloudFile(drive, input.parentId, input.filename)
     : await findFileForUpload(drive, input.filename, input.parentId);
+  input.assertCurrent?.();
+  if (input.expectedFileId && existing?.id !== input.expectedFileId) throw Error('Registrul a fost modificat: destinația Drive nu mai corespunde salvării temporare.');
   if (input.expectedVersion !== undefined && (existing?.version || null) !== input.expectedVersion) {
     throw new Error('Registrul a fost modificat în Google Drive de o altă operație. Reîncarcă înainte de a continua.');
   }
@@ -667,6 +670,41 @@ export async function readProtectedViewerVault(): Promise<VerifiedCloudBuffer | 
   return readVerifiedPrivateCloudFileInternal(['Duplicat'], 'registru-separat.vault');
 }
 
+let protectedAccount: { grant: string; scope: string } | null = null;
+function protectedCloudGrant() {
+  if (getDeviceRole() !== 'writer' || !loadTokens()) throw Error('Google Drive nu este conectat pe Writer.');
+  const identity = oauth2Client.credentials.refresh_token;
+  if (!identity) throw Error('Reconectează Google Drive înainte de salvarea registrului.');
+  return createHash('sha256').update(identity).digest('hex');
+}
+
+/** Stable account identity, allowing reauthentication to the SAME account. */
+export async function initializeProtectedCloudScope() {
+  const grant = protectedCloudGrant();
+  if (protectedAccount?.grant === grant) return protectedAccount.scope;
+  const drive = google.drive({ version: 'v3', auth: oauth2Client });
+  const result = await drive.about.get({ fields: 'user(permissionId)' }, documentRequestOptions);
+  if (protectedCloudGrant() !== grant || !result.data.user?.permissionId) throw Error('Identitatea contului Drive nu poate fi verificată.');
+  const scope = createHash('sha256').update(`vr-hub-protected-account:${result.data.user.permissionId}`).digest('hex');
+  protectedAccount = { grant, scope };
+  return scope;
+}
+
+/** Main-process only; synchronous guard against grant changes during an upload. */
+export function protectedCloudAccountScope() {
+  if (protectedAccount?.grant !== protectedCloudGrant()) throw Error('Contul Drive trebuie reverificat. Redeschide registrul sau reîncearcă sincronizarea.');
+  return protectedAccount.scope;
+}
+
+/** Small online check on each acceptance, not a download of the whole vault. */
+export async function probeProtectedCloudFile(fileId: string, scope: string) {
+  if (protectedCloudAccountScope() !== scope) throw Error('Contul Drive s-a schimbat. Salvările temporare nu vor fi transferate altui cont.');
+  const drive = google.drive({ version: 'v3', auth: oauth2Client });
+  const result = await drive.files.get({ fileId, fields: 'id,name,trashed,capabilities(canEdit)' }, documentRequestOptions);
+  if (protectedCloudAccountScope() !== scope || result.data.id !== fileId || result.data.trashed
+    || result.data.name !== 'registru-separat.vault' || !result.data.capabilities?.canEdit) throw Error('Destinația registrului nu poate fi verificată.');
+}
+
 async function readVerifiedPrivateCloudFileInternal(folderNames: string[], filename: string): Promise<VerifiedCloudBuffer | null> {
   if (!loadTokens()) throw new Error('Google Drive nu este conectat.');
   validatePrivateCloudPath(folderNames, filename);
@@ -702,6 +740,8 @@ export async function writeVerifiedPrivateCloudFile(input: {
   mimeType: string;
   buffer: Uint8Array;
   expectedVersion?: string | null;
+  expectedFileId?: string;
+  accountScope?: string;
 }) {
   if (getDeviceRole() !== 'writer') throw new Error('Calculatorul Viewer nu poate publica registrul separat.');
   if (!loadTokens()) throw new Error('Google Drive nu este conectat.');
@@ -709,8 +749,12 @@ export async function writeVerifiedPrivateCloudFile(input: {
   if (!/^[-\w.+/;= ]{3,100}$/.test(input.mimeType)) throw new Error('Tipul fișierului este invalid.');
   if (input.buffer.byteLength > 30 * 1024 * 1024) throw new Error('Fișierul depășește limita permisă.');
   try {
+    const assertCurrent = input.accountScope ? () => {
+      if (protectedCloudAccountScope() !== input.accountScope) throw Error('Contul Drive s-a schimbat.');
+    } : undefined;
+    assertCurrent?.();
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
-    const parentId = await resolvePrivateCloudFolder(drive, input.folderNames, true);
+    const parentId = await resolvePrivateCloudFolder(drive, input.folderNames, true, assertCurrent);
     if (!parentId) throw new Error('Folderul Google Drive nu a putut fi creat.');
     return await uploadVerifiedBuffer(drive, {
       filename: input.filename,
@@ -719,6 +763,8 @@ export async function writeVerifiedPrivateCloudFile(input: {
       buffer: input.buffer,
       strictParent: true,
       expectedVersion: input.expectedVersion,
+      expectedFileId: input.expectedFileId,
+      assertCurrent,
     });
   } catch (error) {
     const details = error instanceof Error ? error.message : '';
@@ -727,15 +773,17 @@ export async function writeVerifiedPrivateCloudFile(input: {
   }
 }
 
-export async function deletePrivateCloudFile(folderNames: string[], filename: string) {
+export async function deletePrivateCloudFile(folderNames: string[], filename: string, assertCurrent?: () => void) {
   if (getDeviceRole() !== 'writer') throw new Error('Calculatorul Viewer nu poate modifica registrul separat.');
   if (!loadTokens()) throw new Error('Google Drive nu este conectat.');
+  assertCurrent?.();
   validatePrivateCloudPath(folderNames, filename);
   const drive = google.drive({ version: 'v3', auth: oauth2Client });
   const parentId = await resolvePrivateCloudFolder(drive, folderNames, false);
   if (!parentId) return false;
   const file = await findExactCloudFile(drive, parentId, filename);
   if (!file?.id) return false;
+  assertCurrent?.();
   await drive.files.delete({ fileId: file.id });
   return true;
 }
@@ -976,7 +1024,7 @@ async function uploadCurrentInvoicePdf(invoiceId: number): Promise<{success:bool
     }
     const assertCurrent = () => {
       if (getDeviceRole() !== 'writer' || connection !== db || !connection.open) throw new InvoiceDriveDocumentError('Calculatorul Writer sau baza de date s-a schimbat.');
-      const current = db.prepare('SELECT document_revision,status FROM invoices WHERE id=?').get(invoiceId) as {document_revision:number;status:string}|undefined;
+      const current = normalBillingReadDatabase(db).prepare('SELECT document_revision,status FROM invoices WHERE id=?').get(invoiceId) as {document_revision:number;status:string}|undefined;
       if (!current || current.status === 'cancelled' || current.document_revision !== inv.document_revision || JSON.stringify(db.prepare(ownerSql).get(invoiceId))!==JSON.stringify(owner)) {
         throw new InvoiceDriveDocumentError('Factura s-a modificat în timpul încărcării. Reîncearcă pentru versiunea curentă.');
       }
@@ -1029,7 +1077,7 @@ export async function cleanupPublishedInvoiceCopies() {
       AND c.vrbaker_missing=0 AND q.revision=q.published_revision
       AND NOT EXISTS(SELECT 1 FROM billing_publication_delivery p WHERE p.company_id=q.company_id)
       AND NOT EXISTS(SELECT 1 FROM document_sync_queue w WHERE w.kind='invoice' AND w.document_id=i.id AND w.state!='ready')`;
-  const rows=db.prepare(`${eligible} AND d.cleanup_attempts<8 AND d.cleanup_retry_at<=? LIMIT 10`).all(Date.now()) as {
+  const rows=normalBillingReadDatabase(db).prepare(`${eligible} AND d.cleanup_attempts<8 AND d.cleanup_retry_at<=? LIMIT 10`).all(Date.now()) as {
     invoice_id:number;file_id:string;cleanup:string;verified_name:string;verified_parent:string;verified_checksum:string;verified_size:number;cleanup_attempts:number;
   }[];
   if(!rows.length) return;
@@ -1038,7 +1086,7 @@ export async function cleanupPublishedInvoiceCopies() {
   for(const row of rows) await withInvoiceDriveLock(row.invoice_id,async()=>{try{
     const assertCurrent=()=>{
       if(getDeviceRole()!=='writer'||db!==connection||!connection.open||
-        !db.prepare(`SELECT 1 FROM (${eligible}) WHERE invoice_id=? AND file_id=? AND cleanup=?`).get(row.invoice_id,row.file_id,row.cleanup)) {
+        !normalBillingReadDatabase(db).prepare(`SELECT 1 FROM (${eligible}) WHERE invoice_id=? AND file_id=? AND cleanup=?`).get(row.invoice_id,row.file_id,row.cleanup)) {
         throw new InvoiceDriveDocumentError('Publicarea facturii s-a schimbat; curățarea este amânată.');
       }
     };
@@ -1075,7 +1123,7 @@ export async function reconcileInvoicePdfs() {
   for (const file of await listInvoiceTree(drive,facturiFolderId)) files.set(file.name,[...(files.get(file.name)||[]),file.id]);
   if(connection !== db) throw new Error('Baza de date s-a schimbat.');
   let linked=0; const unresolved:number[]=[];
-  for (const row of db.prepare(`SELECT i.id,i.invoice_number,i.document_revision,i.pdf_path,c.name AS company_name FROM invoices i JOIN stores s ON s.id=i.store_id JOIN companies c ON c.id=s.company_id WHERE i.drive_file_id IS NULL`).all() as any[]) {
+  for (const row of normalBillingReadDatabase(db).prepare(`SELECT i.id,i.invoice_number,i.document_revision,i.pdf_path,c.name AS company_name FROM invoices i JOIN stores s ON s.id=i.store_id JOIN companies c ON c.id=s.company_id WHERE i.drive_file_id IS NULL`).all() as any[]) {
     const names=legacyInvoiceFilenames(row.invoice_number,series);
     const candidates=names.flatMap(name=>(files.get(name)||[]).map(id=>({name,id})));
     if(candidates.length!==1){unresolved.push(row.id);continue;}
@@ -1095,6 +1143,7 @@ export async function reconcileInvoicePdfs() {
     });
     if(!verified){unresolved.push(row.id);continue;}
     if(getDeviceRole()!=='writer' || connection !== db) throw new Error('Baza de date sau rolul s-a schimbat. Reia asocierea.');
+    if (!normalBillingReadDatabase(db).prepare('SELECT 1 FROM invoices WHERE id=?').get(row.id)) continue;
     linked += db.prepare('UPDATE invoices SET drive_file_id=? WHERE id=? AND document_revision=? AND drive_file_id IS NULL').run(match.id,row.id,row.document_revision).changes;
   }
   return {linked,unresolved};

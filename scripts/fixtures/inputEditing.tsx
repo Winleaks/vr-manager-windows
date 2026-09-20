@@ -23,8 +23,9 @@ async function dashboardOverview(from?: string, to?: string) {
 }
 const role = new URLSearchParams(location.search).get('role') || 'writer';
 let protectedUnlocked = !new URLSearchParams(location.search).has('activation');
+const protectedSync = { state: 'synced', pending: 0, error: null as string | null };
 const invoice = {
-  id: 1, company_id: 1, issuer_id: 1, invoice_number: 'TEST-1', invoice_date: '2026-01-01',
+  id: 1, company_id: 1, store_id: 1, issuer_id: 1, invoice_number: 'TEST-1', invoice_date: '2026-01-01',
   company_name: 'Fixture Company', store_name: 'Fixture Store', issuer_name: 'Fixture Issuer',
   grossAmount: 25, creditedAmount: 0, outstanding: 25, status: 'unpaid',
   items: [{ id: 1, productName: 'Fixture Product', quantity: 10, unitPrice: 2.5,
@@ -49,12 +50,17 @@ window.desktopApi = {
     getCreditNotes: async () => [], getCreditNoteDraft: async () => [invoice],
     getIssuers: async () => [{ id: 1, legal_name: 'Fixture Issuer' }],
     getAllCompaniesAndStores: async () => [company],
+    getManualInvoiceCompanies: async () => [{ ...company, issuer_id: 1 }],
+    getProducts: async () => [{ id: 1, name: 'Fixture Product', price_standard: 1.95, available: true }],
+    getCompanyProfile: async () => ({ company, stores: [...company.stores, { id: 2, name: 'Second Store' }], invoices: [invoice, { ...invoice, id: 2, store_id: 2, invoice_number: 'SECOND-2' }], payments: [], issuers: [] }),
     getInvoice: async () => invoice, getInvoiceProducts: async () => [],
     createCreditNote: async (payload: unknown) => { calls.push(payload); return { creditNoteId: 1, reference: 'TEST-CN1' }; },
     prepareCreditNotePdf: async () => ({ success: true }),
   },
   drivers: { getAll: async () => [] }, employees: { getAll: async () => [] },
   protectedRegistry: {
+    syncStatus: async () => structuredClone(protectedSync),
+    retrySync: async () => { calls.push('retry-protected-sync'); protectedSync.state = 'syncing'; protectedSync.error = null; return structuredClone(protectedSync); },
     rotateRecoveryKey: async (pin: string, confirmed: boolean) => {
       calls.push('rotate-recovery');
       await new Promise(resolve => setTimeout(resolve, 250));
@@ -104,12 +110,13 @@ if (new URLSearchParams(location.search).has('navigation')) {
   if (new URLSearchParams(location.search).get('case') === 'navigation') location.hash = '/facturare/clienti';
 }
 
-const [{ BillingCreditNotes }, { ProtectedRegistry }, { BillingClients }, { InvoiceEditorModal }, { SettingsEntities }, { DocumentSyncBanner }, { BillingLayout }] = await Promise.all([
+const [{ BillingCreditNotes }, { ProtectedRegistry }, { BillingClients }, { InvoiceEditorModal }, { SettingsEntities }, { DocumentSyncBanner }, { BillingLayout }, { BillingManualInvoice }] = await Promise.all([
   import('../../src/pages/BillingCreditNotes'), import('../../src/pages/ProtectedRegistry'),
   import('../../src/pages/BillingClients'), import('../../src/components/InvoiceEditorModal'),
   import('../../src/pages/SettingsEntities'),
   import('../../src/components/DocumentSyncBanner'),
   import('../../src/pages/BillingLayout'),
+  import('../../src/pages/BillingManualInvoice'),
 ]);
 
 export function Harness() {
@@ -128,7 +135,7 @@ export function Harness() {
         <output data-testid="confirmation-result">{confirmation}</output>
       </div>
     </>}
-    {testCase === 'credit' ? <BillingCreditNotes />
+    {testCase === 'manual' ? <BillingManualInvoice /> : testCase === 'credit' ? <BillingCreditNotes />
       : testCase === 'protected' ? <ProtectedRegistry />
         : testCase === 'clients' ? <BillingClients />
           : testCase === 'editor' ? <InvoiceEditorModal invoiceId={1} onClose={() => {}} onSaved={() => {}} />
@@ -139,5 +146,5 @@ export function Harness() {
               </div>}
   </>;
 }
-(window as any).__inputTest = { calls, overviewCalls, setOverviewFailure:(value:boolean)=>{overviewFailure=value;}, notify, confirmAction, setDocumentStatus:(value:unknown)=>Object.assign(documentStatus,value), setRecoveryFailure:(value:boolean)=>{recoveryFailure=value;} };
+(window as any).__inputTest = { calls, overviewCalls, setProtectedSync:(value:unknown)=>Object.assign(protectedSync,value), setOverviewFailure:(value:boolean)=>{overviewFailure=value;}, notify, confirmAction, setDocumentStatus:(value:unknown)=>Object.assign(documentStatus,value), setRecoveryFailure:(value:boolean)=>{recoveryFailure=value;} };
 createRoot(document.getElementById('root')!).render(<StrictMode><Harness /></StrictMode>);

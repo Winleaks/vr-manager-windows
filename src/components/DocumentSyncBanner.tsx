@@ -16,8 +16,8 @@ export function DocumentSyncBanner() {
       try {
         const next = await api.system.getDocumentSyncStatus();
         if (!stopped) { setStatus(next); setError(''); }
-      } catch {
-        if (!stopped) setError('Starea documentelor Drive nu poate fi verificată.');
+      } catch (failure) {
+        if (!stopped) { setStatus(null); setError(failure instanceof Error ? failure.message : 'Starea documentelor Drive nu poate fi verificată.'); }
       } finally {
         if (!stopped) timer = setTimeout(refresh, 5000);
       }

@@ -30,7 +30,7 @@ function fixture() {
   let files = [{ id: 'existing_pdf_123', name: 'Factura_TGB-42.pdf' }];
   const writes: unknown[][] = [];
   const connection = { open: true, prepare: (sql: string) => ({
-    get: () => sql.includes('app_settings') ? { value: 'invoice_root_123' } : undefined,
+    get: () => sql.includes('app_settings') ? { value: 'invoice_root_123' } : sql.includes('SELECT 1 FROM invoices WHERE id=?') ? { allowed: 1 } : undefined,
     all: () => row.drive_file_id ? [] : [{ ...row }],
     run: (...args: unknown[]) => {
       assert.match(sql, /document_revision=\? AND drive_file_id IS NULL/);
@@ -40,6 +40,7 @@ function fixture() {
   }) };
   const databaseModule = { db: connection, dbPath: '/test/fixture.db' };
   const mocks: Record<string, unknown> = {
+    './normalBillingVisibility': { normalBillingReadDatabase: (connection: unknown) => connection },
     '../integrations/privateCloudOperation.ts': privateCloudOperation,
     '../integrations/singleInvoiceDriveDocument': singleInvoice,
     './db': databaseModule,

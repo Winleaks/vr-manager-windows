@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
+import { protectedOutboxHarness } from '../security/fixtures/protectedOutboxHarness.mts';
 import { requireText } from './businessValidation.ts';
-import { withPrivateCloudOperation } from '../integrations/privateCloudOperation.ts';
 import { isChannelAllowedForRole } from '../device/viewerPolicy.ts';
 import { createEmptyProtectedVault, type ProtectedInvoice } from '../protectedRegistry/types.ts';
-import { applyProtectedInvoiceEdit, protectedInvoiceEditBlock, protectedInvoiceEditReplay, protectedInvoiceVersion, validateProtectedInvoiceEdit } from '../protectedRegistry/invoiceEditing.ts';
+import { applyProtectedInvoiceEdit, protectedInvoiceEditBlock, protectedInvoiceVersion, validateProtectedInvoiceEdit } from '../protectedRegistry/invoiceEditing.ts';
 
 function fixture(imported = true, issuerCode: 'goodness' | 'vatra' = 'goodness') {
   const vault = createEmptyProtectedVault();
@@ -66,74 +66,55 @@ test('explicit removal keeps source orders, invalid dates/numbers and arbitrary 
   ]) assert.throws(() => validateProtectedInvoiceEdit(input as any));
 });
 
-function harness() {
+function harness(t: any) {
   const f = fixture();
-  const state = { cloud: structuredClone(f.vault), pending: null as any, role: 'writer', writes: 0, failCommit: false, failPdf: false, lockOnPdf: false };
-  const sessions = new Map<number, any>([[1, { role: 'writer', webContentsId: 1, lastActivity: Date.now(), vault: structuredClone(f.vault), envelope: {}, driveVersion: '1' }]]);
-  const source = readFileSync(new URL('../protectedRegistry/service.ts', import.meta.url), 'utf8');
-  const section = (start: string, end: string) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
-  const script = ['let routingOperationQueue = Promise.resolve();', section('export async function withRegistryRoutingLock', 'function assertWriter'),
-    section('async function freshSession', 'export function isProtectedRegistryEnabled'),
-    section('export async function getProtectedInvoiceForEdit', 'export async function getProtectedInvoiceProducts'),
-    section('export async function updateProtectedInvoice', 'export async function getProtectedIssuerChangeOptions')].join('\n').replaceAll('export ', '');
-  const bindings = {
-    withPrivateCloudOperation, sessions, SESSION_MS: 60000, lockProtectedRegistry: (id: number) => sessions.delete(id),
-    setSession: (session: any) => { session.role ??= state.role; session.lastActivity = Date.now(); sessions.set(session.webContentsId, session); }, requireText,
-    keyBuffer: () => Buffer.alloc(32), getDeviceRole: () => state.role, assertWriter: () => { if (state.role !== 'writer') throw Error('Writer required'); },
-    reconcilePending: async () => { if (state.pending) { state.cloud = structuredClone(state.pending.payload); state.pending = null; } },
-    loadVaultFromCloud: async () => ({ vault: structuredClone(state.cloud), envelope: { recovery: {} }, driveVersion: '1' }),
-    addAudit: () => {}, encode: (value: any) => Buffer.from(JSON.stringify(value)),
-    encryptVaultWithExistingRecovery: (buffer: Buffer) => ({ payload: JSON.parse(buffer.toString()), recovery: {} }),
-    readVerifiedPrivateCloudFile: async () => null,
-    writeVerifiedPrivateCloudFile: async ({ filename, buffer }: any) => { state.writes++; const envelope = JSON.parse(buffer.toString()); if (filename === 'pending') state.pending = envelope;
-      if (filename === 'vault') { if (state.failCommit) throw Error('cloud interrupted'); state.cloud = envelope.payload; } },
-    uploadManifest: async () => {}, deletePrivateCloudFile: async () => { state.pending = null; },
-    FOLDER: [], PENDING_FILE: 'pending', VAULT_FILE: 'vault', MANIFEST_FILE: 'manifest',
-    validateProtectedInvoiceEdit, applyProtectedInvoiceEdit, protectedInvoiceEditReplay, protectedInvoiceVersion, protectedInvoiceEditBlock, activeCreditApplied: () => 0,
+  const h = protectedOutboxHarness(t, undefined, f.vault, {
     db: { prepare: () => ({ get: () => ({ id: 2, name: 'Potato Bread', name_ro: 'Pâine cu cartofi', unit: 'pcs', supabase_product_id: 'product-b' }) }) },
-    refreshProtectedInvoiceDocument: async () => { if (state.lockOnPdf) sessions.delete(1); if (state.failPdf) throw Error('upload failed'); return {}; },
-  };
-  const javascript = ts.transpileModule(script, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
-  const handlers = new Function(...Object.keys(bindings), javascript + '\nreturn {updateProtectedInvoice, getProtectedInvoiceForEdit};')(...Object.values(bindings));
-  return { ...f, state, sessions, invoke: (request = f.request) => handlers.updateProtectedInvoice(1, request), get: (id = f.invoice.id) => handlers.getProtectedInvoiceForEdit(1, id) };
+  });
+  return { ...f, ...h, invoke: (request = f.request) => h.api.updateProtectedInvoice(1, request), get: (id = f.invoice.id) => h.api.getProtectedInvoiceForEdit(1, id) };
 }
 
-test('reopening the editor reads authoritative cloud state after a stale edit conflict', async () => {
-  const h = harness(); h.state.cloud.invoices[0].totalAmount = 11;
+test('reopening reads cloud when settled, but retains newer pending local edits', async t => {
+  const h = harness(t); const cloud = h.current(); cloud.invoices[0].totalAmount = 11; h.replaceCloud(cloud);
   assert.equal(h.sessions.get(1).vault.invoices[0].totalAmount, 8);
   const current = await h.get();
-  assert.equal(current.totalAmount, 11); assert.equal(current.expectedVersion, protectedInvoiceVersion(h.state.cloud.invoices[0]));
-  assert.equal(h.sessions.get(1).vault.invoices[0].totalAmount, 11); assert.equal(h.state.writes, 0);
+  assert.equal(current.totalAmount, 11); assert.equal(current.expectedVersion, protectedInvoiceVersion(cloud.invoices[0]));
+  assert.equal(h.state.writes.length, 0);
   await assert.rejects(h.get('../file.pdf'), /există/);
   h.state.role = 'viewer'; await assert.rejects(h.get(), /Writer/);
 });
 
-test('real edit service confirms cloud, rejects stale concurrent edits and makes retry idempotent', async () => {
-  const h = harness();
-  const first = await h.invoke(); const writes = h.state.writes;
+test('real edit service accepts pending save, rejects stale concurrent edits and replays without another revision', async t => {
+  const h = harness(t);
+  const first = await h.invoke(); assert.equal(first.pdf.pending, true);
+  await h.worker.start(); const writes = h.state.writes.length;
   const second = await h.invoke();
-  assert.equal(second.invoice.id, first.invoice.id); assert.equal(h.state.writes, writes);
-  assert.equal(h.state.cloud.invoices[0].totalAmount, 23);
+  assert.equal(second.invoice.id, first.invoice.id); assert.equal(h.state.writes.length, writes);
+  assert.equal(h.current().invoices[0].totalAmount, 23);
   await assert.rejects(h.invoke({ ...h.request, operationId: 'edit-operation-0002' }), /între timp/);
-  const concurrent = harness();
+  const concurrent = harness(t);
   const results = await Promise.allSettled([concurrent.invoke(), concurrent.invoke({ ...concurrent.request, operationId: 'edit-operation-0002' })]);
   assert.equal(results.filter(row => row.status === 'fulfilled').length, 1);
+  await concurrent.worker.start();
 });
 
-test('interrupted vault persistence recovers same edit; failed PDF never triggers reissuance or returns after lock', async () => {
-  const h = harness(); h.state.failCommit = true;
-  await assert.rejects(h.invoke(), /cloud interrupted/); assert.equal(h.sessions.get(1).vault.invoices[0].totalAmount, 8);
-  h.state.failCommit = false; h.state.failPdf = true;
-  const result = await h.invoke(); assert.equal(result.pdf.success, false); assert.equal(result.invoice.totalAmount, 23); assert.equal(h.state.cloud.invoices.length, 1);
-  h.state.lockOnPdf = true;
-  await assert.rejects(h.invoke(), /expir|blocat/); assert.equal(h.sessions.has(1), false);
+test('vault/PDF interruptions preserve accepted edits, retry never reissues, lock never restores the session', async t => {
+  const h = harness(t); h.state.failAt = 'registru-separat.vault';
+  const accepted = await h.invoke(); assert.equal(accepted.invoice.totalAmount, 23);
+  await h.worker.start(); assert.equal(h.store.count(), 1);
+  assert.equal((await h.get()).totalAmount, 23, 'opening editor must not replace pending edits with cloud');
+  h.state.failAt = 'pdf'; await h.worker.start(); assert.equal(h.store.count(), 1);
+  assert.equal(h.current().invoices.length, 1);
+  h.sessions.clear(); h.state.failAt = ''; await h.worker.start();
+  assert.equal(h.store.count(), 0); assert.equal(h.sessions.size, 0);
+  assert.equal(h.current().invoices[0].totalAmount, 23);
 });
 
-test('Viewer and locked registry deny editing and new IPC capabilities', async () => {
+test('Viewer and locked registry deny editing and new IPC capabilities', async t => {
   for (const channel of ['getInvoiceForEdit', 'getInvoiceProducts', 'updateInvoice']) assert.equal(isChannelAllowedForRole('viewer', `protectedRegistry:${channel}`), false);
   assert.equal(isChannelAllowedForRole('viewer', 'protectedRegistry:printDocument'), true);
-  const h = harness(); h.state.role = 'viewer'; await assert.rejects(h.invoke(), /Writer/); assert.equal(h.state.writes, 0);
-  h.state.role = 'writer'; h.sessions.clear(); await assert.rejects(h.invoke(), /expir/); assert.equal(h.state.writes, 0);
+  const h = harness(t); h.state.role = 'viewer'; await assert.rejects(h.invoke(), /Writer/); assert.equal(h.state.writes.length, 0);
+  h.state.role = 'writer'; h.sessions.clear(); await assert.rejects(h.invoke(), /expir/); assert.equal(h.state.writes.length, 0);
   assert.equal(protectedInvoiceEditBlock(h.vault, h.invoice), null);
 });
 
@@ -147,6 +128,8 @@ test('document preparation regenerates invoice before reading cached PDF and nev
   const sessions = new Map([[1, session]]), calls: string[] = [];
   let fail = false, lock = false;
   const bindings = {
+    withRegistryRoutingLock: (operation: () => Promise<unknown>) => operation(),
+    assertProtectedCloudSettled: () => undefined,
     freshSession: async () => { if (!sessions.has(1)) throw Error('locked'); return session; }, sessions,
     refreshProtectedInvoiceDocument: async () => { calls.push('refresh'); if (fail) throw Error('PDF upload unavailable'); },
     readProtectedDocumentPdf: async () => { calls.push('read'); if (lock) sessions.delete(1); return { buffer: Buffer.from('%PDF-fresh') }; },

@@ -22,7 +22,7 @@ import { checkForUpdates, initializeUpdater } from './updater/updateCoordinator'
 import { cashRepo } from './database/repositories/cashRepo'
 import { millisecondsUntilNextLocalMidnight } from './database/cashDayRollover'
 import { runStartupCashReconciliation } from './startupCashReconciliation'
-import { cleanupStaleProtectedRegistryTemporaryFiles, lockAllProtectedRegistrySessions } from './protectedRegistry/service'
+import { cleanupStaleProtectedRegistryTemporaryFiles, lockAllProtectedRegistrySessions, stopProtectedRegistrySync } from './protectedRegistry/service'
 import { cleanupStaleWindowsShareSnapshots } from './reports/windowsShareSnapshot'
 
 const DIST_PATH = path.join(__dirname, '../dist')
@@ -103,6 +103,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  stopProtectedRegistrySync();
   if (cashDayRolloverTimer) clearTimeout(cashDayRolloverTimer)
   closeDb();
   lockAllProtectedRegistrySessions();

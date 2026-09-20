@@ -28,6 +28,8 @@ import {
   lockProtectedRegistry,
   previewProtectedWeeklyInvoices,
   protectedRegistryStatus,
+  protectedRegistrySyncStatus,
+  retryProtectedRegistrySync,
   recordProtectedPayment,
   reissueProtectedInvoice,
   reverseProtectedPayment,
@@ -50,6 +52,8 @@ import {
 } from '../protectedRegistry/service.ts';
 
 export function registerProtectedRegistryHandlers() {
+  handleTrustedIpc('protectedRegistry:syncStatus', event => protectedRegistrySyncStatus(event.sender.id));
+  handleTrustedIpc('protectedRegistry:retrySync', event => retryProtectedRegistrySync(event.sender.id));
   handleTrustedIpc('protectedRegistry:activateViewer', (event, data) => activateProtectedViewer(event.sender.id, data?.recoveryKey, data?.pin, data?.confirmation));
   handleTrustedIpc('protectedRegistry:refreshViewer', event => refreshProtectedViewer(event.sender.id));
   handleTrustedIpc('protectedRegistry:getInvoiceForEdit', (event, id: string) => getProtectedInvoiceForEdit(event.sender.id, id));

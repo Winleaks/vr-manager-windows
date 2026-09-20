@@ -19,8 +19,13 @@ import {
   readVerifiedPrivateCloudFile,
   readProtectedViewerVault,
   writeVerifiedPrivateCloudFile,
+  protectedCloudAccountScope,
+  initializeProtectedCloudScope,
+  probeProtectedCloudFile,
 } from '../database/cloudSync.ts';
+import { ProtectedOutboxStore, ProtectedOutboxWorker, vaultDigest, type PendingProtectedSave } from './outbox.ts';
 import { db } from '../database/db.ts';
+import { normalBillingVisibilityReady, invalidateNormalBillingVisibility, replaceNormalBillingVisibility, assertNormalBillingVisibilityReady } from '../database/normalBillingVisibility.ts';
 import { getDeviceRole } from '../device/deviceRole.ts';
 import {
   getCredential,
@@ -99,6 +104,8 @@ interface Session {
   vault: ProtectedRegistryVault;
   envelope: ProtectedEnvelope;
   driveVersion: string | null;
+  driveFileId?: string;
+  cloudScope?: string;
 }
 
 const sessions = new Map<number, Session>();
@@ -107,6 +114,143 @@ const temporaryFiles = new Map<number, Set<string>>();
 const sessionTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const recoveryRotations = new Set<number>();
 let routingOperationQueue: Promise<void> = Promise.resolve();
+const protectedOutbox = new ProtectedOutboxStore(path.join(app.getPath('userData'), 'protected-pending-v1'), keyBuffer);
+const protectedUploader = new ProtectedOutboxWorker(protectedOutbox, commitPendingProtectedSave);
+const deferredEvents = new Set([
+  'protected_invoice_batch_issued', 'protected_manual_invoice_issued', 'protected_invoice_updated',
+  'protected_invoice_issuer_changed', 'protected_invoice_cancelled', 'protected_invoice_reissued',
+  'protected_payment_recorded', 'protected_payment_reversed', 'protected_credit_applied', 'protected_credit_reversed',
+  'protected_credit_note_issued', 'protected_credit_note_cancelled',
+]);
+
+export function stopProtectedRegistrySync() { protectedUploader.stop(); }
+
+function assertProtectedCloudSettled() {
+  if (protectedOutbox.hasPending()) throw Error('Registrul are salvări în curs. Așteaptă confirmarea sincronizării înainte de această operațiune.');
+}
+
+export async function protectedRegistrySyncStatus(webContentsId: number) {
+  assertWriter();
+  const session = sessions.get(webContentsId);
+  if (!session || session.role !== 'writer' || Date.now() - session.lastActivity >= SESSION_MS) {
+    lockProtectedRegistry(webContentsId);
+    throw Error('Sesiunea registrului a expirat.');
+  }
+  return protectedUploader.status();
+}
+
+export async function retryProtectedRegistrySync(webContentsId: number) {
+  assertWriter();
+  await freshSession(webContentsId);
+  void protectedUploader.start();
+  return protectedUploader.status();
+}
+
+async function commitPendingProtectedSave(pending: PendingProtectedSave) {
+  return withPrivateCloudOperation(async () => {
+    await initializeProtectedCloudScope();
+    const assertScope = () => {
+      assertWriter();
+      if (protectedCloudAccountScope() !== pending.scope) throw Error('Contul Drive s-a schimbat.');
+    };
+    assertScope();
+    const key = keyBuffer();
+    const latest = await loadVaultFromCloud(key);
+    assertScope();
+    const targetDigest = vaultDigest(pending.vault);
+    const currentDigest = vaultDigest(latest.vault);
+    if (latest.driveFileId !== pending.fileId || ![pending.baseDigest, targetDigest].includes(currentDigest)) {
+      throw Error('Conflict de versiune. Salvarea locală nu a înlocuit datele din Drive.');
+    }
+    const remotePending = await readVerifiedPrivateCloudFile(FOLDER, PENDING_FILE);
+    assertScope();
+    if (remotePending && vaultDigest(parseVault(decryptVault(parseEnvelope(remotePending.buffer), key))) !== targetDigest) {
+      throw Error('Altă operațiune este în curs în Drive.');
+    }
+    const envelope = encryptVaultWithExistingRecovery(encode(pending.vault), key, pending.vault.revision, pending.recovery);
+    if (currentDigest !== targetDigest) {
+      if (!remotePending) await writeVerifiedPrivateCloudFile({ folderNames: FOLDER, filename: PENDING_FILE,
+        mimeType: 'application/octet-stream', buffer: encode(envelope), expectedVersion: null, accountScope: pending.scope });
+      assertScope();
+      await writeVerifiedPrivateCloudFile({ folderNames: FOLDER, filename: VAULT_FILE, mimeType: 'application/octet-stream',
+        buffer: encode(envelope), expectedVersion: latest.driveVersion, expectedFileId: pending.fileId, accountScope: pending.scope });
+    }
+    assertScope();
+    const manifest = await readVerifiedPrivateCloudFile(FOLDER, MANIFEST_FILE);
+    assertScope();
+    await uploadManifest(pending.vault, key, pending.recovery, manifest?.version ?? null, pending.scope);
+    assertScope();
+    await deletePrivateCloudFile(FOLDER, PENDING_FILE, assertScope);
+    for (const job of pending.documents) {
+      assertScope();
+      if (job.type === 'invoice') {
+        const invoice = pending.vault.invoices.find(row => row.id === job.id);
+        if (invoice && invoice.status !== 'cancelled') await uploadProtectedInvoicePdf(invoice, pending.vault, pending.scope);
+      } else {
+        const note = pending.vault.creditNotes.find(row => row.id === job.id);
+        if (note && note.status !== 'cancelled') await uploadProtectedCreditNotePdf(note, pending.vault, pending.scope);
+      }
+    }
+    assertScope();
+  });
+}
+
+async function stageProtectedMutation(webContentsId: number, operationId: string, eventType: string,
+  apply: (vault: ProtectedRegistryVault, operationId: string) => void, findReplay?: (vault: ProtectedRegistryVault) => boolean) {
+  protectedUploader.assertWritable();
+  const session = await freshSession(webContentsId);
+  if (!session.driveFileId || !session.cloudScope) throw Error('Redeschide registrul pentru a verifica destinația salvării.');
+  // No offline issuance: every accepted operation checks the fixed remote file.
+  await probeProtectedCloudFile(session.driveFileId, session.cloudScope);
+  assertWriter();
+  if (await freshSession(webContentsId) !== session) throw Error('Registrul a fost blocat.');
+  protectedUploader.assertWritable();
+  const latest = session.vault;
+  if (findReplay?.(latest)) return latest;
+  if (findReplay && latest.processedOperations.includes(operationId)) throw Error('Identificatorul operației a fost deja utilizat.');
+  if (latest.processedOperations.includes(operationId)) return latest;
+  const next = structuredClone(latest);
+  apply(next, operationId);
+  next.revision++;
+  next.updatedAt = new Date().toISOString();
+  next.processedOperations.push(operationId);
+  if (next.processedOperations.length > 10000) next.processedOperations.splice(0, next.processedOperations.length - 10000);
+  addAudit(next, eventType, operationId, { revision: next.revision });
+  // Generate the envelope before accepting locally, enforcing the same size and
+  // cryptographic limits as Drive. PDF jobs are part of the durable acceptance.
+  const envelope = encryptVaultWithExistingRecovery(encode(next), keyBuffer(), next.revision, session.envelope.recovery);
+  const previousInvoices = new Map(latest.invoices.map(row => [row.id, JSON.stringify(row)]));
+  const previousNotes = new Map(latest.creditNotes.map(row => [row.id, JSON.stringify(row)]));
+  const documents: PendingProtectedSave['documents'] = [
+    ...next.invoices.filter(row => previousInvoices.get(row.id) !== JSON.stringify(row)).map(row => ({ type: 'invoice' as const, id: row.id })),
+    ...next.creditNotes.filter(row => previousNotes.get(row.id) !== JSON.stringify(row)).map(row => ({ type: 'credit-note' as const, id: row.id })),
+  ];
+  try {
+    protectedOutbox.append({ version: 1, operationId, scope: session.cloudScope, fileId: session.driveFileId,
+      baseDigest: vaultDigest(latest), vault: next, recovery: envelope.recovery, documents });
+  } catch (error) {
+    // A directory flush can fail after the atomic rename. Never build another
+    // revision on stale RAM in that ambiguous case: recover the accepted tail.
+    if (protectedOutbox.hasPending()) {
+      protectedUploader.blockAfterLocalFailure();
+      const tail = protectedOutbox.read().at(-1)?.value;
+      if (tail?.operationId === operationId && vaultDigest(tail.vault) === vaultDigest(next)) {
+        for (const current of sessions.values()) if (current.role === 'writer') {
+          current.vault = next; current.envelope = envelope;
+        }
+      }
+      void protectedUploader.start();
+      throw Error('Salvarea poate fi deja în așteptare. Verifică factura și sincronizarea înainte de a reîncerca; nu emite un document nou.');
+    }
+    throw error;
+  }
+  // No await between durable acceptance and updating every Writer session.
+  for (const current of sessions.values()) if (current.role === 'writer') {
+    current.vault = next; current.envelope = envelope;
+  }
+  void protectedUploader.start();
+  return next;
+}
 
 function setSession(session: Session) {
   session.role ??= getDeviceRole();
@@ -234,7 +378,7 @@ function addAudit(vault: ProtectedRegistryVault, eventType: string, operationId:
   if (vault.audit.length > 1000000) throw new Error('Jurnalul registrului a atins limita permisă.');
 }
 
-async function uploadManifest(vault: ProtectedRegistryVault, key: Buffer, recovery: ProtectedEnvelope['recovery'], expectedVersion?: string | null) {
+async function uploadManifest(vault: ProtectedRegistryVault, key: Buffer, recovery: ProtectedEnvelope['recovery'], expectedVersion?: string | null, accountScope?: string) {
   const envelope = encryptVaultWithExistingRecovery(encode(buildManifest(vault, key)), key, vault.revision, recovery);
   return writeVerifiedPrivateCloudFile({
     folderNames: FOLDER,
@@ -242,17 +386,22 @@ async function uploadManifest(vault: ProtectedRegistryVault, key: Buffer, recove
     mimeType: 'application/octet-stream',
     buffer: encode(envelope),
     expectedVersion,
+    accountScope,
   });
 }
 
 async function loadVaultFromCloud(key: Buffer) {
+  const scope = getDeviceRole() === 'writer' ? await initializeProtectedCloudScope() : undefined;
   const file = getDeviceRole() === 'viewer' ? await readProtectedViewerVault() : await readVerifiedPrivateCloudFile(FOLDER, VAULT_FILE);
   if (!file) throw new Error('Seiful registrului separat nu există în Google Drive.');
   const envelope = parseEnvelope(file.buffer);
-  return { vault: parseVault(decryptVault(envelope, key)), envelope, driveVersion: file.version };
+  if (scope && protectedCloudAccountScope() !== scope) throw Error('Contul Drive s-a schimbat în timpul citirii.');
+  return { vault: parseVault(decryptVault(envelope, key)), envelope, driveVersion: file.version, driveFileId: file.fileId,
+    cloudScope: scope };
 }
 
 async function backupCurrentVault(webContentsId: number, label: string) {
+  assertProtectedCloudSettled();
   await freshSession(webContentsId);
   const key = keyBuffer();
   await reconcilePending(key);
@@ -305,9 +454,17 @@ async function mutate(
   apply: (vault: ProtectedRegistryVault, operationId: string) => void,
   findReplay?: (vault: ProtectedRegistryVault) => boolean,
   rotateRecovery?: () => string,
+  onCommitted?: (vault: ProtectedRegistryVault) => void,
+  deferCloud = true,
 ) {
   return withRegistryRoutingLock(() => withPrivateCloudOperation(async () => {
     assertWriter();
+    const validatedOperationId = requireText(operationIdInput, 'Identificatorul operației', 100);
+    if (!/^[a-zA-Z0-9_-]{16,100}$/.test(validatedOperationId)) throw Error('Identificatorul operației este invalid.');
+    if (deferCloud && deferredEvents.has(eventType) && !rotateRecovery && !onCommitted) {
+      return stageProtectedMutation(webContentsId, validatedOperationId, eventType, apply, findReplay);
+    }
+    assertProtectedCloudSettled();
     const initialSession = await freshSession(webContentsId);
     // Only the dedicated Writer operation supplies this callback. Reauthenticate
     // inside the same queue as the cloud commit, never in the renderer.
@@ -320,6 +477,7 @@ async function mutate(
     if (await freshSession(webContentsId) !== initialSession) throw new Error('Sesiunea registrului s-a schimbat. Reîncearcă.');
     if (getDeviceRole() !== 'writer') throw new Error('Operațiunea este disponibilă numai pe Writer.');
     const restoreLatestSession = () => {
+      onCommitted?.(latest.vault);
       setSession({ ...initialSession, vault: latest.vault, envelope: latest.envelope, driveVersion: latest.driveVersion });
       return latest.vault;
     };
@@ -365,7 +523,9 @@ async function mutate(
     // it or return protected data to an expired/replaced session.
     if (await freshSession(webContentsId) !== initialSession) throw new Error('Sesiunea registrului s-a schimbat. Deblochează din nou modulul.');
     if (getDeviceRole() !== 'writer') throw new Error('Operațiunea este disponibilă numai pe Writer.');
-    setSession({ webContentsId, lastActivity: Date.now(), vault: next, envelope: nextEnvelope, driveVersion: null });
+    setSession({ ...initialSession, webContentsId, lastActivity: Date.now(), vault: next, envelope: nextEnvelope,
+      driveVersion: null, driveFileId: latest.driveFileId, cloudScope: latest.cloudScope });
+    onCommitted?.(next);
     return next;
   }));
 }
@@ -400,6 +560,7 @@ export async function protectedRegistryStatus(webContentsId: number) {
 
 export async function configureProtectedRegistry(webContentsId: number, pin: unknown, pinConfirmation: unknown) {
   assertWriter();
+  assertProtectedCloudSettled();
   if (!isCredentialStorageAvailable()) throw new Error('Windows nu oferă stocarea securizată necesară registrului.');
   if (isProtectedRegistryEnabled()) throw new Error('Registrul separat este deja configurat.');
   if (pin !== pinConfirmation) throw new Error('Cele două PIN-uri nu coincid.');
@@ -420,7 +581,7 @@ export async function configureProtectedRegistry(webContentsId: number, pin: unk
   setCredential(KEY_CREDENTIAL, key.toString('base64'));
   saveAuthState({ version: 1, pin: verifier, failedAttempts: 0, lockUntil: null });
   setCredential(ENABLED_CREDENTIAL, '1');
-  setSession({ webContentsId, lastActivity: Date.now(), vault, envelope, driveVersion: null });
+  setSession({ webContentsId, lastActivity: Date.now(), ...(await loadVaultFromCloud(key)) });
   return { success: true, recoveryKey, status: await protectedRegistryStatus(webContentsId) };
 }
 
@@ -441,12 +602,27 @@ export async function unlockProtectedRegistry(webContentsId: number, pinInput: u
   auth.failedAttempts = 0;
   auth.lockUntil = null;
   saveAuthState(auth);
-  const key = keyBuffer();
-  if (role === 'writer') await reconcilePending(key);
-  const latest = await loadVaultFromCloud(key);
-  if (getDeviceRole() !== role || (sessionGenerations.get(webContentsId) || 0) !== generation) throw new Error('Accesul a fost închis. Deblochează din nou registrul.');
-  setSession({ webContentsId, lastActivity: Date.now(), ...latest });
-  return protectedRegistryStatus(webContentsId);
+  return withRegistryRoutingLock(async () => {
+    const key = keyBuffer();
+    if (role === 'writer') {
+      protectedOutbox.discardIncompleteWrites();
+      if (protectedOutbox.hasPending()) await protectedUploader.start();
+      else await reconcilePending(key);
+    }
+    const latest = await loadVaultFromCloud(key);
+    const pending = role === 'writer' ? protectedOutbox.read() : [];
+    if (pending.some(entry => entry.value.scope !== latest.cloudScope || entry.value.fileId !== latest.driveFileId)) {
+      throw Error('Salvările temporare aparțin altui cont Drive sau altui seif. Datele au fost păstrate.');
+    }
+    const tail = pending.at(-1)?.value;
+    if (tail) {
+      latest.vault = parseVault(encode(tail.vault));
+      latest.envelope = encryptVaultWithExistingRecovery(encode(latest.vault), key, latest.vault.revision, tail.recovery);
+    }
+    if (getDeviceRole() !== role || (sessionGenerations.get(webContentsId) || 0) !== generation) throw new Error('Accesul a fost închis. Deblochează din nou registrul.');
+    setSession({ webContentsId, lastActivity: Date.now(), ...latest });
+    return protectedRegistryStatus(webContentsId);
+  });
 }
 
 export function lockProtectedRegistry(webContentsId: number) {
@@ -513,6 +689,7 @@ export async function refreshProtectedViewer(webContentsId: number) {
 }
 
 export async function recoverProtectedRegistry(webContentsId: number, recoveryKeyInput: unknown, newPin: unknown, newPinConfirmation: unknown) {
+  assertProtectedCloudSettled();
   assertWriter();
   if (newPin !== newPinConfirmation) throw new Error('Cele două PIN-uri nu coincid.');
   const verifier = createPinVerifier(String(newPin));
@@ -525,7 +702,8 @@ export async function recoverProtectedRegistry(webContentsId: number, recoveryKe
   saveAuthState({ version: 1, pin: verifier, failedAttempts: 0, lockUntil: null });
   setCredential(ENABLED_CREDENTIAL, '1');
   setSession({ webContentsId, lastActivity: Date.now(), vault, envelope, driveVersion: file.version });
-  await mutate(webContentsId, randomBytes(18).toString('base64url'), 'registry_recovered', () => undefined);
+  await mutate(webContentsId, randomBytes(18).toString('base64url'), 'registry_recovered', () => invalidateNormalBillingVisibility(db));
+  await ensureNormalBillingVisibility();
   return protectedRegistryStatus(webContentsId);
 }
 
@@ -601,7 +779,7 @@ export async function listProtectedRegistryCompanies(webContentsId: number) {
         address: last?.companySnapshot.address, stores: [...stores.values()], assigned: Boolean(assignment) };
     });
   }
-  const companies = billingRepo.getAllCompaniesAndStores() as any[];
+  const companies = billingRepo.getAllCompaniesAndStoresForRouting() as any[];
   const assigned = new Set(session.vault.assignments.map((entry) => entry.companyKey));
   return companies.map((company) => ({
     id: company.id,
@@ -624,12 +802,32 @@ export async function setProtectedRegistryAssignment(webContentsId: number, comp
   const assigned = assignedInput === true;
   const key = companyKey(company);
   const vault = await mutate(webContentsId, operationId, assigned ? 'company_assigned' : 'company_unassigned', (next, opId) => {
+    // Fail closed across an interrupted/ambiguous cloud assignment commit.
+    invalidateNormalBillingVisibility(db);
     const index = next.assignments.findIndex((entry) => entry.companyKey === key);
     if (assigned && index < 0) next.assignments.push({ companyKey: key, localCompanyId: company.id, companyName: company.name, assignedAt: new Date().toISOString() });
     if (!assigned && index >= 0) next.assignments.splice(index, 1);
     addAudit(next, assigned ? 'assignment_changed_to_protected' : 'assignment_removed_from_protected', opId, { companyKey: routingHash(keyBuffer(), 'company', key) }, 'company', null);
+  }, undefined, undefined, committed => {
+    const assignedKeys = new Set(committed.assignments.map(entry => entry.companyKey));
+    const companies = db.prepare('SELECT id,supabase_company_id FROM companies').all() as Array<{ id: number; supabase_company_id: string | null }>;
+    replaceNormalBillingVisibility(db, companies.filter(company => assignedKeys.has(companyKey(company))).map(company => company.id));
   });
   return { success: true, revision: vault.revision };
+}
+
+/** One-time upgrade/invalidated snapshot refresh. Subsequent reads work offline. */
+export async function ensureNormalBillingVisibility() {
+  if (normalBillingVisibilityReady(db)) return;
+  if (getDeviceRole() !== 'writer') { assertNormalBillingVisibilityReady(db); return; }
+  return withRegistryRoutingLock(async () => {
+    if (normalBillingVisibilityReady(db)) return;
+    const connection = db;
+    const policy = await loadProtectedRoutingPolicy();
+    if (connection !== db || getDeviceRole() !== 'writer') throw Error('Baza de date sau rolul s-a schimbat. Reia verificarea facturării.');
+    const companies = db.prepare('SELECT id,supabase_company_id FROM companies').all() as Array<{ id: number; supabase_company_id: string | null }>;
+    replaceNormalBillingVisibility(db, companies.filter(company => policy.key && policy.companyHashes.has(routingHash(policy.key, 'company', companyKey(company)))).map(company => company.id));
+  });
 }
 
 export async function setProtectedRegistryMode(webContentsId: number, modeInput: unknown, confirmationInput: unknown, operationId: unknown) {
@@ -668,6 +866,7 @@ export async function clearProtectedRegistryTestFinancialData(webContentsId: num
 
 export async function loadProtectedRoutingPolicy() {
   assertWriter();
+  assertProtectedCloudSettled();
   if (!isProtectedRegistryEnabled()) {
     const remoteVault = await readVerifiedPrivateCloudFile(FOLDER, VAULT_FILE);
     if (!remoteVault) return { enabled: false, vaultRevision: 0, companyHashes: new Set<string>(), orderHashes: new Set<string>(), key: null as Buffer | null };
@@ -723,7 +922,7 @@ export async function assertNormalStoreAllowed(storeIdInput: unknown) {
 export async function getNormalManualInvoiceCompanies() {
   if (getDeviceRole() !== 'writer') return billingRepo.getAllCompaniesAndStores();
   const policy = await loadProtectedRoutingPolicy();
-  const companies = billingRepo.getAllCompaniesAndStores() as any[];
+  const companies = billingRepo.getAllCompaniesAndStoresForRouting() as any[];
   if (!policy.enabled || !policy.key) return companies;
   return companies.filter((company) => !policy.companyHashes.has(routingHash(policy.key!, 'company', companyKey(company))));
 }
@@ -893,12 +1092,12 @@ function renderProtectedInvoicePdf(invoice: ProtectedInvoice, vault: ProtectedRe
   return buffer;
 }
 
-async function uploadProtectedInvoicePdf(invoice: ProtectedInvoice, vault: ProtectedRegistryVault) {
+async function uploadProtectedInvoicePdf(invoice: ProtectedInvoice, vault: ProtectedRegistryVault, accountScope?: string) {
   assertWriter();
   const buffer = renderProtectedInvoicePdf(invoice, vault);
   const filename = `Factura_${invoice.reference}.pdf`;
   const folderNames = protectedCloudDocumentFolders(invoice.companyName, 'Facturi');
-  await writeVerifiedPrivateCloudFile({ folderNames, filename, mimeType: 'application/pdf', buffer });
+  await writeVerifiedPrivateCloudFile({ folderNames, filename, mimeType: 'application/pdf', buffer, accountScope });
   return { filename, folder: folderNames.join('/') };
 }
 
@@ -990,11 +1189,7 @@ export async function createProtectedWeeklyInvoices(
     next.counters = nextCounters;
   });
   const issued = created.length ? created : result.invoices.filter((invoice) => invoice.operationId === operationId);
-  const pdfResults = [];
-  for (const invoice of issued) {
-    try { pdfResults.push({ invoiceId: invoice.id, success: true, ...(await uploadProtectedInvoicePdf(invoice, result)) }); }
-    catch (error) { pdfResults.push({ invoiceId: invoice.id, success: false, error: error instanceof Error ? error.message : 'PDF-ul nu a putut fi încărcat.' }); }
-  }
+  const pdfResults = issued.map(invoice => ({ invoiceId: invoice.id, success: true, pending: protectedOutbox.hasPending() }));
   return { success: true, invoices: issued, pdfResults };
 }
 
@@ -1023,7 +1218,7 @@ export async function createAllProtectedWeeklyInvoices(webContentsId: number, st
 export async function getProtectedManualInvoiceData(webContentsId: number) {
   const session = await freshSession(webContentsId);
   const assigned = new Set(session.vault.assignments.map((entry) => entry.companyKey));
-  const companies = (billingRepo.getAllCompaniesAndStores() as any[]).filter((company) => assigned.has(companyKey(company)));
+  const companies = (billingRepo.getAllCompaniesAndStoresForRouting() as any[]).filter((company) => assigned.has(companyKey(company)));
   return { companies, products: billingRepo.getCloudProducts() };
 }
 
@@ -1065,8 +1260,7 @@ export async function createProtectedManualInvoice(webContentsId: number, input:
   });
   const invoice = created[0] || result.invoices.find((row) => row.operationId === operationId);
   if (!invoice) throw new Error('Factura emisă nu a putut fi recitită.');
-  try { return { success: true, invoice, pdf: { success: true, ...(await uploadProtectedInvoicePdf(invoice, result)) } }; }
-  catch (error) { return { success: true, invoice, pdf: { success: false, error: error instanceof Error ? error.message : 'PDF-ul nu a putut fi încărcat.' } }; }
+  return { success: true, invoice, pdf: { success: true, pending: protectedOutbox.hasPending() } };
 }
 
 export async function listProtectedInvoices(webContentsId: number) {
@@ -1079,19 +1273,21 @@ export async function listProtectedInvoices(webContentsId: number) {
 export async function getProtectedInvoiceForEdit(webContentsId: number, invoiceId: string) {
   assertWriter();
   const id = requireText(invoiceId, 'Factura', 100);
-  return withRegistryRoutingLock(() => withPrivateCloudOperation(async () => {
+  return withRegistryRoutingLock(async () => {
     const session = await freshSession(webContentsId);
-    const key = keyBuffer();
-    await reconcilePending(key);
-    const latest = await loadVaultFromCloud(key);
-    assertWriter();
-    if (await freshSession(webContentsId) !== session) throw Error('Registrul a fost blocat.');
-    const invoice = latest.vault.invoices.find(row => row.id === id);
+    if (!protectedOutbox.hasPending()) {
+      const latest = await withPrivateCloudOperation(async () => {
+        const key = keyBuffer(); await reconcilePending(key); return loadVaultFromCloud(key);
+      });
+      assertWriter();
+      if (await freshSession(webContentsId) !== session) throw Error('Registrul a fost blocat.');
+      Object.assign(session, latest);
+    }
+    const invoice = session.vault.invoices.find(row => row.id === id);
     if (!invoice) throw Error('Factura nu există în registrul separat.');
-    setSession({ ...session, vault: latest.vault, envelope: latest.envelope, driveVersion: latest.driveVersion });
-    return { ...invoice, expectedVersion: protectedInvoiceVersion(invoice), blockedReason: protectedInvoiceEditBlock(latest.vault, invoice),
-      appliedCredit: activeCreditApplied(latest.vault, invoice.id) };
-  }));
+    return { ...invoice, expectedVersion: protectedInvoiceVersion(invoice), blockedReason: protectedInvoiceEditBlock(session.vault, invoice),
+      appliedCredit: activeCreditApplied(session.vault, invoice.id) };
+  });
 }
 
 export async function getProtectedInvoiceProducts(webContentsId: number, invoiceId: string, verifyPrices = true) {
@@ -1112,7 +1308,9 @@ export async function getProtectedInvoiceProducts(webContentsId: number, invoice
 // Serialize document regeneration with vault mutations. Read the latest committed
 // invoice, never a renderer snapshot or a previous revision captured before upload.
 async function refreshProtectedInvoiceDocument(webContentsId: number, invoiceId: string) {
-  return withRegistryRoutingLock(() => withPrivateCloudOperation(async () => {
+  // Caller owns the routing lock for the complete open/share/print preparation.
+  return withPrivateCloudOperation(async () => {
+    assertProtectedCloudSettled();
     assertWriter();
     const session = await freshSession(webContentsId);
     await reconcilePending(keyBuffer());
@@ -1124,7 +1322,7 @@ async function refreshProtectedInvoiceDocument(webContentsId: number, invoiceId:
     const result = await uploadProtectedInvoicePdf(invoice, latest.vault);
     if (await freshSession(webContentsId) !== session) throw Error('Registrul a fost blocat.');
     return result;
-  }));
+  });
 }
 
 export async function updateProtectedInvoice(webContentsId: number, input: ProtectedInvoiceEditInput) {
@@ -1140,13 +1338,7 @@ export async function updateProtectedInvoice(webContentsId: number, input: Prote
     });
   }, next => protectedInvoiceEditReplay(next, request));
   const invoice = vault.invoices.find(row => row.id === request.invoiceId)!;
-  const session = await freshSession(webContentsId);
-  let pdf: { success: boolean; error?: string };
-  try { pdf = { success: true, ...(await refreshProtectedInvoiceDocument(webContentsId, invoice.id)) }; }
-  catch { pdf = { success: false, error: 'Factura este salvată în registru. Reîncearcă PDF-ul din acțiunile facturii; nu salva din nou modificarea.' }; }
-  assertWriter();
-  if (await freshSession(webContentsId) !== session) throw Error('Registrul a fost blocat. Deblochează-l pentru a verifica factura salvată.');
-  return { success: true as const, invoice, pdf };
+  return { success: true as const, invoice, pdf: { success: true, pending: protectedOutbox.hasPending() } };
 }
 
 export async function getProtectedIssuerChangeOptions(webContentsId: number, invoiceId: string): Promise<InvoiceIssuerChangeOptions> {
@@ -1173,8 +1365,7 @@ export async function changeProtectedInvoiceIssuer(webContentsId: number, input:
   }, (latest) => Boolean(protectedIssuerChangeReplay(latest, request)));
   const invoice = protectedIssuerChangeReplay(vault, request);
   if (!invoice) throw new Error('Înlocuitoarea nu a putut fi recitită.');
-  try { return { success: true, invoice, pdf: { success: true, ...(await uploadProtectedInvoicePdf(invoice, vault)) } }; }
-  catch (error) { return { success: true, invoice, pdf: { success: false, error: error instanceof Error ? error.message : 'PDF-ul trebuie regenerat.' } }; }
+  return { success: true, invoice, pdf: { success: true, pending: protectedOutbox.hasPending() } };
 }
 
 export async function cancelProtectedInvoice(webContentsId: number, invoiceIdInput: unknown, reasonInput: unknown, operationId: unknown) {
@@ -1237,8 +1428,7 @@ export async function reissueProtectedInvoice(webContentsId: number, invoiceIdIn
   });
   const invoice = created[0] || vault.invoices.find((row) => row.operationId === operationId);
   if (!invoice) throw new Error('Factura reemisă nu a putut fi recitită.');
-  try { return { success: true, invoice, pdf: { success: true, ...(await uploadProtectedInvoicePdf(invoice, vault)) } }; }
-  catch (error) { return { success: true, invoice, pdf: { success: false, error: error instanceof Error ? error.message : 'PDF-ul nu a putut fi încărcat.' } }; }
+  return { success: true, invoice, pdf: { success: true, pending: protectedOutbox.hasPending() } };
 }
 
 export async function deleteProtectedTestInvoice(webContentsId: number, invoiceIdInput: unknown, confirmationInput: unknown, operationId: unknown) {
@@ -1396,12 +1586,12 @@ function renderProtectedCreditNotePdf(note: ProtectedCreditNote, vault: Protecte
   return buffer;
 }
 
-async function uploadProtectedCreditNotePdf(note: ProtectedCreditNote, vault: ProtectedRegistryVault) {
+async function uploadProtectedCreditNotePdf(note: ProtectedCreditNote, vault: ProtectedRegistryVault, accountScope?: string) {
   assertWriter();
   const buffer = renderProtectedCreditNotePdf(note, vault);
   const filename = `Credit_Note_${note.reference}.pdf`;
   const folderNames = protectedCloudDocumentFolders(note.companyName, 'Credit Notes');
-  await writeVerifiedPrivateCloudFile({ folderNames, filename, mimeType: 'application/pdf', buffer });
+  await writeVerifiedPrivateCloudFile({ folderNames, filename, mimeType: 'application/pdf', buffer, accountScope });
   return { filename, folder: folderNames.join('/') };
 }
 
@@ -1466,6 +1656,7 @@ export async function createProtectedCreditNote(webContentsId: number, input: an
     returnToStock: row.returnToStock === true,
   }));
   if (new Set(selections.map((row: any) => row.invoiceItemId)).size !== selections.length) throw new Error('Aceeași poziție a fost selectată de două ori.');
+  const deferred = !selections.some((row: { returnToStock: boolean }) => row.returnToStock);
   const created: ProtectedCreditNote[] = [];
   const result = await mutate(webContentsId, operationId, 'protected_credit_note_issued', (next, opId) => {
     const sources = selections.map((selection: any) => {
@@ -1533,9 +1724,10 @@ export async function createProtectedCreditNote(webContentsId: number, input: an
     generatedCashCredit = Math.round(generatedCashCredit * 100) / 100;
     if (generatedCashCredit > 0.005) next.creditEntries.push({ id: randomUUID(), companyKey: note.companyKey, issuerCode: note.issuerCode, sourceType: 'credit_note_overpayment', sourceId: note.id, originalAmount: generatedCashCredit, availableAmount: generatedCashCredit, createdAt: note.createdAt, testEntry: note.testDocument });
     created.push(note);
-  });
+  }, undefined, undefined, undefined, deferred);
   const note = created[0] || result.creditNotes.find((row) => row.operationId === operationId);
   if (!note) throw new Error('Credit Note-ul emis nu a putut fi recitit.');
+  if (deferred) return { success: true, creditNote: note, pdf: { success: true, pending: protectedOutbox.hasPending() } };
   applyProtectedStockReturns(note, false);
   if (note.items.some((item) => item.returnToStock && !item.stockReturnApplied)) {
     const marked = await mutate(webContentsId, `${String(operationId)}_stock`, 'protected_stock_return_applied', (next) => {
@@ -1583,6 +1775,8 @@ export async function cancelProtectedCreditNote(webContentsId: number, idInput: 
   const id = requireText(idInput, 'Credit Note-ul', 100);
   const reason = requireText(reasonInput, 'Motivul anulării', 1000);
   if (acknowledge !== true) throw new Error('Confirmă avertismentul contabil înainte de anulare.');
+  const session = await freshSession(webContentsId);
+  const deferred = !session.vault.creditNotes.find(row => row.id === id)?.items.some(item => item.returnToStock);
   let cancelled: ProtectedCreditNote | undefined;
   const vault = await mutate(webContentsId, operationId, 'protected_credit_note_cancelled', (next) => {
     const note = next.creditNotes.find((row) => row.id === id);
@@ -1601,9 +1795,10 @@ export async function cancelProtectedCreditNote(webContentsId: number, idInput: 
       for (const invoiceId of note.sourceInvoiceIds) updateProtectedInvoiceStatus(next, next.invoices.find((row) => row.id === invoiceId)!);
     }
     cancelled = note;
-  });
+  }, undefined, undefined, undefined, deferred);
   const note = cancelled || vault.creditNotes.find((row) => row.id === id);
   if (!note) throw new Error('Credit Note-ul nu a putut fi recitit.');
+  if (deferred) return { success: true };
   applyProtectedStockReturns(note, true);
   if (note.items.some((item) => item.stockReturnApplied)) {
     await mutate(webContentsId, `${String(operationId)}_stock`, 'protected_stock_return_reversed', (next) => {
@@ -1688,31 +1883,34 @@ export async function listProtectedCreditApplications(webContentsId: number) {
 }
 
 async function protectedPdfToTemporaryFile(webContentsId: number, type: 'invoice' | 'credit-note', id: string) {
-  if (getDeviceRole() === 'viewer') await refreshProtectedViewer(webContentsId);
-  const session = await freshSession(webContentsId);
-  const record = type === 'invoice' ? session.vault.invoices.find((row) => row.id === id) : session.vault.creditNotes.find((row) => row.id === id);
-  if (!record) throw new Error('Documentul nu există.');
-  if (record.status === 'cancelled') throw Error('Documentul este anulat.');
-  if (session.role === 'viewer') {
-    const buffer = type === 'invoice' ? renderProtectedInvoicePdf(record as ProtectedInvoice, session.vault) : renderProtectedCreditNotePdf(record as ProtectedCreditNote, session.vault);
-    return storeTemporaryProtectedPdf(webContentsId, session, buffer);
-  }
-  // A prior edit can commit even when its PDF upload fails. Never deliver that
-  // old PDF: regenerate from the authoritative vault before reading it.
-  if (type === 'invoice') await refreshProtectedInvoiceDocument(webContentsId, id);
-  const filename = type === 'invoice' ? `Factura_${record.reference}.pdf` : `Credit_Note_${record.reference}.pdf`;
-  let file = await readProtectedDocumentPdf(type, record, filename);
-  if (!file) {
-    if (type === 'invoice') await uploadProtectedInvoicePdf(record as ProtectedInvoice, session.vault);
-    else await uploadProtectedCreditNotePdf(record as ProtectedCreditNote, session.vault);
-    file = await readProtectedDocumentPdf(type, record, filename);
-  }
-  if (!file) throw new Error('PDF-ul nu a putut fi recitit din Google Drive.');
-  // A cloud read can finish after the operator locks the registry. Do not
-  // recreate plaintext files or start a transfer for that expired session.
-  assertWriter();
-  if (sessions.get(webContentsId) !== session) throw new Error('Registrul a fost blocat. Deblochează-l înainte de a deschide documentul.');
-  return storeTemporaryProtectedPdf(webContentsId, session, file.buffer);
+  return withRegistryRoutingLock(async () => {
+    if (getDeviceRole() === 'writer') assertProtectedCloudSettled();
+    if (getDeviceRole() === 'viewer') await refreshProtectedViewer(webContentsId);
+    const session = await freshSession(webContentsId);
+    const record = type === 'invoice' ? session.vault.invoices.find((row) => row.id === id) : session.vault.creditNotes.find((row) => row.id === id);
+    if (!record) throw new Error('Documentul nu există.');
+    if (record.status === 'cancelled') throw Error('Documentul este anulat.');
+    if (session.role === 'viewer') {
+      const buffer = type === 'invoice' ? renderProtectedInvoicePdf(record as ProtectedInvoice, session.vault) : renderProtectedCreditNotePdf(record as ProtectedCreditNote, session.vault);
+      return storeTemporaryProtectedPdf(webContentsId, session, buffer);
+    }
+    // A prior edit can commit even when its PDF upload fails. Never deliver that
+    // old PDF: regenerate from the authoritative vault before reading it.
+    if (type === 'invoice') await refreshProtectedInvoiceDocument(webContentsId, id);
+    const filename = type === 'invoice' ? `Factura_${record.reference}.pdf` : `Credit_Note_${record.reference}.pdf`;
+    let file = await readProtectedDocumentPdf(type, record, filename);
+    if (!file) {
+      if (type === 'invoice') await uploadProtectedInvoicePdf(record as ProtectedInvoice, session.vault);
+      else await uploadProtectedCreditNotePdf(record as ProtectedCreditNote, session.vault);
+      file = await readProtectedDocumentPdf(type, record, filename);
+    }
+    if (!file) throw new Error('PDF-ul nu a putut fi recitit din Google Drive.');
+    // A cloud read can finish after the operator locks the registry. Do not
+    // recreate plaintext files or start a transfer for that expired session.
+    assertWriter();
+    if (sessions.get(webContentsId) !== session) throw new Error('Registrul a fost blocat. Deblochează-l înainte de a deschide documentul.');
+    return storeTemporaryProtectedPdf(webContentsId, session, file.buffer);
+  });
 }
 
 function storeTemporaryProtectedPdf(webContentsId: number, session: Session, buffer: Uint8Array) {
@@ -1751,6 +1949,7 @@ export async function printProtectedDocument(webContentsId: number, type: 'invoi
 }
 
 export async function exportProtectedRegistryMonth(webContentsId: number, monthInput: unknown) {
+  assertProtectedCloudSettled();
   const session = await freshSession(webContentsId);
   const month = String(monthInput ?? '');
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('Luna exportului este invalidă.');

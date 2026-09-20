@@ -51,6 +51,7 @@ export function InvoiceIssuerChangeModal(props: Props) {
       } else {
         const result = await api.protectedRegistry.changeInvoiceIssuer({ ...fields, invoiceId: props.invoiceId, operationId: operation.current.id });
         message = `Factura ${options.reference} a fost anulată și înlocuită cu ${result.invoice.reference}.`;
+        if (result.pdf.pending) message += ' Salvare temporară criptată; sincronizarea în Drive continuă în fundal.';
         if (!result.pdf.success) message += ' PDF-ul trebuie regenerat folosind Deschide PDF, fără reemiterea facturii.';
       }
     } catch (failure) {

@@ -2,6 +2,7 @@ import { db, waitForDatabaseReady } from "../database/db";
 import { getDeviceRole } from "../device/deviceRole";
 import { createVrBakerClient } from "./vrBakerIntegration";
 import { retiredLegacyCompanyIds } from '../database/legacyEntityRepair';
+import { normalBillingReadDatabase } from '../database/normalBillingVisibility';
 import {
   acknowledgeBillingDelivery,
   prepareBillingDelivery,
@@ -14,6 +15,8 @@ export async function publishBilling() {
   try {
     await waitForDatabaseReady();
     if (getDeviceRole() !== "writer") return;
+    const { ensureNormalBillingVisibility } = await import('../protectedRegistry/service');
+    await ensureNormalBillingVisibility();
     const connection = db;
     const client = createVrBakerClient();
     const control = await client.request<{ sync_enabled: boolean; protocol_version?: number; drive_folder_id?: string }>(
@@ -26,14 +29,15 @@ export async function publishBilling() {
     }
     if(control.sync_enabled && control.protocol_version !== 2) throw new Error('Platforma necesită actualizarea protocolului financiar.');
     if (!control.sync_enabled || getDeviceRole() !== "writer") return;
-    const queue = db.prepare(
+    const queue = normalBillingReadDatabase(db).prepare(
       "SELECT q.company_id FROM billing_publication_queue q JOIN companies c ON c.id=q.company_id WHERE q.revision>q.published_revision AND q.retry_at<=? AND c.vrbaker_missing=0 ORDER BY q.company_id",
     ).all(Date.now()) as { company_id: number }[];
     const retired = retiredLegacyCompanyIds(db);
     for (const { company_id } of queue.filter(row=>!retired.has(row.company_id))) {
       try {
         if (getDeviceRole() !== "writer" || db !== connection) return;
-        if ((db.prepare('SELECT vrbaker_missing FROM companies WHERE id=?').get(company_id) as {vrbaker_missing:number}|undefined)?.vrbaker_missing) continue;
+        const visible = () => normalBillingReadDatabase(db).prepare('SELECT 1 FROM companies WHERE id=? AND vrbaker_missing=0').get(company_id);
+        if (!visible()) continue;
         const data = prepareBillingDelivery(db, company_id);
         const parts = Math.max(
           1,
@@ -41,7 +45,7 @@ export async function publishBilling() {
         );
         for (let part = 0; part < parts; part++) {
           if (getDeviceRole() !== "writer" || db !== connection) return;
-          if ((db.prepare('SELECT vrbaker_missing FROM companies WHERE id=?').get(company_id) as {vrbaker_missing:number}|undefined)?.vrbaker_missing) throw new Error('Compania nu mai apare în VR Baker.');
+          if (!visible()) throw new Error('Compania nu mai este disponibilă în facturarea normală.');
           await client.request("billing.stage", {
             ...data,
             invoices: data.invoices.slice(part * 50, (part + 1) * 50),
@@ -51,7 +55,7 @@ export async function publishBilling() {
           }, `${data.source_id}:${company_id}:${data.revision}:part:${part}`);
         }
         if (getDeviceRole() !== "writer" || db !== connection) return;
-        if ((db.prepare('SELECT vrbaker_missing FROM companies WHERE id=?').get(company_id) as {vrbaker_missing:number}|undefined)?.vrbaker_missing) continue;
+        if (!visible()) continue;
         await client.request("billing.commit", {
           source_id: data.source_id,
           company_id: data.company_id,

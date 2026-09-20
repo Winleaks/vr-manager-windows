@@ -1,4 +1,10 @@
 import { db } from '../db';
+import { normalBillingReadDatabase } from '../normalBillingVisibility';
+const normalRead = () => normalBillingReadDatabase(db);
+function assertVisible(table: 'companies' | 'stores' | 'clients' | 'invoices' | 'invoice_items' | 'payments' | 'credit_notes' | 'invoice_credit_applications', id: number) {
+  requirePositiveInteger(id, 'Înregistrarea');
+  if (!normalRead().prepare(`SELECT 1 FROM ${table} WHERE id=?`).get(id)) throw Error('Înregistrarea nu este disponibilă în facturarea normală.');
+}
 import type { InvoiceIssuerChangeInput, InvoiceIssuerChangeOptions } from '../../../src/shared/invoiceIssuerChange.ts';
 import { outstandingReport, paymentReport, statementReport, weeklyBillingStats } from '../billingReports.ts';
 import {
@@ -71,12 +77,13 @@ export function updateBillingIssuer(data: UpdateBillingIssuerInput) {
 }
 
 export function assignCompanyIssuer(companyId: number, issuerId: number | null) {
+  assertVisible('companies', companyId);
   return assignCompanyIssuerTransaction(db, companyId, issuerId);
 }
 
 // Clients
 export function getClients() {
-  return db.prepare('SELECT * FROM clients ORDER BY name').all();
+  return normalRead().prepare('SELECT * FROM clients ORDER BY name').all();
 }
 
 export function createClient(name: string, supabaseClientId: string | null) {
@@ -86,13 +93,14 @@ export function createClient(name: string, supabaseClientId: string | null) {
 }
 
 export function updateClient(id: number, name: string, supabaseClientId: string | null, isActive: boolean) {
+  assertVisible('clients', id);
   const stmt = db.prepare('UPDATE clients SET name = ?, supabase_client_id = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
   stmt.run(name, supabaseClientId, isActive ? 1 : 0, id);
 }
 
 // Companies
 export function getCompaniesByClientId(clientId: number) {
-  return db.prepare('SELECT * FROM companies WHERE client_id = ? ORDER BY name').all(clientId);
+  return normalRead().prepare('SELECT * FROM companies WHERE client_id = ? ORDER BY name').all(clientId);
 }
 
 export function createCompany(
@@ -122,6 +130,7 @@ export function updateCompany(
   bankName: string | null,
   isActive: boolean
 ) {
+  assertVisible('companies', id);
   const stmt = db.prepare(`
     UPDATE companies 
     SET name = ?, cui = ?, reg_com = ?, address = ?, bank_account = ?, bank_name = ?, is_active = ?
@@ -132,10 +141,11 @@ export function updateCompany(
 
 // Stores
 export function getStoresByCompanyId(companyId: number) {
-  return db.prepare('SELECT * FROM stores WHERE company_id = ? ORDER BY name').all(companyId);
+  return normalRead().prepare('SELECT * FROM stores WHERE company_id = ? ORDER BY name').all(companyId);
 }
 
 export function createStore(companyId: number, name: string, address: string | null, supabaseStoreId: string | null) {
+  assertVisible('companies', companyId);
   const stmt = db.prepare(`
     INSERT INTO stores (company_id, name, address, supabase_store_id)
     VALUES (?, ?, ?, ?)
@@ -145,6 +155,7 @@ export function createStore(companyId: number, name: string, address: string | n
 }
 
 export function updateStore(id: number, name: string, address: string | null, supabaseStoreId: string | null, isActive: boolean) {
+  assertVisible('stores', id);
   const stmt = db.prepare(`
     UPDATE stores
     SET name = ?, address = ?, supabase_store_id = ?, is_active = ?
@@ -256,6 +267,15 @@ export function upsertStoreFromSupabase(storeData: { id: string, name: string, a
 }
 
 export function getAllCompaniesAndStores() {
+  return companiesAndStores(normalRead());
+}
+
+/** Main-process only: required for protected assignment management and routing. */
+export function getAllCompaniesAndStoresForRouting() {
+  return companiesAndStores(db);
+}
+
+function companiesAndStores(db: typeof import('../db').db) {
   const companies = db.prepare(`
     SELECT c.*, bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color,
            bi.is_default AS issuer_is_default
@@ -295,6 +315,7 @@ export function getAllCompaniesAndStores() {
 }
 
 export function getCompanyProfileDetails(companyId: number) {
+  const db = normalRead();
   const company = db.prepare(`
     SELECT c.*, bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color
     FROM companies c LEFT JOIN billing_issuers bi ON bi.id = c.issuer_id WHERE c.id = ?
@@ -397,18 +418,22 @@ export function getCompanyProfileDetails(companyId: number) {
 }
 
 export function recordCompanyPayment(data: CompanyPaymentInput) {
+  assertVisible('companies', data.companyId);
   return recordCompanyPaymentTransaction(db, data);
 }
 
 export function updatePayment(data: UpdatePaymentInput) {
+  assertVisible('payments', data.id);
   return updatePaymentTransaction(db, data);
 }
 
 export function createInvoiceBatchFromSync(orders: InvoiceOrderInput[], invoiceDate: string) {
+  orders.forEach(order => assertVisible('stores', order.storeId));
   return createInvoiceBatchTransaction(db, orders, invoiceDate);
 }
 
 export function createManualInvoice(data: ManualInvoiceInput) {
+  assertVisible('stores', data.storeId);
   return createManualInvoiceTransaction(db, data);
 }
 
@@ -453,6 +478,7 @@ export function getInvoiceIssuerChangeOptions(invoiceId: number): InvoiceIssuerC
 }
 
 export function changeInvoiceIssuer(input: InvoiceIssuerChangeInput) {
+  assertVisible('invoices', input.invoiceId);
   const result = changeInvoiceIssuerTransaction(db, input);
   return { ...result, invoice: getInvoiceById(result.invoiceId) };
 }
@@ -483,16 +509,18 @@ function hydrateInvoice(inv: any) {
 }
 
 export function getInvoiceById(invoiceIdInput: number) {
+  const db = normalRead();
   const invoiceId = requirePositiveInteger(invoiceIdInput, 'Factura');
   const invoice = db.prepare(`${invoiceSelect} WHERE i.id = ?`).get(invoiceId) as any;
   if (!invoice) throw new Error('Factura nu există.');
   return { ...hydrateInvoice(invoice), accountOutstanding: invoice.issuer_id ? outstandingReport(db, invoice.company_id, invoice.issuer_id, invoice.store_id) : undefined };
 }
 
-export function getPaymentReport(from: string, to: string) { return paymentReport(db, from, to); }
-export function getStatement(companyId: number, issuerId: number, from: string, to: string) { return statementReport(db, companyId, issuerId, from, to); }
+export function getPaymentReport(from: string, to: string) { return paymentReport(normalRead(), from, to); }
+export function getStatement(companyId: number, issuerId: number, from: string, to: string) { return statementReport(normalRead(), companyId, issuerId, from, to); }
 
 export function getInvoicesByDateRange(startDate?: string, endDate?: string, issuerId?: number) {
+  const db = normalRead();
   let query = invoiceSelect;
   const params: any[] = [];
   const conditions: string[] = [];
@@ -518,11 +546,13 @@ export function updateInvoiceWithItems(
   items: { id?: number, productName: string, name_ro?: string, variant_label?: string, unit?: string, quantity: number, unitPrice: number, totalPrice: number }[]
 ) {
   const invoice = db.prepare('SELECT invoice_number FROM invoices WHERE id = ?').get(id) as { invoice_number: string } | undefined;
+  assertVisible('invoices', id);
   if (!invoice) throw new Error('Factura nu există.');
   return updateInvoiceTransaction(db, id, invoice.invoice_number, invoiceDate, items);
 }
 
 export function getInvoiceProductContext(invoiceIdInput: number) {
+  const db = normalRead();
   const invoiceId = requirePositiveInteger(invoiceIdInput, 'Factura');
   const row = db.prepare(`SELECT s.supabase_store_id FROM invoices i
     JOIN stores s ON s.id = i.store_id WHERE i.id = ? AND i.status != 'cancelled'`).get(invoiceId) as { supabase_store_id: string | null } | undefined;
@@ -533,6 +563,7 @@ export function getInvoiceProductContext(invoiceIdInput: number) {
 
 // Dashboard calculations
 export function getBillingStats(issuerId?: number, from?: string, to?: string) {
+  const db = normalRead();
   if (from !== undefined || to !== undefined) return weeklyBillingStats(db, issuerId, from!, to!);
   const invoiceIds = db.prepare(`SELECT i.id FROM invoices i LEFT JOIN invoice_identities ii ON ii.invoice_id = i.id WHERE i.status != 'cancelled' AND (? IS NULL OR ii.issuer_id = ?)`).all(issuerId ?? null, issuerId ?? null) as Array<{ id: number }>;
   const rows = invoiceIds.map((row) => getInvoiceFinancials(db, row.id));
@@ -546,18 +577,19 @@ export function getBillingStats(issuerId?: number, from?: string, to?: string) {
   };
 }
 
-export function readCreditNoteDraft(invoiceIds?: number[]) { return getCreditNoteDraft(db, invoiceIds); }
-export function issueCreditNote(data: CreateCreditNoteInput) { return createCreditNoteTransaction(db, data); }
-export function listCreditNotes(filters?: any) { return getCreditNotes(db, filters); }
-export function readCreditNote(id: number) { return getCreditNote(db, id); }
-export function cancelCreditNote(id: number, reason: string, acknowledgeAccountingRisk: boolean) { return cancelCreditNoteTransaction(db, id, reason, acknowledgeAccountingRisk); }
-export function applyCompanyCredit(data: ApplyCompanyCreditInput) { return applyCompanyCreditTransaction(db, data); }
-export function reverseCreditApplication(id: number, reason: string) { return reverseCreditApplicationTransaction(db, id, reason); }
+export function readCreditNoteDraft(invoiceIds?: number[]) { return getCreditNoteDraft(normalRead(), invoiceIds); }
+export function issueCreditNote(data: CreateCreditNoteInput) { data.items.forEach(item => assertVisible('invoice_items', item.invoiceItemId)); return createCreditNoteTransaction(db, data); }
+export function listCreditNotes(filters?: any) { return getCreditNotes(normalRead(), filters); }
+export function readCreditNote(id: number) { return getCreditNote(normalRead(), id); }
+export function cancelCreditNote(id: number, reason: string, acknowledgeAccountingRisk: boolean) { assertVisible('credit_notes', id); return cancelCreditNoteTransaction(db, id, reason, acknowledgeAccountingRisk); }
+export function applyCompanyCredit(data: ApplyCompanyCreditInput) { assertVisible('companies', data.companyId); assertVisible('invoices', data.invoiceId); return applyCompanyCreditTransaction(db, data); }
+export function reverseCreditApplication(id: number, reason: string) { assertVisible('invoice_credit_applications', id); return reverseCreditApplicationTransaction(db, id, reason); }
 export function setCreditNotePdfState(id: number, pdfPath: string | null, pdfStatus: 'pending' | 'ready' | 'error', cloudStatus?: 'pending' | 'ready' | 'error') {
   db.prepare(`UPDATE credit_notes SET pdf_path = ?, pdf_status = ?, cloud_status = COALESCE(?, cloud_status) WHERE id = ?`).run(pdfPath, pdfStatus, cloudStatus || null, id);
 }
 
 export function cancelInvoice(invoiceId: number, reason: string) {
+  assertVisible('invoices', invoiceId);
   return cancelInvoiceTransaction(db, invoiceId, reason);
 }
 
@@ -570,10 +602,12 @@ export function setBillingTestMode(enabled: boolean, confirmation: string) {
 }
 
 export function deleteInvoiceForTesting(invoiceId: number, confirmation: string) {
+  assertVisible('invoices', invoiceId);
   return deleteInvoiceForTestingTransaction(db, invoiceId, confirmation);
 }
 
 export function reissueCancelledInvoice(invoiceId: number, invoiceDate: string) {
+  assertVisible('invoices', invoiceId);
   return reissueCancelledWeeklyInvoiceTransaction(db, invoiceId, invoiceDate);
 }
 
@@ -745,5 +779,6 @@ export function getIssuerPreviewByStoreExternalId(storeExternalId: string) {
 }
 
 export function createWeeklyInvoices(orders: WeeklyInvoiceInput[], invoiceDate: string, auditContext?: WeeklyInvoiceBatchAuditContext) {
+  orders.forEach(order => assertVisible('stores', order.storeId));
   return createWeeklyInvoiceBatchTransaction(db, orders, invoiceDate, auditContext);
 }

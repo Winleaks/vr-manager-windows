@@ -36,6 +36,7 @@ import {
   Users,
 } from 'lucide-react';
 import { api } from '../shared/api';
+import { ProtectedSyncBanner } from '../components/ProtectedSyncBanner';
 import { NumericInput } from '../components/NumericInput';
 import { PinInput } from '../components/PinInput';
 import { BilingualProductName } from '../components/BilingualProductName';
@@ -341,7 +342,7 @@ function OrdersPanel() {
   const issue = async () => {
     if (!selected.length || !(await confirmAction(`Emiți ${selected.length} facturi în registrul separat?`))) return;
     setBusy(true);
-    try { const result = await run(() => api.protectedRegistry.createWeekly(startDate, endDate, selected, operationId())); const failed = result.pdfResults.filter((row: any) => !row.success); notify(failed.length ? `Facturile au fost emise. ${failed.length} PDF-uri trebuie regenerate.` : `${result.invoices.length} facturi au fost emise și verificate în Drive.`); await load(); }
+    try { const result = await run(() => api.protectedRegistry.createWeekly(startDate, endDate, selected, operationId())); const failed = result.pdfResults.filter((row: any) => !row.success); notify(failed.length ? `Facturile au fost emise. ${failed.length} PDF-uri trebuie regenerate.` : `${result.invoices.length} facturi sunt salvate temporar și criptat. Sincronizarea în Drive continuă în fundal.`); await load(); }
     catch (error) { notify(errorMessage(error)); } finally { setBusy(false); }
   };
   const issueZone = async (zoneId: string, rows: any[]) => {
@@ -352,7 +353,7 @@ function OrdersPanel() {
     try {
       const result = await run(() => api.protectedRegistry.createWeeklyByZone(startDate, endDate, zoneId === 'none' ? null : zoneId, operationId()));
       const failed = result.pdfResults.filter((row: any) => !row.success);
-      notify(failed.length ? `Lotul a fost emis. ${failed.length} PDF-uri trebuie regenerate.` : `${result.invoices.length} facturi au fost emise pentru ${zoneName}.`);
+      notify(failed.length ? `Lotul a fost emis. ${failed.length} PDF-uri trebuie regenerate.` : `${result.invoices.length} facturi pentru ${zoneName} sunt salvate temporar și criptat; se sincronizează în fundal.`);
       await load();
     } catch (error) { notify(errorMessage(error)); } finally { setBusy(false); }
   };
@@ -363,7 +364,7 @@ function OrdersPanel() {
     try {
       const result = await run(() => api.protectedRegistry.createAllWeekly(startDate, endDate, operationId()));
       const failed = result.pdfResults.filter((row: any) => !row.success);
-      notify(failed.length ? `Lotul a fost emis. ${failed.length} PDF-uri trebuie regenerate.` : `${result.invoices.length} facturi au fost emise.`);
+      notify(failed.length ? `Lotul a fost emis. ${failed.length} PDF-uri trebuie regenerate.` : `${result.invoices.length} facturi sunt salvate temporar și criptat; se sincronizează în fundal.`);
       await load();
     } catch (error) { notify(errorMessage(error)); } finally { setBusy(false); }
   };
@@ -387,7 +388,7 @@ function InvoicesPanel({ onCreditNote, onPayment, companyId, issuer = 'all', onC
   useEffect(() => { void reload(); }, [reload]);
   const cancel = async (invoice: any) => { const values = await ask({ title: `Anulează ${invoice.reference}`, fields: [{ name: 'reason', label: 'Motivul anulării', type: 'textarea' }] }); if (!values) return; try { await run(() => api.protectedRegistry.cancelInvoice(invoice.id, values.reason, operationId())); await reload(); } catch (error) { notify(errorMessage(error)); } };
   const remove = async (invoice: any) => { const values = await ask({ title: `Șterge definitiv ${invoice.reference}`, message: `Scrie exact STERGE ${invoice.reference}`, fields: [{ name: 'confirmation', label: 'Confirmare' }] }); if (!values) return; try { await run(() => api.protectedRegistry.deleteTestInvoice(invoice.id, values.confirmation, operationId())); await reload(); } catch (error) { notify(errorMessage(error)); } };
-  const reissue = async (invoice: any) => { if (!(await confirmAction(`Reemiți ${invoice.reference} cu un număr nou și emitentul actual al clientului?`))) return; try { const result = await run(() => api.protectedRegistry.reissueInvoice(invoice.id, operationId())); notify(result.pdf.success ? `Factura ${result.invoice.reference} a fost reemisă.` : `Factura ${result.invoice.reference} a fost reemisă, dar PDF-ul trebuie regenerat.`); await reload(); } catch (error) { notify(errorMessage(error)); } };
+  const reissue = async (invoice: any) => { if (!(await confirmAction(`Reemiți ${invoice.reference} cu un număr nou și emitentul actual al clientului?`))) return; try { const result = await run(() => api.protectedRegistry.reissueInvoice(invoice.id, operationId())); notify(result.pdf.success ? `Factura ${result.invoice.reference} este salvată temporar și criptat; se sincronizează în fundal.` : `Factura ${result.invoice.reference} a fost reemisă, dar PDF-ul trebuie regenerat.`); await reload(); } catch (error) { notify(errorMessage(error)); } };
   return <><ProtectedInvoiceList invoices={invoices} loading={loading} error={loadError} reload={() => void reload()} notify={notify}
     onEdit={invoice => setEditingId(invoice.id)} onIssuerChange={invoice => setIssuerInvoiceId(invoice.id)}
     onCancel={cancel} onRemove={remove} onReissue={reissue} onCreditNote={invoice => onCreditNote(invoice.id)} onPayment={onPayment} />
@@ -424,7 +425,7 @@ function ManualInvoicePanel() {
     try {
       const result = await run(() => api.protectedRegistry.createManualInvoice({ storeId: Number(storeId), invoiceDate: date, items: lines, operationId: pending.current!.operationId }));
       setIssued(result.invoice); setLines([]); pending.current = null;
-      notify(result.pdf.success ? `Factura ${result.invoice.reference} a fost emisă și salvată în Drive.` : `Factura ${result.invoice.reference} a fost emisă, dar PDF-ul trebuie reîncercat.`);
+      notify(result.pdf.success ? `Factura ${result.invoice.reference} este salvată temporar și criptat. Sincronizarea în Drive continuă în fundal.` : `Factura ${result.invoice.reference} a fost emisă, dar PDF-ul trebuie reîncercat.`);
     } catch (error) { notify(errorMessage(error)); }
   };
   return <div className="space-y-6">
@@ -517,7 +518,7 @@ function CreditNotesPanel({ invoiceId, companyId, issuer = 'all', onChanged }: {
         issueDate, reason, backdateReason, operationId: operationId(),
         items: Object.entries(selected).map(([invoiceItemId, value]) => ({ invoiceItemId, quantity: Number(value.quantity), unitAmount: Number(value.unitAmount), returnToStock: value.returnToStock })),
       }));
-      notify(result.pdf.success ? `Credit Note ${result.creditNote.reference} a fost emis și salvat în Drive.` : `Credit Note-ul a fost emis, dar PDF-ul trebuie regenerat: ${result.pdf.error}`);
+      notify(result.pdf.pending ? `Credit Note ${result.creditNote.reference} este salvat temporar și criptat; se sincronizează în fundal.` : result.pdf.success ? `Credit Note ${result.creditNote.reference} a fost emis și salvat în Drive.` : `Credit Note-ul a fost emis, dar PDF-ul trebuie regenerat: ${result.pdf.error}`);
       setSelected({}); setReason(''); await reload();
     } catch (error) { notify(errorMessage(error)); }
   };
@@ -561,7 +562,7 @@ function ProtectedWorkspace({ onLocked }: { onLocked: () => void }) {
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const run = useCallback<CloudAction>(async action => {
-    if (savingRef.current) throw new Error('O operațiune este deja în curs. Așteaptă confirmarea din Drive.');
+    if (savingRef.current) throw new Error('O operațiune este deja în curs. Așteaptă salvarea acesteia.');
     savingRef.current = true;
     setSaving(true);
     try {
@@ -582,7 +583,7 @@ function ProtectedWorkspace({ onLocked }: { onLocked: () => void }) {
     return () => { window.removeEventListener('pointerdown', touch); window.removeEventListener('keydown', touch); };
   }, [onLocked]);
   const exit = async () => { await api.protectedRegistry.lock().catch(() => undefined); onLocked(); window.location.hash = '/'; };
-  return <CloudActionContext.Provider value={run}><div className="protected-workspace h-screen flex bg-slate-50 overflow-hidden"><aside className="protected-sidebar w-64 bg-slate-900 text-white flex flex-col shadow-xl"><header className="p-5 border-b border-slate-800"><div className="flex gap-3 items-center"><ShieldCheck className="text-indigo-400" /><b>Registru separat</b></div><span className={`inline-block mt-3 rounded-full px-2 py-1 text-xs font-bold ${overview?.mode === 'live' ? 'bg-emerald-600' : 'bg-amber-500'}`}>{overview?.mode?.toUpperCase() || '…'}</span></header><nav className="flex-1 p-3 overflow-y-auto">{tabs.map(([id, label, Icon]) => <button key={id} disabled={saving} aria-current={active === id ? "page" : undefined} onClick={() => { setCreditInvoiceId(undefined); setPaymentInvoice(undefined); setActive(id); }} className={`w-full rounded-xl px-3 py-2.5 flex gap-3 items-center text-sm mb-1 ${active === id ? 'bg-indigo-600' : 'text-slate-300 hover:bg-slate-800'}`}><Icon size={18} />{label}</button>)}</nav><button onClick={exit} className="m-3 rounded-xl bg-slate-800 p-3 flex gap-2 justify-center"><LogOut size={18} />Blochează și ieși</button></aside><FeedbackHost controller={protectedFeedback} /><main data-navigation-scroll className="protected-main flex-1 overflow-y-auto p-8">{saving && <div role="status" className="sticky top-0 z-20 mb-4 flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800"><RefreshCw size={18} className="animate-spin motion-reduce:animate-none" />Se salvează și se verifică în Google Drive. Nu închide aplicația.<span className="sr-only">Datele nu se salvează local.</span></div>}<fieldset disabled={saving} aria-busy={saving} className="protected-content"><NavigationView name={active} restore={active !== 'clients'}>{active === 'dashboard' && <DashboardPanel />}{active === 'clients' && <ClientsPanel />}{active === 'orders' && <OrdersPanel />}{active === 'invoices' && <InvoicesPanel onCreditNote={id => { setCreditInvoiceId(id); setActive('credit-notes'); }} onPayment={invoice => { setPaymentInvoice(invoice); setActive('payments'); }} />}{active === 'manual' && <ManualInvoicePanel />}{active === 'payments' && <PaymentsPanel initialInvoice={paymentInvoice} />}{active === 'settings' && <SettingsPanel overview={overview} reloadOverview={reloadOverview} onLocked={onLocked} />}{active === 'credit-notes' && <CreditNotesPanel invoiceId={creditInvoiceId} />}{active === 'exports' && <ExportsPanel />}</NavigationView></fieldset></main></div></CloudActionContext.Provider>;
+  return <CloudActionContext.Provider value={run}><div className="protected-workspace h-screen flex bg-slate-50 overflow-hidden"><aside className="protected-sidebar w-64 bg-slate-900 text-white flex flex-col shadow-xl"><header className="p-5 border-b border-slate-800"><div className="flex gap-3 items-center"><ShieldCheck className="text-indigo-400" /><b>Registru separat</b></div><span className={`inline-block mt-3 rounded-full px-2 py-1 text-xs font-bold ${overview?.mode === 'live' ? 'bg-emerald-600' : 'bg-amber-500'}`}>{overview?.mode?.toUpperCase() || '…'}</span></header><nav className="flex-1 p-3 overflow-y-auto">{tabs.map(([id, label, Icon]) => <button key={id} disabled={saving} aria-current={active === id ? "page" : undefined} onClick={() => { setCreditInvoiceId(undefined); setPaymentInvoice(undefined); setActive(id); }} className={`w-full rounded-xl px-3 py-2.5 flex gap-3 items-center text-sm mb-1 ${active === id ? 'bg-indigo-600' : 'text-slate-300 hover:bg-slate-800'}`}><Icon size={18} />{label}</button>)}</nav><button onClick={exit} className="m-3 rounded-xl bg-slate-800 p-3 flex gap-2 justify-center"><LogOut size={18} />Blochează și ieși</button></aside><FeedbackHost controller={protectedFeedback} /><main data-navigation-scroll className="protected-main flex-1 overflow-y-auto p-8"><ProtectedSyncBanner onLocked={onLocked} />{saving && <div role="status" className="sticky top-0 z-20 mb-4 flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800"><RefreshCw size={18} className="animate-spin motion-reduce:animate-none" />Se pregătește salvarea. Așteaptă confirmarea înainte de a închide aplicația.</div>}<fieldset disabled={saving} aria-busy={saving} className="protected-content"><NavigationView name={active} restore={active !== 'clients'}>{active === 'dashboard' && <DashboardPanel />}{active === 'clients' && <ClientsPanel />}{active === 'orders' && <OrdersPanel />}{active === 'invoices' && <InvoicesPanel onCreditNote={id => { setCreditInvoiceId(id); setActive('credit-notes'); }} onPayment={invoice => { setPaymentInvoice(invoice); setActive('payments'); }} />}{active === 'manual' && <ManualInvoicePanel />}{active === 'payments' && <PaymentsPanel initialInvoice={paymentInvoice} />}{active === 'settings' && <SettingsPanel overview={overview} reloadOverview={reloadOverview} onLocked={onLocked} />}{active === 'credit-notes' && <CreditNotesPanel invoiceId={creditInvoiceId} />}{active === 'exports' && <ExportsPanel />}</NavigationView></fieldset></main></div></CloudActionContext.Provider>;
 }
 
 export function ProtectedRegistry() {
