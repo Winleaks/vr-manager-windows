@@ -1,5 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { InvoiceIssuerChangeInput } from '../../../src/shared/invoiceIssuerChange.ts';
+import type { UpdatePaymentInput } from '../../../src/shared/paymentEdit.ts';
+export type { UpdatePaymentInput } from '../../../src/shared/paymentEdit.ts';
 import {
   optionalText,
   requireFiniteNonNegative,
@@ -89,15 +91,6 @@ export interface CompanyPaymentInput {
   method: string;
   bankName?: string;
   notes?: string;
-}
-
-export interface UpdatePaymentInput {
-  id: number;
-  amount: number;
-  method: 'cash' | 'transfer';
-  bankName?: string;
-  paymentDate?: string;
-  reason: string;
 }
 
 interface InvoiceRow {
@@ -1003,8 +996,20 @@ export function updatePaymentTransaction(connection: SqliteDatabase, input: Upda
   if (bankName && !['Barclays', 'Virgin', 'HSBC'].includes(bankName)) throw new Error('Banca trebuie să fie Barclays, Virgin sau HSBC.');
   const requestedDate = input.paymentDate === undefined ? undefined : requireIsoDate(input.paymentDate, 'Data plății');
   const reason = requireText(input.reason, 'Motivul modificării', 500);
+  const operationId = requireText(input.operationId, 'Identificatorul modificării', 36).toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operationId)) throw new Error('Identificatorul modificării nu este valid.');
+  if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) throw new Error('Versiunea încasării nu este validă. Reîncarcă profilul clientului.');
+  const request = JSON.stringify({ paymentId, amount, method, bankName, requestedDate: requestedDate ?? null, reason, expectedRevision: input.expectedRevision });
 
   return connection.transaction(() => {
+    const completed = connection.prepare(`SELECT details FROM billing_audit_events
+      WHERE event_type = 'payment_updated' AND json_extract(details, '$.operationId') = ? LIMIT 1
+    `).get(operationId) as { details: string } | undefined;
+    if (completed) {
+      const saved = JSON.parse(completed.details);
+      if (saved.request !== request) throw new Error('Această modificare a fost deja salvată cu alte date. Redeschide editorul.');
+      return saved.result as { id: number; amount: number; method: string; bankName: string | null; allocations: Array<{ invoiceId: number | null; amount: number }> };
+    }
     const payment = connection.prepare(`
       SELECT id, company_id, invoice_id, issuer_id, amount, method, bank_name, payment_date
       FROM payments WHERE id = ?
@@ -1013,12 +1018,24 @@ export function updatePaymentTransaction(connection: SqliteDatabase, input: Upda
       amount: number; method: string; bank_name: string | null; payment_date: string;
     } | undefined;
     if (!payment || !payment.company_id || !payment.issuer_id) throw new Error('Încasarea nu există sau nu are companie și emitent asociate.');
+    const revision = (connection.prepare(`SELECT COALESCE(MAX(id), 0) AS value FROM billing_audit_events
+      WHERE event_type = 'payment_updated' AND json_extract(details, '$.paymentId') = ?
+    `).get(paymentId) as { value: number }).value;
+    if (revision !== input.expectedRevision) throw new Error('Încasarea a fost modificată între timp. Reîncarcă profilul clientului înainte să o editezi.');
 
     const paymentDate = requestedDate ?? payment.payment_date;
+    let allocations: Array<{ invoiceId: number | null; amount: number }> = [{ invoiceId: payment.invoice_id, amount }];
     const dateOnly = amount === payment.amount && method === payment.method && bankName === payment.bank_name;
     if (dateOnly) {
       // A date correction does not reallocate payments or consume company credit.
     } else if (payment.invoice_id) {
+      const identity = connection.prepare(`SELECT i.status, s.company_id, ii.issuer_id
+        FROM invoices i JOIN stores s ON s.id = i.store_id
+        JOIN invoice_identities ii ON ii.invoice_id = i.id WHERE i.id = ?
+      `).get(payment.invoice_id) as { status: string; company_id: number; issuer_id: number } | undefined;
+      if (!identity || identity.status === 'cancelled' || identity.company_id !== payment.company_id || identity.issuer_id !== payment.issuer_id) {
+        throw new Error('Factura încasării este anulată sau nu mai aparține aceleiași companii și aceluiași emitent.');
+      }
       const hasCreditNote = connection.prepare(`
         SELECT 1 FROM credit_note_invoice_links link JOIN credit_notes cn ON cn.id = link.credit_note_id
         WHERE link.invoice_id = ? AND cn.status = 'issued' LIMIT 1
@@ -1027,10 +1044,25 @@ export function updatePaymentTransaction(connection: SqliteDatabase, input: Upda
       if (hasCreditNote || hasAppliedCredit) throw new Error('Încasarea unei facturi cu Credit Note sau credit aplicat nu poate fi modificată direct.');
       const otherPayments = Number((connection.prepare('SELECT COALESCE(SUM(amount), 0) AS value FROM payments WHERE invoice_id = ? AND id != ?').get(payment.invoice_id, paymentId) as { value: number }).value);
       const financials = getInvoiceFinancials(connection, payment.invoice_id);
-      if (otherPayments + amount > financials.netAmount + EPSILON) throw new Error('Suma totală încasată nu poate depăși valoarea netă a facturii.');
-      connection.prepare('UPDATE payments SET amount = ?, method = ?, bank_name = ? WHERE id = ?').run(amount, method, bankName, paymentId);
-      connection.prepare('UPDATE invoices SET paid_amount = ? WHERE id = ?').run(otherPayments + amount, payment.invoice_id);
+      if (Math.abs(financials.cashPaid - otherPayments - payment.amount) > EPSILON || otherPayments + payment.amount > financials.netAmount + EPSILON) {
+        throw new Error('Alocările încasării nu corespund soldului facturii. Verifică istoricul înainte de modificare.');
+      }
+      // Keep the original allocation/ID, then distribute only the excess using
+      // the same company-and-issuer rules as a newly recorded receipt.
+      const allocated = Math.round(Math.min(amount, financials.netAmount - otherPayments) * 100) / 100;
+      const surplus = Math.round((amount - allocated) * 100) / 100;
+      connection.prepare('UPDATE payments SET amount = ?, method = ?, bank_name = ? WHERE id = ?').run(allocated, method, bankName, paymentId);
+      connection.prepare('UPDATE invoices SET paid_amount = ? WHERE id = ?').run(Math.round((otherPayments + allocated) * 100) / 100, payment.invoice_id);
       syncInvoiceFinancialStatus(connection, payment.invoice_id);
+      allocations = [{ invoiceId: payment.invoice_id, amount: allocated }];
+      if (surplus > 0) {
+        const distributed = recordIssuerPaymentTransaction(connection, {
+          companyId: payment.company_id, issuerId: payment.issuer_id,
+          amount: surplus, paymentDate, method, bankName: bankName ?? undefined,
+          notes: `Corectare încasare #${paymentId}: ${reason}`,
+        });
+        allocations.push(...distributed.allocations);
+      }
     } else {
       const entry = connection.prepare(`
         SELECT id, original_amount, available_amount, status FROM company_credit_entries
@@ -1046,14 +1078,18 @@ export function updatePaymentTransaction(connection: SqliteDatabase, input: Upda
     }
 
     connection.prepare('UPDATE payments SET payment_date = ? WHERE id = ?').run(paymentDate, paymentId);
+    const result = { id: paymentId, amount, method, bankName, allocations };
     connection.prepare(`INSERT INTO billing_audit_events (event_type, issuer_id, company_id, invoice_id, details) VALUES ('payment_updated', ?, ?, ?, ?)`)
       .run(payment.issuer_id, payment.company_id, payment.invoice_id, JSON.stringify({
         paymentId,
+        operationId,
+        request,
+        result,
         reason,
         before: { amount: payment.amount, method: payment.method, bankName: payment.bank_name, paymentDate: payment.payment_date },
         after: { amount, method, bankName, paymentDate },
       }));
-    return { id: paymentId, amount, method, bankName };
+    return result;
   })();
 }
 

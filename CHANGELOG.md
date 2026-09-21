@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.116
+
+- Corectarea sumei unei încasări nu mai este limitată la valoarea facturii inițiale. Surplusul achită celelalte facturi restante ale aceleiași companii și aceluiași emitent, apoi rămâne credit disponibil. Alocările apar separat în istoric.
+- Editorul cere suma corectă, nu diferența. Soldurile și istoricul se actualizează atomic, iar reîncercarea aceleiași salvări nu dublează încasările. Editările concurente sau bazate pe date vechi sunt refuzate.
+- Se păstrează verificările pentru Credit Notes, credit aplicat, încasări existente și accesul exclusiv Writer. Nu sunt modificate automat încasările deja introduse.
+- Include toate modificările v0.1.115, fără migrare nouă sau schimbări în platformă. Actualizează Writer-ul înainte de corectarea încasării. Nu șterge profilul aplicației sau salvările criptate în așteptare.
+
 ### VR - Hub Management v0.1.115
 
 - Registrul separat salvează temporar și criptat pe Writer operațiunile obișnuite, apoi încarcă registrul și PDF-urile în fundal. Poți continua lucrul în timpul încărcării; copiile temporare sunt șterse după confirmare.

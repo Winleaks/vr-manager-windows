@@ -372,7 +372,9 @@ export function getCompanyProfileDetails(companyId: number) {
   }
 
   const payments = db.prepare(`
-    SELECT p.*, i.invoice_number, bi.legal_name AS issuer_name, bi.code AS issuer_code
+    SELECT p.*, i.invoice_number, bi.legal_name AS issuer_name, bi.code AS issuer_code,
+           (SELECT COALESCE(MAX(a.id), 0) FROM billing_audit_events a
+            WHERE a.event_type = 'payment_updated' AND json_extract(a.details, '$.paymentId') = p.id) AS edit_revision
     FROM payments p
     LEFT JOIN invoices i ON p.invoice_id = i.id
     LEFT JOIN billing_issuers bi ON bi.id = p.issuer_id

@@ -87,6 +87,28 @@ window.desktopApi = {
   },
 } as any;
 
+if (new URLSearchParams(location.search).has('payment-edit')) {
+  let saved = false;
+  let attempt = 0;
+  const payment = { id: 1, invoice_id: 1, company_id: 1, issuer_id: 1, invoice_number: 'TEST-1',
+    payment_date: '2026-09-21', amount: 82.75, method: 'transfer', bank_name: 'Barclays', edit_revision: 12 };
+  const amounts = [200.25, 300.25, 320.25];
+  Object.assign(window.desktopApi.billing, {
+    getCompanyProfile: async () => ({ company, stores: company.stores, issuers: [{ id: 1, legal_name: 'Fixture Issuer' }],
+      invoices: amounts.map((amount, index) => ({ ...invoice, id: index + 1, invoice_number: `TEST-${index + 1}`,
+        total_amount: amount, grossAmount: amount, netAmount: amount, paid_amount: saved ? amount : index ? 0 : 82.75,
+        outstanding: saved ? 0 : amount - (index ? 0 : 82.75), status: saved ? 'paid' : 'partial' })),
+      payments: saved ? amounts.map((amount, index) => ({ ...payment, id: index + 1, invoice_number: `TEST-${index + 1}`, amount, edit_revision: 13 })) : [payment],
+    }),
+    updatePayment: async (input: unknown) => {
+      calls.push(input); saved = true;
+      await new Promise(resolve => setTimeout(resolve, 250));
+      if (++attempt === 1) throw new Error('Răspuns întrerupt (test sintetic).');
+      return { allocations: amounts.map((amount, index) => ({ invoiceId: index + 1, amount })) };
+    },
+  });
+}
+
 if (new URLSearchParams(location.search).has('navigation')) {
   const companies = Array.from({ length: 80 }, (_, index) => ({ ...company, id: index + 1,
     name: `Fixture Company ${String(index + 1).padStart(2, '0')}`, assigned: true, companyKey: `company-${index + 1}` }));

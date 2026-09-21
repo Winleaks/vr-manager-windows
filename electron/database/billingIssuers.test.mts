@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { readFileSync } from 'node:fs';
 import { initialSchema } from './schema.ts';
@@ -14,6 +15,7 @@ import {
   changeInvoiceIssuerTransaction,
   hasImportedInvoiceSource,
   createManualInvoiceTransaction,
+  createInvoiceBatchTransaction,
   createWeeklyInvoiceBatchTransaction,
   deleteInvoiceForTestingTransaction,
   recordCompanyPaymentTransaction,
@@ -22,7 +24,7 @@ import {
   updatePaymentTransaction,
   updateInvoiceTransaction,
 } from './repositories/billingTransactions.ts';
-import { ensureCreditNoteSchema } from './creditNotes.ts';
+import { ensureCreditNoteSchema, createCreditNoteTransaction, applyCompanyCreditTransaction } from './creditNotes.ts';
 import { paymentReport, statementReport, outstandingReport, weeklyBillingStats } from './billingReports.ts';
 import { installBillingPublication, prepareBillingDelivery } from './billingPublication.ts';
 import { installDocumentSyncQueue, dueDocuments } from './documentSyncQueue.ts';
@@ -68,6 +70,13 @@ function fixture() {
   updateBillingIssuer(connection, issuerInput(vatra));
   assignCompanyIssuer(connection, company2, vatra.id);
   return { connection, company1, company2, store1, store2, goodnessId: goodness.id, vatraId: vatra.id };
+}
+
+function paymentEditVersion(connection: Database.Database, paymentId: number) {
+  const { revision } = connection.prepare(`SELECT COALESCE(MAX(id), 0) AS revision FROM billing_audit_events
+    WHERE event_type = 'payment_updated' AND json_extract(details, '$.paymentId') = ?
+  `).get(paymentId) as { revision: number };
+  return { operationId: randomUUID(), expectedRevision: revision };
 }
 
 test('imported invoice accepts active catalogue additions and editable prices while preserving source identity', () => {
@@ -324,11 +333,11 @@ test('reports isolate issuers, count payments by payment date, and retain partia
     assert.equal(paymentReport(connection,'2026-09-08','2026-09-08').length,1);
     assert.deepEqual(weeklyBillingStats(connection,goodnessId,'2026-09-07','2026-09-13'),{totalInvoiced:0,totalPaid:4,totalCredited:0,totalUnpaid:6});
     const payment=connection.prepare('SELECT * FROM payments').get() as any;
-    updatePaymentTransaction(connection,{id:payment.id,amount:4,method:'transfer',bankName:'HSBC',paymentDate:'2026-09-06',reason:'Correct bank date'});
+    updatePaymentTransaction(connection,{...paymentEditVersion(connection, payment.id),id:payment.id,amount:4,method:'transfer',bankName:'HSBC',paymentDate:'2026-09-06',reason:'Correct bank date'});
     assert.equal(paymentReport(connection,'2026-09-08','2026-09-08').length,0);
     assert.equal(outstandingReport(connection,company1,goodnessId,store1).total,6);
     assert.equal(statementReport(connection,company1,goodnessId,'2026-09-07','2026-09-13').opening,6);
-    assert.throws(()=>updatePaymentTransaction(connection,{id:payment.id,amount:4,method:'transfer',bankName:'HSBC',paymentDate:'2026-02-30',reason:'Invalid'}));
+    assert.throws(()=>updatePaymentTransaction(connection,{...paymentEditVersion(connection, payment.id),id:payment.id,amount:4,method:'transfer',bankName:'HSBC',paymentDate:'2026-02-30',reason:'Invalid'}));
     assert.equal((connection.prepare('SELECT payment_date FROM payments').get() as any).payment_date,'2026-09-06');
     assert.throws(()=>statementReport(connection,999,goodnessId,'2026-09-07','2026-09-13'));
     assert.throws(()=>paymentReport(connection,'2026-09-13','2026-09-07'));
@@ -582,10 +591,10 @@ test('updates a payment and recalculates invoice state with an audit event', () 
     recordCompanyPaymentTransaction(connection, { companyId: company1, issuerId: goodnessId, invoiceId: invoice.invoiceId, amount: 5, paymentDate: '2026-09-01', method: 'cash' });
     const payment = connection.prepare('SELECT id FROM payments WHERE invoice_id = ?').get(invoice.invoiceId) as { id: number };
 
-    updatePaymentTransaction(connection, { id: payment.id, amount: 8, method: 'transfer', bankName: 'Virgin', reason: 'Corectare extras bancar' });
+    updatePaymentTransaction(connection, { ...paymentEditVersion(connection, payment.id), id: payment.id, amount: 8, method: 'transfer', bankName: 'Virgin', reason: 'Corectare extras bancar' });
     assert.deepEqual(connection.prepare('SELECT amount, method, bank_name FROM payments WHERE id = ?').get(payment.id), { amount: 8, method: 'transfer', bank_name: 'Virgin' });
     assert.deepEqual(connection.prepare('SELECT paid_amount, status FROM invoices WHERE id = ?').get(invoice.invoiceId), { paid_amount: 8, status: 'partial' });
-    assert.throws(() => updatePaymentTransaction(connection, { id: payment.id, amount: 11, method: 'cash', reason: 'Prea mult' }), /depăși/);
+    assert.throws(() => updatePaymentTransaction(connection, { ...paymentEditVersion(connection, payment.id), id: payment.id, amount: -1, method: 'cash', reason: 'Invalid' }), /pozitiv/);
     assert.deepEqual(connection.prepare('SELECT amount, method, bank_name FROM payments WHERE id = ?').get(payment.id), { amount: 8, method: 'transfer', bank_name: 'Virgin' });
     assert.equal((connection.prepare("SELECT COUNT(*) AS value FROM billing_audit_events WHERE event_type = 'payment_updated'").get() as any).value, 1);
   } finally { connection.close(); }
@@ -598,9 +607,131 @@ test('updates an advance payment and its available issuer credit together', () =
     recordCompanyPaymentTransaction(connection, { companyId: company1, issuerId: goodnessId, invoiceId: invoice.invoiceId, amount: 15, paymentDate: '2026-09-01', method: 'cash' });
     const advance = connection.prepare('SELECT id FROM payments WHERE invoice_id IS NULL AND company_id = ?').get(company1) as { id: number };
 
-    updatePaymentTransaction(connection, { id: advance.id, amount: 7, method: 'transfer', bankName: 'Barclays', reason: 'Corectare avans' });
+    updatePaymentTransaction(connection, { ...paymentEditVersion(connection, advance.id), id: advance.id, amount: 7, method: 'transfer', bankName: 'Barclays', reason: 'Corectare avans' });
     assert.equal((connection.prepare('SELECT balance FROM company_issuer_credits WHERE company_id = ? AND issuer_id = ?').get(company1, goodnessId) as any).balance, 7);
     assert.deepEqual(connection.prepare("SELECT original_amount, available_amount FROM company_credit_entries WHERE source_type = 'payment_overpayment' AND source_id = ?").get(advance.id), { original_amount: 7, available_amount: 7 });
+  } finally { connection.close(); }
+});
+
+test('corrects 82.75 to 820.75 across outstanding invoices without crossing company or issuer, and safely replays', () => {
+  const { connection, company1, company2, store1, store2, goodnessId, vatraId } = fixture();
+  try {
+    installBillingPublication(connection);
+    installDocumentSyncQueue(connection);
+    const issue = (storeId: number, amounts: number[]) => createInvoiceBatchTransaction(connection,
+      amounts.map(amount => ({ storeId, items: [{ productName: 'Bread', quantity: 1, unitPrice: amount }] })), '2026-09-21');
+    const invoices = issue(store1, [200.25, 300.25, 320.25]);
+    const [cancelled] = issue(store1, [10]);
+    cancelInvoiceTransaction(connection, cancelled.invoiceId, 'Test cancellation');
+    assignCompanyIssuer(connection, company2, goodnessId);
+    const [otherCompany] = issue(store2, [50]);
+    assignCompanyIssuer(connection, company1, vatraId);
+    const [otherIssuer] = issue(store1, [50]);
+    // An issuer preference change must not redirect a historical receipt.
+    recordCompanyPaymentTransaction(connection, { companyId: company1, issuerId: goodnessId, amount: 82.75,
+      paymentDate: '2026-09-21', method: 'transfer', bankName: 'Barclays' });
+    const payment = connection.prepare('SELECT id FROM payments').get() as { id: number };
+    const input = { ...paymentEditVersion(connection, payment.id), id: payment.id, amount: 820.75,
+      paymentDate: '2026-09-20', method: 'transfer' as const, bankName: 'Barclays', reason: 'Correct typing error' };
+    const snapshot = () => ['payments', 'invoices', 'company_credit_entries', 'company_issuer_credits', 'billing_audit_events', 'billing_publication_queue', 'document_sync_queue']
+      .map(table => connection.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+    const revisionBefore = (connection.prepare('SELECT revision FROM billing_publication_queue WHERE company_id=?').get(company1) as any).revision;
+    const result = updatePaymentTransaction(connection, input);
+    assert.deepEqual(result.allocations, invoices.map((invoice, index) => ({ invoiceId: invoice.invoiceId, amount: [200.25, 300.25, 320.25][index] })));
+    assert.equal((connection.prepare('SELECT SUM(amount) AS total FROM payments').get() as any).total, 820.75);
+    assert.deepEqual(connection.prepare('SELECT amount, payment_date, method, bank_name FROM payments ORDER BY id').all(),
+      [200.25, 300.25, 320.25].map(amount => ({ amount, payment_date: '2026-09-20', method: 'transfer', bank_name: 'Barclays' })));
+    for (const invoice of invoices) assert.equal((connection.prepare('SELECT status FROM invoices WHERE id=?').get(invoice.invoiceId) as any).status, 'paid');
+    for (const invoice of [otherCompany, otherIssuer, cancelled]) assert.equal((connection.prepare('SELECT paid_amount FROM invoices WHERE id=?').get(invoice.invoiceId) as any).paid_amount, 0);
+    assert.equal(outstandingReport(connection, company1, goodnessId, store1).total, 0);
+    assert.equal(statementReport(connection, company1, goodnessId, '2026-09-01', '2026-09-30').closing, 0);
+    assert.equal(paymentReport(connection, '2026-09-20', '2026-09-20').reduce((sum, row) => sum + row.amount, 0), 820.75);
+    assert.ok((connection.prepare('SELECT revision FROM billing_publication_queue WHERE company_id=?').get(company1) as any).revision > revisionBefore);
+    const saved = snapshot();
+    assert.deepEqual(updatePaymentTransaction(connection, input), result);
+    assert.deepEqual(snapshot(), saved, 'same operation must not create duplicate receipts or enqueue another publication');
+    assert.throws(() => updatePaymentTransaction(connection, { ...input, amount: 821.75 }), /alte date/);
+    assert.throws(() => updatePaymentTransaction(connection, { ...input, operationId: randomUUID() }), /între timp/);
+    assert.deepEqual(snapshot(), saved);
+    const audit = JSON.parse((connection.prepare("SELECT details FROM billing_audit_events WHERE event_type='payment_updated' ORDER BY id DESC LIMIT 1").get() as any).details);
+    assert.equal(audit.before.amount, 82.75);
+    assert.equal(audit.after.amount, 820.75);
+    assert.deepEqual(audit.result.allocations, result.allocations);
+  } finally { connection.close(); }
+});
+
+test('payment correction keeps unrelated receipts, records excess as credit, and detects stale fully-paid allocation edits', () => {
+  const { connection, company1, store1, goodnessId } = fixture();
+  try {
+    const [invoice] = createWeeklyInvoiceBatchTransaction(connection, [weekly(store1, 'store-goodness', 'surplus-edit')], '2026-08-31');
+    for (const amount of [3, 5]) recordCompanyPaymentTransaction(connection, { companyId: company1, issuerId: goodnessId, amount,
+      invoiceId: invoice.invoiceId, paymentDate: '2026-09-01', method: 'cash' });
+    const rows = connection.prepare('SELECT * FROM payments ORDER BY id').all() as any[];
+    const input = { ...paymentEditVersion(connection, rows[1].id), id: rows[1].id, amount: 12,
+      method: 'transfer' as const, bankName: 'Virgin', reason: 'Correct receipt' };
+    assert.deepEqual(updatePaymentTransaction(connection, input).allocations, [{ invoiceId: invoice.invoiceId, amount: 7 }, { invoiceId: null, amount: 5 }]);
+    assert.deepEqual(connection.prepare('SELECT * FROM payments WHERE id=?').get(rows[0].id), rows[0]);
+    assert.equal((connection.prepare('SELECT SUM(amount) AS total FROM payments').get() as any).total, 15);
+    assert.equal((connection.prepare('SELECT balance FROM company_issuer_credits WHERE company_id=? AND issuer_id=?').get(company1, goodnessId) as any).balance, 5);
+    const second = { ...input, ...paymentEditVersion(connection, rows[1].id), amount: 9 };
+    updatePaymentTransaction(connection, second); // original allocation stays 7; credit increases by 2
+    assert.throws(() => updatePaymentTransaction(connection, { ...second, operationId: randomUUID() }), /între timp/);
+    assert.equal((connection.prepare('SELECT SUM(amount) AS total FROM payments').get() as any).total, 17);
+    updatePaymentTransaction(connection, { ...input, ...paymentEditVersion(connection, rows[1].id), amount: 4 });
+    assert.deepEqual(connection.prepare('SELECT paid_amount, status FROM invoices WHERE id=?').get(invoice.invoiceId), { paid_amount: 7, status: 'partial' });
+    assert.equal((connection.prepare('SELECT balance FROM company_issuer_credits WHERE company_id=? AND issuer_id=?').get(company1, goodnessId) as any).balance, 7, 'other advance rows are not silently reallocated');
+  } finally { connection.close(); }
+});
+
+test('payment redistribution rolls back original allocation, all new rows, credit and audit if any write fails', () => {
+  const { connection, company1, store1, goodnessId } = fixture();
+  try {
+    const invoices = createInvoiceBatchTransaction(connection, [10, 20].map(amount => ({ storeId: store1,
+      items: [{ productName: 'Bread', quantity: 1, unitPrice: amount }] })), '2026-09-21');
+    recordCompanyPaymentTransaction(connection, { companyId: company1, issuerId: goodnessId, amount: 5, paymentDate: '2026-09-21', method: 'cash' });
+    const payment = connection.prepare('SELECT id FROM payments').get() as { id: number };
+    const input = { ...paymentEditVersion(connection, payment.id), id: payment.id, amount: 35, method: 'cash' as const, reason: 'Correction' };
+    const snapshot = () => ['invoices', 'payments', 'company_credit_entries', 'company_issuer_credits', 'billing_audit_events'].map(table => connection.prepare(`SELECT * FROM ${table}`).all());
+    const before = snapshot();
+    connection.exec("CREATE TRIGGER reject_correction_credit BEFORE INSERT ON company_credit_entries BEGIN SELECT RAISE(ABORT, 'synthetic credit failure'); END");
+    assert.throws(() => updatePaymentTransaction(connection, input), /synthetic credit failure/);
+    assert.deepEqual(snapshot(), before);
+    connection.exec('DROP TRIGGER reject_correction_credit');
+    updatePaymentTransaction(connection, input);
+    for (const invoice of invoices) assert.equal((connection.prepare('SELECT status FROM invoices WHERE id=?').get(invoice.invoiceId) as any).status, 'paid');
+    assert.equal((connection.prepare('SELECT balance FROM company_issuer_credits WHERE company_id=? AND issuer_id=?').get(company1, goodnessId) as any).balance, 5);
+  } finally { connection.close(); }
+});
+
+test('payment correction preserves credit-note/applied-credit protections and rejects missing or invalid edit identity', () => {
+  const { connection, company1, store1, goodnessId } = fixture();
+  try {
+    const invoices = createInvoiceBatchTransaction(connection, [10, 20].map(amount => ({ storeId: store1,
+      items: [{ productName: 'Bread', quantity: 2, unitPrice: amount / 2 }] })), '2026-08-31');
+    for (const invoice of invoices) recordCompanyPaymentTransaction(connection, { companyId: company1, issuerId: goodnessId,
+      invoiceId: invoice.invoiceId, amount: 2, paymentDate: '2026-09-01', method: 'cash' });
+    connection.prepare('UPDATE billing_issuers SET credit_note_sequence_confirmed=1 WHERE id=?').run(goodnessId);
+    const item = connection.prepare('SELECT id FROM invoice_items WHERE invoice_id=?').get(invoices[0].invoiceId) as { id: number };
+    createCreditNoteTransaction(connection, { issueDate: new Date().toISOString().slice(0, 10), reason: 'Test note', items: [{ invoiceItemId: item.id, quantity: 1, unitAmount: 5 }] });
+    // Seed an advance through the public payment path, then apply part to invoice 2.
+    recordCompanyPaymentTransaction(connection, { companyId: company1, issuerId: goodnessId, amount: 30, paymentDate: '2026-09-01', method: 'cash' });
+    const advance = connection.prepare('SELECT id FROM payments WHERE invoice_id IS NULL').get() as { id: number };
+    updatePaymentTransaction(connection, { ...paymentEditVersion(connection, advance.id), id: advance.id, amount: 10, method: 'cash', reason: 'Advance correction' });
+    // Reopen part of the second invoice so applying advance is meaningful.
+    const allocation = connection.prepare('SELECT id FROM payments WHERE invoice_id=? ORDER BY id DESC LIMIT 1').get(invoices[1].invoiceId) as { id: number };
+    updatePaymentTransaction(connection, { ...paymentEditVersion(connection, allocation.id), id: allocation.id, amount: 10, method: 'cash', reason: 'Partial receipt correction' });
+    applyCompanyCreditTransaction(connection, { companyId: company1, issuerId: goodnessId, invoiceId: invoices[1].invoiceId, amount: 3, reason: 'Test credit' });
+    const snapshot = () => ['payments', 'invoices', 'company_credit_entries', 'invoice_credit_applications', 'billing_audit_events'].map(table => connection.prepare(`SELECT * FROM ${table}`).all());
+    const before = snapshot();
+    for (const invoice of invoices) {
+      const payment = connection.prepare('SELECT id FROM payments WHERE invoice_id=? ORDER BY id LIMIT 1').get(invoice.invoiceId) as { id: number };
+      assert.throws(() => updatePaymentTransaction(connection, { ...paymentEditVersion(connection, payment.id), id: payment.id, amount: 50, method: 'cash', reason: 'Blocked' }), /Credit Note sau credit aplicat/);
+    }
+    assert.throws(() => updatePaymentTransaction(connection, { ...paymentEditVersion(connection, advance.id), id: advance.id, amount: 2, method: 'cash', reason: 'Consumed advance' }), /deja folosită/);
+    for (const invalid of [{ operationId: 'invalid' }, { expectedRevision: -1 }, { expectedRevision: undefined }, { amount: 1.234 }, { id: 99999 }]) {
+      assert.throws(() => updatePaymentTransaction(connection, { ...paymentEditVersion(connection, advance.id), id: advance.id, amount: 10, method: 'cash', reason: 'Invalid request', ...invalid } as any));
+    }
+    assert.deepEqual(snapshot(), before);
   } finally { connection.close(); }
 });
 

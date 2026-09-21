@@ -58,6 +58,35 @@ if (serveOnly) {
       assert.equal(await field.evaluate((element) => document.activeElement === element), true);
     };
 
+    await open('clients', '&payment-edit=1');
+    await page.getByText('Fixture Company', { exact: true }).click();
+    await page.getByRole('button', { name: /Istoric Încasări/ }).click();
+    await page.getByTitle('Modifică suma sau metoda de plată').click();
+    const paymentDialog = page.getByRole('dialog', { name: 'Modifică încasarea' });
+    const paymentAmount = paymentDialog.getByLabel('Suma încasată (£)');
+    await edit(paymentAmount, '820.75');
+    await paymentDialog.getByLabel('Motivul modificării').fill('Sumă introdusă greșit');
+    const savePayment = paymentDialog.getByRole('button', { name: 'Salvează modificarea' });
+    await savePayment.focus(); await page.keyboard.press('Enter');
+    assert.equal(await paymentAmount.isDisabled(), true);
+    await page.getByText(/Răspuns întrerupt/).waitFor();
+    assert.equal(await paymentAmount.inputValue(), '820.75');
+    await savePayment.click();
+    await paymentDialog.waitFor({ state: 'hidden' });
+    const paymentCalls = await page.evaluate(() => window.__inputTest.calls);
+    assert.equal(paymentCalls.length, 2);
+    assert.deepEqual(paymentCalls[0], paymentCalls[1], 'retry retains operation ID and original revision after ambiguous IPC response');
+    assert.equal(paymentCalls[0].amount, 820.75);
+    assert.equal(paymentCalls[0].expectedRevision, 12);
+    assert.match(paymentCalls[0].operationId, /^[0-9a-f-]{36}$/i);
+    await page.getByText(/Încasarea a fost corectată la £820.75/).waitFor();
+    await page.getByRole('button', { name: /Istoric Încasări \(3\)/ }).waitFor();
+    await open('clients', '&payment-edit=1&role=viewer');
+    await page.getByText('Fixture Company', { exact: true }).click();
+    await page.getByRole('button', { name: /Istoric Încasări/ }).click();
+    assert.equal(await page.getByTitle('Modifică suma sau metoda de plată').count(), 0);
+    console.log('PASS payment correction: decimal draft, keyboard save, pending lock, safe retry, refreshed allocations and Viewer read-only');
+
     await testProtectedDashboard(page, open);
     await testRecoveryKeySettings(page, open);
     await testNavigationMemory(page, open);

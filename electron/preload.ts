@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { DocumentSyncStatus } from '../src/shared/documentSyncTypes'
 import type { SharedIssuerSettingsInput } from '../src/shared/sharedIssuerSettings'
 import type { InvoiceIssuerChangeInput, InvoiceIssuerChangeOptions } from '../src/shared/invoiceIssuerChange'
+import type { UpdatePaymentInput } from '../src/shared/paymentEdit'
 
 type EventCallback = (...args: any[]) => void
 
@@ -132,7 +133,7 @@ export const desktopApi = {
     getManualInvoiceCompanies: () => ipcRenderer.invoke('billing:getManualInvoiceCompanies'),
     getCompanyProfile: (companyId: number) => ipcRenderer.invoke('billing:getCompanyProfile', companyId),
     recordCompanyPayment: (data: any) => ipcRenderer.invoke('billing:recordCompanyPayment', data),
-    updatePayment: (data: any) => ipcRenderer.invoke('billing:updatePayment', data),
+    updatePayment: (data: UpdatePaymentInput) => ipcRenderer.invoke('billing:updatePayment', data),
     getInvoices: (startDate?: string, endDate?: string, issuerId?: number) =>
       ipcRenderer.invoke('billing:getInvoices', startDate, endDate, issuerId),
     createManualInvoice: (data: { storeId: number; invoiceDate: string; items: Array<{ productId: number; quantity: number; unitPrice: number }> }) =>
