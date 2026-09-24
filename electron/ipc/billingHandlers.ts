@@ -184,7 +184,7 @@ export function registerBillingHandlers() {
   });
   handleTrustedIpc('billing:createManualInvoice', async (_, data) => {
     return withRegistryRoutingLock(async () => {
-      await assertNormalStoreAllowed(data.storeId);
+      if (!data?.oneOffCustomer) await assertNormalStoreAllowed(data.storeId);
       const created = billingRepo.createManualInvoice(data);
       return { ...created, invoice: billingRepo.getInvoiceById(created.invoiceId) };
     });

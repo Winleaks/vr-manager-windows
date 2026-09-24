@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.117
+
+- Factura manuală poate fi emisă și pentru un client ocazional, cu date introduse direct și bunuri sau servicii care nu există în catalog. Operatorul alege societatea emitentă, cantitatea și prețul fiecărei poziții.
+- Clientul ocazional și pozițiile sale sunt păstrate în istoricul facturii, dar nu intră în listele clienților permanenți, catalog, stoc sau sincronizarea VR Baker. PDF-ul urmează fluxul existent de salvare locală și încărcare în Drive.
+- Migrarea aditivă 22 păstrează clienții existenți și are snapshot înainte de aplicare. Emiterea facturii și crearea datelor clientului se fac atomic; Writer-ul rămâne singurul dispozitiv care poate emite.
+- Include toate corecțiile v0.1.116. Actualizează mai întâi Writer-ul și verifică o factură ocazională în registru și Drive înainte de actualizarea Viewer-elor.
+
 ### VR - Hub Management v0.1.116
 
 - Corectarea sumei unei încasări nu mai este limitată la valoarea facturii inițiale. Surplusul achită celelalte facturi restante ale aceleiași companii și aceluiași emitent, apoi rămâne credit disponibil. Alocările apar separat în istoric.

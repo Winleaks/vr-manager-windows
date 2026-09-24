@@ -83,7 +83,7 @@ export function assignCompanyIssuer(companyId: number, issuerId: number | null) 
 
 // Clients
 export function getClients() {
-  return normalRead().prepare('SELECT * FROM clients ORDER BY name').all();
+  return normalRead().prepare('SELECT * FROM clients WHERE COALESCE(is_one_off, 0) = 0 ORDER BY name').all();
 }
 
 export function createClient(name: string, supabaseClientId: string | null) {
@@ -100,7 +100,7 @@ export function updateClient(id: number, name: string, supabaseClientId: string 
 
 // Companies
 export function getCompaniesByClientId(clientId: number) {
-  return normalRead().prepare('SELECT * FROM companies WHERE client_id = ? ORDER BY name').all(clientId);
+  return normalRead().prepare('SELECT * FROM companies WHERE client_id = ? AND COALESCE(is_one_off, 0) = 0 ORDER BY name').all(clientId);
 }
 
 export function createCompany(
@@ -141,7 +141,7 @@ export function updateCompany(
 
 // Stores
 export function getStoresByCompanyId(companyId: number) {
-  return normalRead().prepare('SELECT * FROM stores WHERE company_id = ? ORDER BY name').all(companyId);
+  return normalRead().prepare('SELECT * FROM stores WHERE company_id = ? AND COALESCE(is_one_off, 0) = 0 ORDER BY name').all(companyId);
 }
 
 export function createStore(companyId: number, name: string, address: string | null, supabaseStoreId: string | null) {
@@ -280,9 +280,10 @@ function companiesAndStores(db: typeof import('../db').db) {
     SELECT c.*, bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color,
            bi.is_default AS issuer_is_default
     FROM companies c LEFT JOIN billing_issuers bi ON bi.id = c.issuer_id
+    WHERE COALESCE(c.is_one_off, 0) = 0
     ORDER BY c.name
   `).all() as any[];
-  const stores = db.prepare('SELECT * FROM stores ORDER BY name').all() as any[];
+  const stores = db.prepare('SELECT * FROM stores WHERE COALESCE(is_one_off, 0) = 0 ORDER BY name').all() as any[];
 
   const retired = retiredLegacyCompanyIds(db);
   return flagPossibleCompanyDuplicates(companies.filter(c=>!retired.has(c.id))).map(c => {
@@ -435,7 +436,7 @@ export function createInvoiceBatchFromSync(orders: InvoiceOrderInput[], invoiceD
 }
 
 export function createManualInvoice(data: ManualInvoiceInput) {
-  assertVisible('stores', data.storeId);
+  if (!data.oneOffCustomer) assertVisible('stores', data.storeId!);
   return createManualInvoiceTransaction(db, data);
 }
 

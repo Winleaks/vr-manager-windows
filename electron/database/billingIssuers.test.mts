@@ -27,6 +27,7 @@ import {
 import { ensureCreditNoteSchema, createCreditNoteTransaction, applyCompanyCreditTransaction } from './creditNotes.ts';
 import { paymentReport, statementReport, outstandingReport, weeklyBillingStats } from './billingReports.ts';
 import { installBillingPublication, prepareBillingDelivery } from './billingPublication.ts';
+import { ensureOneOffCustomerSchema } from './oneOffCustomers.ts';
 import { installDocumentSyncQueue, dueDocuments } from './documentSyncQueue.ts';
 
 function issuerInput(issuer: any, overrides: Record<string, unknown> = {}) {
@@ -732,6 +733,66 @@ test('payment correction preserves credit-note/applied-credit protections and re
       assert.throws(() => updatePaymentTransaction(connection, { ...paymentEditVersion(connection, advance.id), id: advance.id, amount: 10, method: 'cash', reason: 'Invalid request', ...invalid } as any));
     }
     assert.deepEqual(snapshot(), before);
+  } finally { connection.close(); }
+});
+
+test('manual invoice supports one-off customer and ad-hoc product without polluting permanent catalog', () => {
+  const { connection, goodnessId } = fixture();
+  try {
+    const beforeProducts = connection.prepare('SELECT COUNT(*) AS value FROM cloud_products').get() as { value: number };
+    const created = createManualInvoiceTransaction(connection, {
+      invoiceDate: '2026-09-21',
+      issuerId: goodnessId,
+      oneOffCustomer: {
+        name: 'Northstar Vehicle Sales Ltd',
+        address: '42 Industrial Estate, London',
+        cui: 'GB123456789',
+        regCom: '12345678',
+        phone: '+44 7000 111222',
+      },
+      items: [{ productName: 'Ford Transit factory vehicle', unit: 'unit', quantity: 1, unitPrice: 12500 }],
+    });
+    const row = connection.prepare(`SELECT i.id, i.total_amount, i.status, c.name, c.cui, c.reg_com, c.address, c.phone,
+      c.is_one_off AS company_one_off, s.name AS store_name, s.is_one_off AS store_one_off
+      FROM invoices i JOIN stores s ON s.id=i.store_id JOIN companies c ON c.id=s.company_id WHERE i.id=?`).get(created.invoiceId) as any;
+    assert.equal(row.total_amount, 12500);
+    assert.equal(row.name, 'Northstar Vehicle Sales Ltd');
+    assert.equal(row.cui, 'GB123456789');
+    assert.equal(row.reg_com, '12345678');
+    assert.equal(row.address, '42 Industrial Estate, London');
+    assert.equal(row.phone, '+44 7000 111222');
+    assert.equal(row.company_one_off, 1);
+    assert.equal(row.store_name, 'Northstar Vehicle Sales Ltd');
+    assert.equal(row.store_one_off, 1);
+    assert.deepEqual(connection.prepare('SELECT product_name, unit, quantity, unit_price, external_product_id FROM invoice_items WHERE invoice_id=?').get(created.invoiceId), {
+      product_name: 'Ford Transit factory vehicle', unit: 'unit', quantity: 1, unit_price: 12500, external_product_id: null,
+    });
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM cloud_products').get() as any).value, beforeProducts.value);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS value FROM finished_products').get() as any).value, 0);
+    assert.throws(() => createManualInvoiceTransaction(connection, {
+      invoiceDate: '2026-09-21', issuerId: goodnessId, oneOffCustomer: { name: 'Invalid' },
+      items: [{ productName: '', quantity: 1, unitPrice: 1 }],
+    }), /Denumirea produsului/);
+    assert.equal((connection.prepare("SELECT COUNT(*) AS value FROM clients WHERE is_one_off=1").get() as any).value, 1, 'failed validation occurs before entity creation');
+  } finally { connection.close(); }
+});
+
+test('one-off migration preserves old customers and keeps new one-off customers out of VR Baker publication', () => {
+  const connection = new Database(':memory:');
+  try {
+    connection.exec(initialSchema);
+    for (const table of ['clients', 'companies', 'stores']) connection.exec(`ALTER TABLE ${table} DROP COLUMN is_one_off`);
+    const clientId = Number(connection.prepare("INSERT INTO clients (name) VALUES ('Existing customer')").run().lastInsertRowid);
+    const existingCompanyId = Number(connection.prepare("INSERT INTO companies (client_id, name) VALUES (?, 'Existing company')").run(clientId).lastInsertRowid);
+    installBillingPublication(connection);
+    ensureOneOffCustomerSchema(connection);
+    assert.equal((connection.prepare('SELECT is_one_off FROM companies WHERE id=?').get(existingCompanyId) as any).is_one_off, 0);
+    assert.ok(connection.prepare('SELECT 1 FROM billing_publication_queue WHERE company_id=?').get(existingCompanyId));
+    const newClientId = Number(connection.prepare("INSERT INTO clients (name, is_one_off) VALUES ('Occasional customer', 1)").run().lastInsertRowid);
+    const occasionalCompanyId = Number(connection.prepare("INSERT INTO companies (client_id, name, is_one_off) VALUES (?, 'Occasional customer', 1)").run(newClientId).lastInsertRowid);
+    assert.equal(connection.prepare('SELECT 1 FROM billing_publication_queue WHERE company_id=?').get(occasionalCompanyId), undefined);
+    connection.prepare('UPDATE companies SET credit_balance=5 WHERE id=?').run(occasionalCompanyId);
+    assert.equal(connection.prepare('SELECT 1 FROM billing_publication_queue WHERE company_id=?').get(occasionalCompanyId), undefined);
   } finally { connection.close(); }
 });
 

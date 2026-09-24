@@ -212,6 +212,7 @@ CREATE TABLE IF NOT EXISTS clients (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   supabase_client_id TEXT,
+  is_one_off INTEGER NOT NULL DEFAULT 0 CHECK(is_one_off IN (0,1)),
   is_active BOOLEAN DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -229,6 +230,7 @@ CREATE TABLE IF NOT EXISTS companies (
   bank_name TEXT,
   supabase_company_id TEXT,
   credit_balance REAL DEFAULT 0,
+  is_one_off INTEGER NOT NULL DEFAULT 0 CHECK(is_one_off IN (0,1)),
   is_active BOOLEAN DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(client_id) REFERENCES clients(id)
@@ -242,6 +244,7 @@ CREATE TABLE IF NOT EXISTS stores (
   postcode TEXT,
   phone TEXT,
   supabase_store_id TEXT,
+  is_one_off INTEGER NOT NULL DEFAULT 0 CHECK(is_one_off IN (0,1)),
   is_active BOOLEAN DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(company_id) REFERENCES companies(id)

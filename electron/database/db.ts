@@ -20,6 +20,7 @@ import { ensureBillingIssuerSchema } from './billingIssuers'
 import { ensureCreditNoteSchema } from './creditNotes'
 import { ensureBillingPostcodeSchema } from './billingPostcodes'
 import { ensureProductOrderingSchema } from './productOrdering'
+import { ensureOneOffCustomerSchema } from './oneOffCustomers'
 
 export { verifyDatabaseFile } from './databaseValidation'
 
@@ -169,7 +170,7 @@ export function initDb() {
 
   // Preserve a verified copy before adding the persistent billing publication queue.
   // This also covers older Credit Notes migrations during a direct upgrade.
-  createPreMigrationSnapshotIfNeeded(21)
+  createPreMigrationSnapshotIfNeeded(22)
   
   // 2. Rularea migrărilor de schemă
   runMigrations()
@@ -391,6 +392,7 @@ function runMigrations() {
       ,{version:19,description:'Încărcări PDF persistente și verificate în Drive',up:()=>installDocumentSyncQueue(db)}
       ,{version:20,description:'Un singur PDF Drive per factură',up:()=>installInvoiceDriveIdentity(db)}
       ,{version:21,description:'Vizibilitate facturare normală replicată pe Viewer',up:()=>installNormalBillingVisibility(db)}
+      ,{version:22,description:'Clienți ocazionali și produse vândute în afara catalogului',up:()=>ensureOneOffCustomerSchema(db)}
     ];
 
     for (const migration of migrations) {

@@ -56,10 +56,21 @@ export interface InvoiceOrderInput {
 }
 
 export interface ManualInvoiceInput {
-  storeId: number;
+  storeId?: number;
   invoiceDate: string;
+  issuerId?: number;
+  oneOffCustomer?: {
+    name: string;
+    address?: string;
+    cui?: string;
+    regCom?: string;
+    phone?: string;
+  };
   items: Array<{
-    productId: number;
+    productId?: number;
+    productName?: string;
+    nameRo?: string;
+    unit?: string;
     quantity: number;
     unitPrice: number;
   }>;
@@ -340,12 +351,41 @@ export function createManualInvoiceTransaction(
   connection: SqliteDatabase,
   input: ManualInvoiceInput,
 ) {
-  const storeId = requirePositiveInteger(input?.storeId, 'Magazinul');
   const invoiceDate = requireIsoDate(input?.invoiceDate, 'Data facturii');
   if (!Array.isArray(input?.items) || input.items.length === 0 || input.items.length > 200) {
     throw new Error('Factura manuală trebuie să conțină între 1 și 200 de produse.');
   }
 
+  if (input.oneOffCustomer) {
+    if (input.storeId !== undefined) throw new Error('Factura ocazională nu poate combina clientul permanent cu datele clientului ocazional.');
+    const customerName = requireText(input.oneOffCustomer.name, 'Numele clientului', 300);
+    const address = optionalText(input.oneOffCustomer.address, 'Adresa clientului', 500);
+    const cui = optionalText(input.oneOffCustomer.cui, 'CUI / VAT al clientului', 100);
+    const regCom = optionalText(input.oneOffCustomer.regCom, 'Numărul de înregistrare al clientului', 100);
+    const phone = optionalText(input.oneOffCustomer.phone, 'Telefonul clientului', 100);
+    const issuerId = requirePositiveInteger(input.issuerId, 'Societatea emitentă');
+    const issuer = connection.prepare('SELECT * FROM billing_issuers WHERE id = ? AND is_active = 1').get(issuerId) as BillingIssuerRow | undefined;
+    if (!issuer || !isIssuerReady(issuer)) throw new Error('Societatea emitentă selectată nu este configurată complet.');
+    const items: InvoiceItemInput[] = input.items.map((item, index) => ({
+      productName: requireText(item.productName, `Denumirea produsului ${index + 1}`, 300),
+      name_ro: optionalText(item.nameRo, `Denumirea produsului ${index + 1} în română`, 300) || undefined,
+      unit: optionalText(item.unit, `Unitatea produsului ${index + 1}`, 50) || 'buc',
+      quantity: requireFinitePositive(item.quantity, `Cantitatea pentru produsul ${index + 1}`),
+      unitPrice: requireFiniteNonNegative(item.unitPrice, `Prețul pentru produsul ${index + 1}`),
+      productOrder: index,
+    }));
+    return connection.transaction(() => {
+      const clientId = Number(connection.prepare('INSERT INTO clients (name, is_one_off) VALUES (?, 1)').run(customerName).lastInsertRowid);
+      const companyId = Number(connection.prepare(`INSERT INTO companies
+        (client_id, name, cui, reg_com, address, phone, issuer_id, is_one_off)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1)`).run(clientId, customerName, cui, regCom, address, phone, issuerId).lastInsertRowid);
+      const storeId = Number(connection.prepare(`INSERT INTO stores
+        (company_id, name, address, phone, is_one_off) VALUES (?, ?, ?, ?, 1)`).run(companyId, customerName, address, phone).lastInsertRowid);
+      return createInvoiceBatchTransaction(connection, [{ storeId, items }], invoiceDate, 'manual_one_off_invoice_issued')[0];
+    })();
+  }
+
+  const storeId = requirePositiveInteger(input?.storeId, 'Magazinul');
   const productIds = input.items.map((item) => requirePositiveInteger(item.productId, 'Produsul'));
   if (new Set(productIds).size !== productIds.length) {
     throw new Error('Același produs nu poate apărea de mai multe ori pe factura manuală.');
