@@ -5,6 +5,7 @@ import { generateCreditNotePdf } from '../reports/creditNotePdf.ts';
 import { generateDailyCashPdf } from '../reports/dailyCashPdf.ts';
 import { generateStatementPdf } from '../reports/statementPdf.ts';
 import { generateTablePdf } from '../../src/utils/tablePdf.ts';
+import { generateInvoicePDF } from '../../src/utils/pdfGenerator.ts';
 import { DAILY_CASH_CATEGORY_LABELS } from './dailyCashReport.ts';
 import { readFileSync } from 'node:fs';
 
@@ -32,12 +33,36 @@ test('Credit Notes render English labels for issued/cancelled VAT/non-VAT docume
     const pdf = generateCreditNotePdf(note);
     const text = pdfText(pdf);
     for (const phrase of ['Issue date:', 'Created in system:', 'ISSUER', 'CUSTOMER', 'Original invoices:', 'Reason:', 'Backdating reason:', 'Invoice', 'Store', 'Product', 'Qty', 'Unit credit', 'Credited subtotal:', 'TOTAL CREDITED: £140.00', 'This document adjusts the original invoices', 'TGB-138', 'Produse deteriorate', 'Corecție agreată', 'Pâine']) assert.ok(text.includes(phrase), phrase);
-    assert.match(text, vatRegistered ? /VAT credited \(0%\): £0.00/ : /Issuer not VAT registered/);
+    assert.match(text, vatRegistered ? /VAT credited: £0.00/ : /Issuer not VAT registered/);
     if (!vatRegistered) assert.match(text, /CANCELLED INTERNALLY - NUMBER RETAINED IN REGISTER/);
     assert.doesNotMatch(text, /Data emiterii|Facturi originale|Subtotal creditat|TOTAL CREDITAT|Motiv antedatare/);
     assert.ok((text.match(/Page \d+ of/g) || []).length >= 2);
     assert.deepEqual(note, before);
   }
+});
+
+test('one-off invoices and their Credit Notes render VAT 20% and matching net, VAT, gross figures', extractionOptions, () => {
+  const issuer = { issuerName: 'THE GOODNESS BAKER LTD', issuerVat: 'GB123456789', vatRegistered: true, invoiceSeries: 'TGB' };
+  const invoiceText = pdfText(generateInvoicePDF(issuer, {
+    invoiceNumber: 'TGB-999', invoiceDate: '2026-09-24', client: { name: 'ONE OFF BUYER' },
+    items: [{ productName: 'FACTORY MACHINE', quantity: 1, unitPrice: 100, totalPrice: 100 }],
+    totalAmount: 100, vatRatePercent: 20, vatNetAmount: 83.33, vatAmount: 16.67,
+  }));
+  for (const value of ['VAT (20%)', '£83.33', '£16.67', '£100.00']) assert.ok(invoiceText.includes(value), value);
+  const zeroVatText = pdfText(generateInvoicePDF(issuer, {
+    invoiceNumber: 'TGB-1000', invoiceDate: '2026-09-24', client: { name: 'ONE OFF BUYER' },
+    items: [{ productName: 'FACTORY MACHINE', quantity: 2, unitPrice: 11.03, totalPrice: 22.06 }],
+    totalAmount: 22.06, vatRatePercent: 0, vatNetAmount: 22.06, vatAmount: 0,
+  }));
+  assert.match(zeroVatText, /VAT:\s+Not charged/);
+  const noteText = pdfText(generateCreditNotePdf({
+    reference: 'CN-TGB-999', issue_date: '2026-09-24', created_at: '2026-09-24T10:00:00Z', status: 'issued',
+    reason: 'Return', net_amount: 83.33, vat_amount: 16.67, total_amount: 100,
+    issuerSnapshot: issuer, customerSnapshot: { companyName: 'ONE OFF BUYER' },
+    invoices: [{ id: 1, invoice_number: 'TGB-999', invoice_date: '2026-09-24' }],
+    items: [{ source_invoice_id: 1, store_name: 'ONE OFF BUYER', product_name: 'FACTORY MACHINE', quantity: 1, unit: 'unit', unit_amount: 100, vat_rate: 20, vat_amount: 16.67, total_amount: 100 }],
+  }));
+  for (const value of ['20% / £16.67', 'Credited subtotal: £83.33', 'VAT credited: £16.67', 'TOTAL CREDITED: £100.00']) assert.ok(noteText.includes(value), value);
 });
 
 test('Daily Cash translates every system category, statuses and empty state without changing ledger labels', extractionOptions, () => {

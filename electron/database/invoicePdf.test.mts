@@ -58,6 +58,17 @@ test('generates valid VAT and non-VAT invoice PDFs from issuer snapshots', () =>
   assert.notDeepEqual(vat, nonVat);
 });
 
+test('one-off VAT PDF requires saved net/VAT/gross consistency and differs from zero-VAT document', () => {
+  const settings = { issuerName: 'THE GOODNESS BAKER LTD', issuerVat: 'GB123456789', invoiceSeries: 'TGB', vatRegistered: true };
+  const taxable = { ...invoice, items: [{ productName: 'FACTORY MACHINE', quantity: 2, unitPrice: 11.03, totalPrice: 22.06 }],
+    totalAmount: 22.06, vatRatePercent: 20, vatNetAmount: 18.38, vatAmount: 3.68 };
+  const withVat = generateInvoicePDF(settings, taxable);
+  assert.equal(Buffer.from(withVat.subarray(0, 5)).toString('ascii'), '%PDF-');
+  assert.notDeepEqual(withVat, generateInvoicePDF(settings, { ...taxable, vatRatePercent: 0, vatNetAmount: 22.06, vatAmount: 0 }));
+  assert.throws(() => generateInvoicePDF(settings, { ...taxable, vatAmount: 0 }), /Totalurile VAT/);
+  assert.throws(() => generateInvoicePDF({ ...settings, vatRegistered: false }, taxable), /neînregistrat VAT/);
+});
+
 test('invoice product description contains only English and Romanian names', () => {
   const item = { productName: 'Cheese Pie', name_ro: 'Plăcintă cu brânză', variant_label: 'Large' };
   assert.equal(invoiceProductDescription(item), 'CHEESE PIE\nPLĂCINTĂ CU BRÂNZĂ');

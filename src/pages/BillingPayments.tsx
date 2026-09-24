@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import { AlertCircle, History, Loader2, Search, Wallet } from 'lucide-react';
+import { AlertCircle, History, Loader2, Search, Trash2, Wallet } from 'lucide-react';
 import { api } from '../shared/api';
 import { format } from 'date-fns';
+import { TextConfirmationModal } from '../components/TextConfirmationModal';
+import { notify } from '../utils/feedback';
 
 const money = (value: number) => value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inputStyle = 'w-full min-w-0 border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500';
@@ -13,6 +15,13 @@ export function BillingPayments() {
   const [rows, setRows] = useState<any[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [isWriter, setIsWriter] = useState(false);
+  const [pendingDeletion, setPendingDeletion] = useState<any | null>(null);
+  const [reloadRevision, setReloadRevision] = useState(0);
+
+  useEffect(() => {
+    api.system.getDeviceRole().then(device => setIsWriter(device.role === 'writer')).catch(() => setIsWriter(false));
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -28,7 +37,21 @@ export function BillingPayments() {
       .catch(cause => { if (active) { setRows([]); setError(cause instanceof Error ? cause.message : 'Istoricul plăților nu a putut fi încărcat.'); } })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [from, to]);
+  }, [from, to, reloadRevision]);
+
+  const confirmDeletion = async (reason: string) => {
+    if (!pendingDeletion) return;
+    await api.billing.deletePayment({
+      id: pendingDeletion.id,
+      reason,
+      operationId: pendingDeletion.operationId,
+      expectedRevision: pendingDeletion.edit_revision ?? 0,
+      expectedAmount: Number(pendingDeletion.amount),
+    });
+    setPendingDeletion(null);
+    setReloadRevision(value => value + 1);
+    notify('Încasarea a fost ștearsă. Soldurile au fost recalculate.');
+  };
 
   const filtered = rows.filter(row => `${row.company_name} ${row.store_name || ''} ${row.company_stores || ''} ${row.invoice_number || ''}`.toLowerCase().includes(search.trim().toLowerCase()));
   const total = filtered.reduce((sum, row) => sum + Math.round(Number(row.amount) * 100), 0) / 100;
@@ -53,7 +76,7 @@ export function BillingPayments() {
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
-            <thead className="bg-slate-50 text-slate-500 text-xs uppercase border-b border-slate-200"><tr>{['Data', 'Client / Magazin', 'Emitent', 'Factură', 'Metodă / Bancă', 'Sumă'].map((label, index) => <th scope="col" key={label} className={`px-5 py-4 font-semibold ${index === 5 ? 'text-right' : ''}`}>{label}</th>)}</tr></thead>
+            <thead className="bg-slate-50 text-slate-500 text-xs uppercase border-b border-slate-200"><tr>{['Data', 'Client / Magazin', 'Emitent', 'Factură', 'Metodă / Bancă', 'Sumă', 'Acțiuni'].map((label, index) => <th scope="col" key={label} className={`px-5 py-4 font-semibold ${index >= 5 ? 'text-right' : ''}`}>{label}</th>)}</tr></thead>
             <tbody className="divide-y divide-slate-100">{filtered.map(row => <tr key={row.id} className="hover:bg-slate-50 transition-colors">
               <td className="px-5 py-4 whitespace-nowrap text-slate-600">{String(row.payment_date).split('-').reverse().join('/')}</td>
               <td className="px-5 py-4"><div className="font-semibold text-slate-800">{row.company_name}</div><div className="text-xs text-slate-500 mt-1">{row.store_name}</div></td>
@@ -61,9 +84,19 @@ export function BillingPayments() {
               <td className="px-5 py-4 font-semibold text-indigo-600 whitespace-nowrap">{row.invoice_number || 'Avans / credit'}</td>
               <td className="px-5 py-4"><span className="inline-flex rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">{row.method === 'transfer' ? row.bank_name || 'Transfer' : 'Cash'}</span></td>
               <td className="px-5 py-4 text-right font-bold text-slate-900 whitespace-nowrap">£{money(Number(row.amount))}</td>
-            </tr>)}{!filtered.length && <tr><td colSpan={6} className="p-12 text-center text-slate-500"><History size={36} aria-hidden="true" className="mx-auto text-slate-300 mb-3" />Nu există plăți pentru filtrele selectate.</td></tr>}</tbody>
+              <td className="px-5 py-4 text-right">{isWriter && <button type="button" onClick={() => setPendingDeletion({ ...row, operationId: crypto.randomUUID() })} title="Șterge încasarea" aria-label={`Șterge încasarea de £${money(Number(row.amount))} pentru ${row.company_name}`} className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-rose-50 hover:text-rose-700"><Trash2 size={16} /></button>}</td>
+            </tr>)}{!filtered.length && <tr><td colSpan={7} className="p-12 text-center text-slate-500"><History size={36} aria-hidden="true" className="mx-auto text-slate-300 mb-3" />Nu există plăți pentru filtrele selectate.</td></tr>}</tbody>
           </table>
         </div></div>
       </>}
+    {pendingDeletion && <TextConfirmationModal
+      title={`Șterge încasarea de £${money(Number(pendingDeletion.amount))}`}
+      description={`Se șterge doar această poziție pentru ${pendingDeletion.company_name}${pendingDeletion.invoice_number ? `, factura #${pendingDeletion.invoice_number}` : ', avans / credit'}. Alte alocări ale aceluiași transfer rămân. Operația este consemnată în audit.`}
+      fieldLabel="Motivul ștergerii"
+      confirmLabel="Șterge încasarea"
+      dangerous
+      onCancel={() => setPendingDeletion(null)}
+      onConfirm={confirmDeletion}
+    />}
   </div>;
 }

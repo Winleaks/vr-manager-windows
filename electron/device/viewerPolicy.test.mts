@@ -52,6 +52,7 @@ test('viewer denies business writes, cloud publishing and unknown channels', () 
   assert.equal(isChannelAllowedForRole('viewer', 'billing:setTestMode'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:deleteTestInvoice'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:updatePayment'), false);
+  assert.equal(isChannelAllowedForRole('viewer', 'billing:deletePayment'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:reissueCancelledInvoice'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:createCreditNote'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'billing:cancelCreditNote'), false);

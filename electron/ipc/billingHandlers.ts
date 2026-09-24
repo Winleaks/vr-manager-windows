@@ -40,7 +40,7 @@ const visibilityChannels = new Set(['getClients', 'getCompanies', 'getStores', '
   'getCompanyProfile', 'getInvoices', 'getInvoice', 'getStats', 'getPaymentReport', 'statementDocument',
   'getCreditNoteDraft', 'getCreditNotes', 'getCreditNote', 'prepareCreditNotePdf', 'openCreditNotePdf', 'publicationStatus',
   'createManualInvoice', 'createWeeklyInvoices', 'createWeeklyInvoicesByZone', 'updateInvoice', 'cancelInvoice', 'changeInvoiceIssuer',
-  'reissueCancelledInvoice', 'createCreditNote', 'recordCompanyPayment', 'updatePayment', 'applyCompanyCredit']);
+  'reissueCancelledInvoice', 'createCreditNote', 'recordCompanyPayment', 'updatePayment', 'deletePayment', 'applyCompanyCredit']);
 const dbForVisibility = () => db;
 const handleTrustedIpc: typeof registerTrustedIpc = (channel, handler) => registerTrustedIpc(channel, async (event, ...args) => {
   if (visibilityChannels.has(channel.replace('billing:', ''))) await ensureNormalBillingVisibility();
@@ -160,6 +160,7 @@ export function registerBillingHandlers() {
   handleTrustedIpc('billing:getCompanyProfile', (_, companyId) => billingRepo.getCompanyProfileDetails(companyId));
   handleTrustedIpc('billing:recordCompanyPayment', (_, data) => billingRepo.recordCompanyPayment(data));
   handleTrustedIpc('billing:updatePayment', (_, data) => billingRepo.updatePayment(data));
+  handleTrustedIpc('billing:deletePayment', (_, data) => billingRepo.deletePayment(data));
   handleTrustedIpc('billing:getInvoices', (_, startDate, endDate, issuerId) => billingRepo.getInvoicesByDateRange(startDate, endDate, issuerId));
   handleTrustedIpc('billing:getInvoice', (_, invoiceId) => billingRepo.getInvoiceById(invoiceId));
   handleTrustedIpc('billing:getInvoiceIssuerChangeOptions', (_, invoiceId: number) => billingRepo.getInvoiceIssuerChangeOptions(invoiceId));

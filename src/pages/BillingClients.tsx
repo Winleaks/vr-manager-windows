@@ -4,7 +4,7 @@ import { api } from '../shared/api';
 import { 
   Building2, Store, RefreshCw, AlertCircle, FileText, ArrowLeft, 
   DollarSign, CheckCircle2, PlusCircle, CreditCard, Banknote,
-  ChevronRight, ShieldCheck, Loader2, Search, X, FileMinus2, Edit3
+  ChevronRight, ShieldCheck, Loader2, Search, X, FileMinus2, Edit3, Trash2
 } from 'lucide-react';
 import { prepareInvoiceDocument } from '../utils/prepareInvoiceDocument';
 import { InvoiceEditorModal } from '../components/InvoiceEditorModal';
@@ -82,6 +82,7 @@ export function BillingClients() {
   const [paymentEditForm, setPaymentEditForm] = useState({ amount: '', method: 'cash' as 'cash' | 'transfer', bankName: 'Barclays' as 'Barclays' | 'Virgin' | 'HSBC', paymentDate: '', reason: '' });
   const [isUpdatingPayment, setIsUpdatingPayment] = useState(false);
   const [pendingCreditReversal, setPendingCreditReversal] = useState<any | null>(null);
+  const [pendingPaymentDeletion, setPendingPaymentDeletion] = useState<any | null>(null);
 
   useEffect(() => {
     void fetchCompanies();
@@ -242,6 +243,20 @@ export function BillingClients() {
     } finally {
       setIsUpdatingPayment(false);
     }
+  };
+
+  const confirmPaymentDeletion = async (reason: string) => {
+    if (!pendingPaymentDeletion || !profileData?.company?.id) return;
+    await api.billing.deletePayment({
+      id: pendingPaymentDeletion.id,
+      reason,
+      operationId: pendingPaymentDeletion.operationId,
+      expectedRevision: pendingPaymentDeletion.edit_revision ?? 0,
+      expectedAmount: Number(pendingPaymentDeletion.amount),
+    });
+    setPendingPaymentDeletion(null);
+    notify('Încasarea a fost ștearsă. Soldurile au fost recalculate.');
+    await Promise.allSettled([loadCompanyProfile(profileData.company.id), fetchCompanies()]);
   };
 
   const handleSubmitPayment = async (e: React.FormEvent) => {
@@ -661,7 +676,7 @@ export function BillingClients() {
                               {p.invoice_number ? `#${p.invoice_number}` : <span className="text-indigo-600 font-bold">Avans / Credit · {p.issuer_name || 'Emitent'}</span>}
                             </td>
                             <td className="py-3.5 px-4 text-xs text-slate-500 italic">{p.notes || '—'}</td>
-                            <td className="py-3.5 px-4 text-right">{isWriter && <button type="button" onClick={() => openPaymentEdit(p)} className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-700" title="Modifică suma sau metoda de plată"><Edit3 size={16} /></button>}</td>
+                            <td className="py-3.5 px-4 text-right">{isWriter && <div className="flex justify-end gap-1"><button type="button" onClick={() => openPaymentEdit(p)} className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-700" title="Modifică încasarea" aria-label={`Modifică încasarea de £${Number(p.amount).toFixed(2)}`}><Edit3 size={16} /></button><button type="button" onClick={() => setPendingPaymentDeletion({ ...p, operationId: crypto.randomUUID() })} className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-rose-50 hover:text-rose-700" title="Șterge încasarea" aria-label={`Șterge încasarea de £${Number(p.amount).toFixed(2)}`}><Trash2 size={16} /></button></div>}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -903,6 +918,15 @@ export function BillingClients() {
           dangerous
           onCancel={() => setPendingCreditReversal(null)}
           onConfirm={confirmCreditReversal}
+        />}
+        {pendingPaymentDeletion && <TextConfirmationModal
+          title={`Șterge încasarea de £${Number(pendingPaymentDeletion.amount).toFixed(2)}`}
+          description={`Se șterge doar această poziție${pendingPaymentDeletion.invoice_number ? ` de pe factura #${pendingPaymentDeletion.invoice_number}` : ' de avans'}. Restul facturii sau creditul se recalculează; alte alocări ale aceluiași transfer rămân. Operația este consemnată în audit.`}
+          fieldLabel="Motivul ștergerii"
+          confirmLabel="Șterge încasarea"
+          dangerous
+          onCancel={() => setPendingPaymentDeletion(null)}
+          onConfirm={confirmPaymentDeletion}
         />}
       </div>
     );

@@ -5,6 +5,7 @@ import { api } from '../shared/api';
 import { NumericInput } from '../components/NumericInput';
 import { BilingualProductName } from '../components/BilingualProductName';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
+import { calculateOneOffVat, type OneOffVatRate } from '../shared/invoiceVat';
 
 interface ManualLine {
   productId?: number;
@@ -28,6 +29,7 @@ export function BillingManualInvoice() {
   const [invoiceMode, setInvoiceMode] = useState<'company' | 'oneOff'>('company');
   const [oneOffCustomer, setOneOffCustomer] = useState({ name: '', address: '', cui: '', regCom: '', phone: '' });
   const [oneOffIssuerId, setOneOffIssuerId] = useState('');
+  const [oneOffVatRate, setOneOffVatRate] = useState<OneOffVatRate>(0);
   const [customProduct, setCustomProduct] = useState({ name: '', unit: 'buc', quantity: '1', unitPrice: '' });
   const [clientSearch,setClientSearch] = useState('');
   const [showClientResults, setShowClientResults] = useState(false);
@@ -80,6 +82,13 @@ export function BillingManualInvoice() {
     return { ...line, product, displayName: line.productName || product?.name || '', numericQuantity: quantity, numericUnitPrice: unitPrice, totalPrice: quantity * unitPrice };
   }), [lines, products]);
   const total = resolvedLines.reduce((sum, line) => sum + (Number.isFinite(line.totalPrice) ? line.totalPrice : 0), 0);
+  const selectedOneOffIssuer = issuers.find((item) => item.is_active !== 0 && Number(item.id) === Number(oneOffIssuerId));
+  const vatSummary = useMemo(() => {
+    if (invoiceMode !== 'oneOff' || !resolvedLines.every(line => Number.isFinite(line.numericQuantity) && line.numericQuantity > 0 && Number.isFinite(line.numericUnitPrice) && line.numericUnitPrice >= 0)) return null;
+    try { return calculateOneOffVat(resolvedLines.map(line => ({ quantity: line.numericQuantity, unitPrice: line.numericUnitPrice })), oneOffVatRate); }
+    catch { return null; }
+  }, [invoiceMode, resolvedLines, oneOffVatRate]);
+  const invoiceTotal = vatSummary?.totalAmount ?? total;
 
   const addProduct = () => {
     const product = products.find((item) => String(item.id) === productId);
@@ -119,22 +128,24 @@ export function BillingManualInvoice() {
     if (invoiceMode === 'company' && (!company || !selectedStore)) return notify('Selectează compania și magazinul facturat.');
     if (invoiceMode === 'company' && !issuer) return notify('Compania selectată nu are o societate emitentă atribuită.');
     if (invoiceMode === 'oneOff' && !oneOffCustomer.name.trim()) return notify('Completează numele clientului ocazional.');
+    if (invoiceMode === 'oneOff' && oneOffVatRate === 20 && (!selectedOneOffIssuer?.vat_registered || !selectedOneOffIssuer?.vat_number)) return notify('Emitentul selectat nu este înregistrat VAT; nu poate percepe VAT 20%.');
     if (!invoiceDate) return notify('Selectează data facturii.');
     if (resolvedLines.length === 0) return notify('Adaugă cel puțin un produs pe factură.');
     if (resolvedLines.some((line) => (!line.product && !line.productName?.trim()) || !line.quantity.trim() || !line.unitPrice.trim() || line.numericQuantity <= 0 || line.numericUnitPrice < 0 || !Number.isFinite(line.totalPrice))) {
       return notify('Verifică produsele, cantitățile și prețurile introduse.');
     }
-    const selectedIssuer = invoiceMode === 'company' ? issuer : issuers.find((item) => item.is_active !== 0 && Number(item.id) === Number(oneOffIssuerId));
+    if (invoiceMode === 'oneOff' && !vatSummary) return notify('Verifică valorile produselor; totalul depășește limita acceptată.');
+    const selectedIssuer = invoiceMode === 'company' ? issuer : selectedOneOffIssuer;
     if (invoiceMode === 'oneOff' && !selectedIssuer) return notify('Selectează societatea emitentă.');
     const estimatedReference = selectedIssuer?.invoice_series ? `${selectedIssuer.invoice_series}-${selectedIssuer.next_invoice_number}` : 'numărul următor';
     const customerLabel = invoiceMode === 'company' ? company!.name : oneOffCustomer.name.trim();
-    if (!(await confirmAction(`Emiți factura ${estimatedReference} pentru ${customerLabel}, în valoare de £${total.toFixed(2)}?`))) return;
+    if (!(await confirmAction(`Emiți factura ${estimatedReference} pentru ${customerLabel}, în valoare de £${invoiceTotal.toFixed(2)}${invoiceMode === 'oneOff' ? ` (${oneOffVatRate === 20 ? 'VAT 20%' : 'fără VAT'})` : ''}?`))) return;
 
     setIssuing(true);
     let created: any;
     try {
       created = await api.billing.createManualInvoice({
-        ...(invoiceMode === 'company' ? { storeId: Number(selectedStore!.id) } : { issuerId: Number(selectedIssuer!.id), oneOffCustomer }),
+        ...(invoiceMode === 'company' ? { storeId: Number(selectedStore!.id) } : { issuerId: Number(selectedIssuer!.id), oneOffCustomer, vatRatePercent: oneOffVatRate }),
         invoiceDate,
         items: resolvedLines.map((line) => ({
           ...(invoiceMode === 'company' ? { productId: line.productId } : { productName: line.productName || line.product?.name, nameRo: line.nameRo || line.product?.name_ro, unit: line.unit || line.product?.unit }),
@@ -170,6 +181,9 @@ export function BillingManualInvoice() {
           },
           items: invoice.items,
           totalAmount: invoice.total_amount,
+          vatRatePercent: invoice.vat_rate_percent,
+          vatNetAmount: invoice.vat_net_amount,
+          vatAmount: invoice.vat_amount,
           accountOutstanding: invoice.accountOutstanding,
         },
       );
@@ -213,8 +227,10 @@ export function BillingManualInvoice() {
             <label className="space-y-1.5"><span className="text-xs font-semibold uppercase text-slate-500">CUI / VAT</span><input value={oneOffCustomer.cui} onChange={e => setOneOffCustomer(current => ({ ...current, cui: e.target.value }))} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-white" /></label>
             <label className="space-y-1.5"><span className="text-xs font-semibold uppercase text-slate-500">Nr. înregistrare</span><input value={oneOffCustomer.regCom} onChange={e => setOneOffCustomer(current => ({ ...current, regCom: e.target.value }))} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-white" /></label>
             <label className="space-y-1.5"><span className="text-xs font-semibold uppercase text-slate-500">Telefon</span><input value={oneOffCustomer.phone} onChange={e => setOneOffCustomer(current => ({ ...current, phone: e.target.value }))} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-white" /></label>
-            <label className="space-y-1.5"><span className="text-xs font-semibold uppercase text-slate-500">Societate emitentă *</span><select id="manual-one-off-issuer" value={oneOffIssuerId} onChange={e => setOneOffIssuerId(e.target.value)} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-white"><option value="">Selectează emitentul</option>{issuers.filter(item => item.is_active !== 0).map(item => <option key={item.id} value={item.id}>{item.legal_name}</option>)}</select></label>
+            <label className="space-y-1.5"><span className="text-xs font-semibold uppercase text-slate-500">Societate emitentă *</span><select id="manual-one-off-issuer" value={oneOffIssuerId} onChange={e => { setOneOffIssuerId(e.target.value); setOneOffVatRate(0); }} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-white"><option value="">Selectează emitentul</option>{issuers.filter(item => item.is_active !== 0).map(item => <option key={item.id} value={item.id}>{item.legal_name}</option>)}</select></label>
+            <label className="space-y-1.5"><span className="text-xs font-semibold uppercase text-slate-500">VAT pe factură *</span><select value={oneOffVatRate} onChange={e => setOneOffVatRate(Number(e.target.value) as OneOffVatRate)} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-white" aria-label="VAT pentru factura clientului ocazional"><option value={0}>Fără VAT</option><option value={20} disabled={!selectedOneOffIssuer?.vat_registered || !selectedOneOffIssuer?.vat_number}>VAT 20% — inclus în preț</option></select></label>
           </div>
+          <p className="text-xs text-slate-600">Prețurile introduse sunt prețurile finale. Dacă alegi VAT 20%, aplicația separă VAT-ul inclus fără să mărească totalul: £100 = £83.33 net + £16.67 VAT.</p>
           <p className="text-xs text-slate-500">Clientul este păstrat doar ca destinatar al acestei facturi și nu intră în lista clienților permanenți sau în sincronizarea VR Baker.</p>
         </div> : <>
         <div className="space-y-2">
@@ -249,7 +265,7 @@ export function BillingManualInvoice() {
 
       <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="p-5 border-b border-slate-100 flex flex-col gap-4">
-          <div><h2 className="font-bold text-slate-900 flex items-center gap-2"><Package size={19} className="text-indigo-600" />Produsele facturii</h2><p className="text-sm text-slate-500 mt-1">Prețul standard este completat automat și poate fi ajustat pentru această factură.</p></div>
+          <div><h2 className="font-bold text-slate-900 flex items-center gap-2"><Package size={19} className="text-indigo-600" />Produsele facturii</h2><p className="text-sm text-slate-500 mt-1">{invoiceMode === 'oneOff' ? 'Introdu prețul final al produsului. Dacă selectezi VAT 20%, acesta este deja inclus în suma introdusă.' : 'Prețul standard este completat automat și poate fi ajustat pentru această factură.'}</p></div>
           <div className="flex items-center gap-2 w-full min-w-0">
             <select aria-label="Produs din catalog" value={productId} onChange={(event) => setProductId(event.target.value)} className="w-full min-w-0 flex-1 border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500"><option value="">Alege un produs...</option>{availableProducts.map((product) => <option key={product.id} value={product.id}>{String(product.name).toLocaleUpperCase('en-GB')} / {String(product.name_ro || product.name).toLocaleUpperCase('ro-RO')}</option>)}</select>
             <button type="button" onClick={addProduct} disabled={!productId} title="Adaugă produsul pe factură" aria-label="Adaugă produsul pe factură" className="shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"><Plus size={19} /></button>
@@ -262,9 +278,9 @@ export function BillingManualInvoice() {
           </div>}
         </div>
 
-        {resolvedLines.length === 0 ? <div className="p-12 text-center text-slate-500"><Package size={42} className="mx-auto text-slate-300 mb-3" /><p>Nu ai adăugat încă produse.</p></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-50 text-slate-500 text-xs uppercase"><tr><th className="text-left px-5 py-3">Produs</th><th className="text-center px-3 py-3 w-28">Unitate</th><th className="text-center px-3 py-3 w-32">Cantitate</th><th className="text-center px-3 py-3 w-36">Preț unitar</th><th className="text-right px-4 py-3 w-32">Total</th><th className="w-14"></th></tr></thead><tbody className="divide-y divide-slate-100">{resolvedLines.map((line, index) => <tr key={line.productId || `custom-${index}`}><td className="px-5 py-4">{line.product ? <BilingualProductName name={line.product.name} nameRo={line.product.name_ro} /> : <span className="font-semibold text-slate-800">{line.displayName}</span>}</td><td className="px-3 py-4 text-center text-slate-600">{line.unit || line.product?.unit || 'buc'}</td><td className="px-3 py-4"><NumericInput decimalScale={3} value={line.quantity} onValueChange={(value) => updateLine(index, { quantity: value })} className="w-full text-center border border-slate-200 rounded-lg px-2 py-2" /></td><td className="px-3 py-4"><NumericInput decimalScale={2} value={line.unitPrice} onValueChange={(value) => updateLine(index, { unitPrice: value })} className="w-full text-center border border-slate-200 rounded-lg px-2 py-2" /></td><td className="px-4 py-4 text-right font-bold">£{line.totalPrice.toFixed(2)}</td><td className="px-3 py-4"><button type="button" onClick={() => setLines((current) => current.filter((_, lineIndex) => lineIndex !== index))} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Elimină produsul"><Trash2 size={16} /></button></td></tr>)}</tbody></table></div>}
+        {resolvedLines.length === 0 ? <div className="p-12 text-center text-slate-500"><Package size={42} className="mx-auto text-slate-300 mb-3" /><p>Nu ai adăugat încă produse.</p></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-50 text-slate-500 text-xs uppercase"><tr><th className="text-left px-5 py-3">Produs</th><th className="text-center px-3 py-3 w-28">Unitate</th><th className="text-center px-3 py-3 w-32">Cantitate</th><th className="text-center px-3 py-3 w-36">Preț unitar{invoiceMode === 'oneOff' && oneOffVatRate === 20 ? ' cu VAT' : ''}</th><th className="text-right px-4 py-3 w-32">Total{invoiceMode === 'oneOff' && oneOffVatRate === 20 ? ' cu VAT' : ''}</th><th className="w-14"></th></tr></thead><tbody className="divide-y divide-slate-100">{resolvedLines.map((line, index) => <tr key={line.productId || `custom-${index}`}><td className="px-5 py-4">{line.product ? <BilingualProductName name={line.product.name} nameRo={line.product.name_ro} /> : <span className="font-semibold text-slate-800">{line.displayName}</span>}</td><td className="px-3 py-4 text-center text-slate-600">{line.unit || line.product?.unit || 'buc'}</td><td className="px-3 py-4"><NumericInput decimalScale={3} value={line.quantity} onValueChange={(value) => updateLine(index, { quantity: value })} className="w-full text-center border border-slate-200 rounded-lg px-2 py-2" /></td><td className="px-3 py-4"><NumericInput decimalScale={2} value={line.unitPrice} onValueChange={(value) => updateLine(index, { unitPrice: value })} className="w-full text-center border border-slate-200 rounded-lg px-2 py-2" /></td><td className="px-4 py-4 text-right font-bold">£{(invoiceMode === 'oneOff' ? (vatSummary?.lines[index]?.totalAmount ?? line.totalPrice) : line.totalPrice).toFixed(2)}</td><td className="px-3 py-4"><button type="button" onClick={() => setLines((current) => current.filter((_, lineIndex) => lineIndex !== index))} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Elimină produsul"><Trash2 size={16} /></button></td></tr>)}</tbody></table></div>}
 
-        <div className="p-5 border-t border-slate-100 bg-slate-50 flex flex-col sm:flex-row gap-4 items-center justify-between"><div className="text-sm text-slate-500">{lines.length} {lines.length === 1 ? 'produs' : 'produse'}{invoiceMode === 'oneOff' ? ' · produse introduse manual' : ' · denumirile EN/RO sunt preluate din catalog'}</div><div className="flex items-center gap-5"><div className="text-right"><div className="text-xs uppercase font-semibold text-slate-500">Total factură</div><div className="text-2xl font-bold text-indigo-700">£{total.toFixed(2)}</div></div><button type="button" onClick={issueInvoice} disabled={!isWriter || issuing || (invoiceMode === 'company' ? !storeId : !oneOffCustomer.name.trim() || !oneOffIssuerId) || lines.length === 0} className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white px-6 py-3 rounded-xl font-semibold shadow-sm">{issuing ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}{issuing ? 'Se emite...' : 'Emite factura'}</button></div></div>
+        <div className="p-5 border-t border-slate-100 bg-slate-50 flex flex-col sm:flex-row gap-4 items-center justify-between"><div className="text-sm text-slate-500">{lines.length} {lines.length === 1 ? 'produs' : 'produse'}{invoiceMode === 'oneOff' ? ' · produse introduse manual' : ' · denumirile EN/RO sunt preluate din catalog'}</div><div className="flex items-center gap-5"><div className="text-right">{invoiceMode === 'oneOff' && <><div className="text-xs text-slate-500">Subtotal £{vatSummary?.netAmount.toFixed(2) ?? total.toFixed(2)}</div><div className="text-xs text-slate-500">VAT {oneOffVatRate}% £{vatSummary?.vatAmount.toFixed(2) ?? '0.00'}</div></>}<div className="text-xs uppercase font-semibold text-slate-500">Total factură</div><div className="text-2xl font-bold text-indigo-700">£{invoiceTotal.toFixed(2)}</div></div><button type="button" onClick={issueInvoice} disabled={!isWriter || issuing || (invoiceMode === 'company' ? !storeId : !oneOffCustomer.name.trim() || !oneOffIssuerId) || lines.length === 0} className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white px-6 py-3 rounded-xl font-semibold shadow-sm">{issuing ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}{issuing ? 'Se emite...' : 'Emite factura'}</button></div></div>
       </section>
     </div>
   );

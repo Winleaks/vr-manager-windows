@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.118
+
+- Writer poate șterge încasările introduse greșit din Istoric Plăți și din profilul clientului. Ștergerea recalculează atomic soldul facturii și al clientului, păstrează auditul și refuză creditele deja consumate ori datele modificate între timp.
+- Facturile pentru clienți ocazionali pot fi emise fără VAT sau cu VAT 20% inclus în preț. De exemplu, un preț introdus de £100 rămâne total £100 și este defalcat pe document în £83.33 net și £16.67 VAT.
+- Opțiunea VAT este disponibilă numai pentru o societate emitentă înregistrată în scopuri de VAT și cu număr VAT configurat. Factura, editarea, Credit Note-ul, regenerarea PDF și sincronizarea Drive folosesc aceeași defalcare verificată.
+- Migrarea aditivă 23 păstrează facturile existente și adaugă metadatele VAT numai documentelor noi care folosesc opțiunea. Actualizează mai întâi Writer-ul, verifică o factură ocazională și ștergerea controlată a unei încasări, apoi actualizează Viewer-ele.
+
 ### VR - Hub Management v0.1.117
 
 - Factura manuală poate fi emisă și pentru un client ocazional, cu date introduse direct și bunuri sau servicii care nu există în catalog. Operatorul alege societatea emitentă, cantitatea și prețul fiecărei poziții.

@@ -3,6 +3,7 @@ import type { DocumentSyncStatus } from '../src/shared/documentSyncTypes'
 import type { SharedIssuerSettingsInput } from '../src/shared/sharedIssuerSettings'
 import type { InvoiceIssuerChangeInput, InvoiceIssuerChangeOptions } from '../src/shared/invoiceIssuerChange'
 import type { UpdatePaymentInput } from '../src/shared/paymentEdit'
+import type { DeletePaymentInput } from '../src/shared/paymentDeletion'
 
 type EventCallback = (...args: any[]) => void
 
@@ -134,9 +135,10 @@ export const desktopApi = {
     getCompanyProfile: (companyId: number) => ipcRenderer.invoke('billing:getCompanyProfile', companyId),
     recordCompanyPayment: (data: any) => ipcRenderer.invoke('billing:recordCompanyPayment', data),
     updatePayment: (data: UpdatePaymentInput) => ipcRenderer.invoke('billing:updatePayment', data),
+    deletePayment: (data: DeletePaymentInput) => ipcRenderer.invoke('billing:deletePayment', data),
     getInvoices: (startDate?: string, endDate?: string, issuerId?: number) =>
       ipcRenderer.invoke('billing:getInvoices', startDate, endDate, issuerId),
-    createManualInvoice: (data: { storeId?: number; issuerId?: number; oneOffCustomer?: { name: string; address?: string; cui?: string; regCom?: string; phone?: string }; invoiceDate: string; items: Array<{ productId?: number; productName?: string; nameRo?: string; unit?: string; quantity: number; unitPrice: number }> }) =>
+    createManualInvoice: (data: { storeId?: number; issuerId?: number; vatRatePercent?: 0 | 20; oneOffCustomer?: { name: string; address?: string; cui?: string; regCom?: string; phone?: string }; invoiceDate: string; items: Array<{ productId?: number; productName?: string; nameRo?: string; unit?: string; quantity: number; unitPrice: number }> }) =>
       ipcRenderer.invoke('billing:createManualInvoice', data),
     updateInvoice: (data: any) => ipcRenderer.invoke('billing:updateInvoice', data),
     cancelInvoice: (invoiceId: number, reason: string) => ipcRenderer.invoke('billing:cancelInvoice', { invoiceId, reason }),

@@ -1,5 +1,6 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { calculateOneOffVat, type OneOffVatRate } from '../shared/invoiceVat.ts';
 import { registerFonts, fixRomanianDiacritics } from "./fonts/arialFonts.ts";
 import {
   drawPdfFooters,
@@ -61,6 +62,9 @@ export function generateInvoicePDF(
       totalPrice: number;
     }>;
     totalAmount: number;
+    vatRatePercent?: number | null;
+    vatNetAmount?: number | null;
+    vatAmount?: number | null;
     accountOutstanding?: { total: number; rows: Array<{ invoice_number: string; invoice_date: string; grossAmount: number; cashPaid: number; creditedAmount: number; appliedCredit: number; outstanding: number }> };
   },
   metadata?: { fileId: string; creationDate: string },
@@ -274,6 +278,15 @@ export function generateInvoicePDF(
 
   // --- TABEL PRODUSE COMPACT ---
   const includesVat = settings.vatRegistered !== false;
+  const explicitRate = invoiceData.vatRatePercent;
+  if (explicitRate != null && explicitRate !== 0 && explicitRate !== 20) throw new Error('Cota VAT a facturii este invalidă.');
+  if (explicitRate === 20 && !includesVat) throw new Error('Factura cu VAT 20% are un emitent neînregistrat VAT.');
+  const explicitVat = explicitRate == null ? null : calculateOneOffVat(invoiceData.items, explicitRate as OneOffVatRate);
+  if (explicitVat && (Math.abs(explicitVat.totalAmount - invoiceData.totalAmount) > 0.001 ||
+    Math.abs(explicitVat.netAmount - Number(invoiceData.vatNetAmount)) > 0.001 ||
+    Math.abs(explicitVat.vatAmount - Number(invoiceData.vatAmount)) > 0.001)) {
+    throw new Error('Totalurile VAT ale facturii nu corespund pozițiilor.');
+  }
   const tableColumn = includesVat
     ? ["#", "Description", "Unit", "Qty", "Unit Price (£)", "VAT", "Total (£)"]
     : ["#", "Description", "Unit", "Qty", "Unit Price (£)", "Total (£)"];
@@ -289,8 +302,8 @@ export function generateInvoicePDF(
       item.quantity.toString(),
       item.unitPrice.toFixed(2),
     ];
-    if (includesVat) row.push('0%');
-    row.push(item.totalPrice.toFixed(2));
+    if (includesVat) row.push(explicitRate === 0 ? '—' : `${explicitRate ?? 0}%`);
+    row.push((explicitVat?.lines[index].totalAmount ?? item.totalPrice).toFixed(2));
     tableRows.push(row);
   });
 
@@ -392,12 +405,12 @@ export function generateInvoicePDF(
   doc.setTextColor(100, 116, 139);
   doc.text("Subtotal:", summaryBoxX + 5, finalTableY + 4.5);
   doc.setTextColor(15, 23, 42);
-  doc.text(`£${invoiceData.totalAmount.toFixed(2)}`, 191, finalTableY + 4.5, { align: "right" });
+  doc.text(`£${(explicitVat?.netAmount ?? invoiceData.totalAmount).toFixed(2)}`, 191, finalTableY + 4.5, { align: "right" });
 
   doc.setTextColor(100, 116, 139);
-  doc.text(includesVat ? "VAT (0%):" : "VAT:", summaryBoxX + 5, finalTableY + 9);
+  doc.text(includesVat && explicitRate !== 0 ? `VAT (${explicitRate ?? 0}%):` : "VAT:", summaryBoxX + 5, finalTableY + 9);
   doc.setTextColor(15, 23, 42);
-  doc.text(includesVat ? "£0.00" : "Not charged", 191, finalTableY + 9, { align: "right" });
+  doc.text(includesVat && explicitRate !== 0 ? `£${(explicitVat?.vatAmount ?? 0).toFixed(2)}` : "Not charged", 191, finalTableY + 9, { align: "right" });
 
   doc.setFontSize(9);
   doc.setFont("Arial", "bold");

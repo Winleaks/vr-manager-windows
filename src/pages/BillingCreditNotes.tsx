@@ -7,7 +7,7 @@ import { TextConfirmationModal } from '../components/TextConfirmationModal';
 
 type DraftLine = {
   id: number; productName: string; nameRo?: string; variantLabel?: string; unit?: string;
-  remainingQuantity: number; remainingValue: number; unitPrice: number; canReturnToStock: boolean;
+  remainingQuantity: number; remainingValue: number; remainingVat: number; unitPrice: number; vatRatePercent: number; canReturnToStock: boolean;
 };
 
 function today() {
@@ -58,7 +58,10 @@ export function BillingCreditNotes() {
   const companies = useMemo(() => [...new Map(notes.map((note) => [String(note.company_id), note.company_name])).entries()], [notes]);
   const scopedInvoices = draft.filter((invoice) => `${invoice.company_id}:${invoice.issuer_id}` === scope);
   const chosenItems = Object.entries(selected).filter(([, value]) => value.checked).map(([id, value]) => ({ invoiceItemId: Number(id), quantity: Number(value.quantity), unitAmount: Number(value.unitAmount), returnToStock: value.returnToStock }));
-  const previewTotal = chosenItems.reduce((sum, item) => sum + (Number.isFinite(item.quantity * item.unitAmount) ? item.quantity * item.unitAmount : 0), 0);
+  const previewTotal = chosenItems.reduce((sum, item) => {
+    const gross = Math.round(item.quantity * item.unitAmount * 100) / 100;
+    return sum + (Number.isFinite(gross) ? gross : 0);
+  }, 0);
   const filteredNotes = notes.filter((note) => {
     const query = search.trim().toLowerCase();
     return (issuerFilter === 'all' || String(note.issuer_id) === issuerFilter)

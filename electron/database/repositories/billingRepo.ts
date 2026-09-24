@@ -21,12 +21,14 @@ import {
   reissueCancelledWeeklyInvoiceTransaction,
   setBillingTestModeTransaction,
   updatePaymentTransaction,
+  deletePaymentTransaction,
   type WeeklyInvoiceInput,
   type WeeklyInvoiceBatchAuditContext,
   type CompanyPaymentInput,
   type InvoiceOrderInput,
   type ManualInvoiceInput,
   type UpdatePaymentInput,
+  type DeletePaymentInput,
 } from './billingTransactions';
 import {
   assignCompanyIssuer as assignCompanyIssuerTransaction,
@@ -430,6 +432,15 @@ export function updatePayment(data: UpdatePaymentInput) {
   return updatePaymentTransaction(db, data);
 }
 
+export function deletePayment(data: DeletePaymentInput) {
+  const visible = normalRead().prepare('SELECT 1 FROM payments WHERE id=?').get(data.id) ||
+    normalRead().prepare(`SELECT 1 FROM billing_audit_events a JOIN companies c ON c.id=a.company_id
+      WHERE a.event_type='payment_deleted' AND json_extract(a.details, '$.operationId')=?
+        AND json_extract(a.details, '$.paymentId')=? LIMIT 1`).get(data.operationId, data.id);
+  if (!visible) throw Error('Încasarea nu este disponibilă în facturarea normală.');
+  return deletePaymentTransaction(db, data);
+}
+
 export function createInvoiceBatchFromSync(orders: InvoiceOrderInput[], invoiceDate: string) {
   orders.forEach(order => assertVisible('stores', order.storeId));
   return createInvoiceBatchTransaction(db, orders, invoiceDate);
@@ -475,7 +486,8 @@ export function getInvoiceIssuerChangeOptions(invoiceId: number): InvoiceIssuerC
     reference: source.invoice_reference || source.invoice_number,
     issuerName: source.issuer_name,
     blockedReason: invoiceIssuerChangeBlock(db, invoiceId),
-    issuers: readBillingIssuers(db).filter((issuer) => issuer.id !== source.issuer_id && isIssuerReady(issuer) && ['goodness', 'vatra'].includes(issuer.code))
+    issuers: readBillingIssuers(db).filter((issuer) => issuer.id !== source.issuer_id && isIssuerReady(issuer) && ['goodness', 'vatra'].includes(issuer.code)
+      && (source.vat_rate_percent !== 20 || (issuer.vat_registered === 1 && Boolean(issuer.vat_number))))
       .map((issuer) => ({ id: issuer.id, name: issuer.legal_name, series: issuer.invoice_series!, nextNumber: issuer.next_invoice_number })),
   };
 }

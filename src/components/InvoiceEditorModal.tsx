@@ -5,6 +5,7 @@ import { NumericInput } from './NumericInput';
 import { prepareInvoiceDocument } from '../utils/prepareInvoiceDocument';
 import { saveInvoiceEdits } from '../utils/saveInvoiceEdits';
 import { InvoiceIssuerChangeModal } from './InvoiceIssuerChangeModal';
+import { calculateOneOffVat } from '../shared/invoiceVat';
 
 export interface InvoiceEditorAdapter {
   getInvoice: () => Promise<any>;
@@ -83,6 +84,12 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved, adapter }: ({
   })));
   useEffect(() => { if (!changingIssuer) dialog.current?.focus({ preventScroll: true }); }, [changingIssuer]);
   const total = items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unitPrice), 0);
+  const explicitVat = invoice?.vat_rate_percent === 0 || invoice?.vat_rate_percent === 20;
+  const taxSummary = (() => {
+    if (!explicitVat || !items.length || !items.every(item => Number(item.quantity) > 0 && Number(item.unitPrice) >= 0 && Number.isFinite(Number(item.quantity)) && Number.isFinite(Number(item.unitPrice)))) return null;
+    try { return calculateOneOffVat(items.map(item => ({ quantity: Number(item.quantity), unitPrice: Number(item.unitPrice) })), invoice.vat_rate_percent); }
+    catch { return null; }
+  })();
   const changeItem = (index: number, field: string, value: string) => setItems((previous) => previous.map((item, i) => i === index ? { ...item, [field]: value } : item));
   const searchText = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
   const filteredProducts = products.filter((product) => searchText(`${product.name} ${product.name_ro || ''} ${product.variant_label || ''}`).includes(searchText(productSearch.trim())));
@@ -175,12 +182,12 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved, adapter }: ({
               <p className="text-sm text-emerald-800">Încasări păstrate: £{Number(invoice.paid_amount || 0).toFixed(2)}. Totalul și statusul plății se recalculează la salvare.</p>
               {Boolean(invoice.is_imported) && <p className="text-sm bg-indigo-50 text-indigo-800 p-3 rounded-xl">Poți adăuga produse din catalog și corecta manual cantitățile și prețurile. Pozițiile salvate și comenzile originale din VR Baker sunt păstrate.</p>}
               <div className="overflow-x-auto"><table className="w-full text-sm">
-                <thead><tr className="text-left text-slate-600"><th className="p-2">Produs</th><th className="p-2 w-28">Cantitate</th><th className="p-2 w-28">Preț unitar</th><th className="p-2">Total</th><th /></tr></thead>
+                <thead><tr className="text-left text-slate-600"><th className="p-2">Produs</th><th className="p-2 w-28">Cantitate</th><th className="p-2 w-28">Preț unitar{invoice.vat_rate_percent === 20 ? ' cu VAT' : ''}</th><th className="p-2">Total{invoice.vat_rate_percent === 20 ? ' cu VAT' : ''}</th><th /></tr></thead>
                 <tbody>{items.map((item, index) => <tr key={item.id ?? 'new-' + index} className="border-t">
                   <td className="p-2"><input aria-label={'Produs ' + (index + 1)} readOnly={Boolean(invoice.is_imported) || item.productId !== undefined} value={item.productName} onChange={(event) => changeItem(index, 'productName', event.target.value)} className="w-full border rounded p-2" /></td>
                   <td className="p-2"><NumericInput aria-label={'Cantitate ' + (index + 1)} value={item.quantity} onValueChange={(value) => changeItem(index, 'quantity', value)} className="w-full border rounded p-2" /></td>
                   <td className="p-2"><NumericInput aria-label={'Preț unitar ' + (index + 1)} placeholder={item.priceUnverified ? 'Preț manual' : undefined} value={item.unitPrice} onValueChange={(value) => changeItem(index, 'unitPrice', value)} className="w-full border rounded p-2" />{item.priceUnverified && <small className="block text-amber-800 mt-1">Tarif neverificat · completează/verifică prețul</small>}</td>
-                  <td className="p-2 font-semibold">£{(Number(item.quantity) * Number(item.unitPrice)).toFixed(2)}</td>
+                  <td className="p-2 font-semibold">£{(taxSummary?.lines[index]?.totalAmount ?? Number(item.quantity) * Number(item.unitPrice)).toFixed(2)}</td>
                   <td>{(!invoice.is_imported || item.id === undefined || (String(item.quantity).trim() !== '' && Number(item.quantity) === 0)) && <button type="button" title="Șterge poziția" aria-label={'Șterge poziția ' + (index + 1)} onClick={() => { if (invoice.is_imported && item.id !== undefined) setRemovedItems(previous => [...previous, {...item, quantity:0, unitPrice:Number(item.unitPrice),remove:true}]); setItems((previous) => previous.filter((_, i) => i !== index)); }} className="p-2 text-rose-600"><Trash2 size={16} /></button>}</td>
                 </tr>)}</tbody>
               </table></div>
@@ -198,7 +205,8 @@ export function InvoiceEditorModal({ invoiceId, onClose, onSaved, adapter }: ({
                 <button type="button" title="Adaugă produs" aria-label="Adaugă produs" disabled={!productId || catalogLoading} onClick={addProduct} className="p-2 rounded-lg text-indigo-700 hover:bg-indigo-50 disabled:opacity-40"><Plus size={20} /></button>
               </div>
               <p className="text-xs text-slate-500">Tarifele verificate includ reducerile configurate în VR Baker. Dacă verificarea nu este disponibilă, introduci manual prețul după adăugare. Prețul se modifică doar pe această factură, nu în platformă.</p>
-              <p className="text-right font-bold text-xl">Total: £{total.toFixed(2)}</p>
+              {explicitVat && <p className="text-right text-sm text-slate-600">Subtotal £{taxSummary?.netAmount.toFixed(2) ?? total.toFixed(2)} · VAT {invoice.vat_rate_percent}% £{taxSummary?.vatAmount.toFixed(2) ?? '0.00'}</p>}
+              <p className="text-right font-bold text-xl">Total: £{(taxSummary?.totalAmount ?? total).toFixed(2)}</p>
             </fieldset>
             {stage !== 'idle' && <p role="status" className="text-indigo-700">{stage === 'saving' ? 'Se salvează factura...' : 'Factura este salvată. Se actualizează PDF-ul și copia Google Drive...'}</p>}
           </>}

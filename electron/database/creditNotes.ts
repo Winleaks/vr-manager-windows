@@ -8,6 +8,7 @@ import {
   requireText,
 } from './businessValidation.ts';
 import { isIssuerReady, issuerSnapshot, type BillingIssuerRow } from './billingIssuers.ts';
+import { calculateOneOffVat, type OneOffVatRate } from '../../src/shared/invoiceVat.ts';
 
 type SqliteDatabase = Database.Database;
 
@@ -306,7 +307,7 @@ export function getCreditNoteDraft(connection: SqliteDatabase, invoiceIdsInput?:
     params.push(...invoiceIds);
   }
   const invoices = connection.prepare(`
-    SELECT i.id, i.invoice_number, i.invoice_date, i.total_amount, i.paid_amount, i.status,
+    SELECT i.id, i.invoice_number, i.invoice_date, i.total_amount, i.paid_amount, i.status, i.vat_rate_percent,
            s.name AS store_name, s.company_id, c.name AS company_name,
            ii.issuer_id, bi.legal_name AS issuer_name, bi.code AS issuer_code
     FROM invoices i JOIN stores s ON s.id = i.store_id JOIN companies c ON c.id = s.company_id
@@ -318,11 +319,14 @@ export function getCreditNoteDraft(connection: SqliteDatabase, invoiceIdsInput?:
     const items = (connection.prepare(`
       SELECT item.*,
         COALESCE((SELECT SUM(cni.quantity) FROM credit_note_items cni JOIN credit_notes cn ON cn.id = cni.credit_note_id WHERE cni.source_invoice_item_id = item.id AND cn.status = 'issued'), 0) AS credited_quantity,
-        COALESCE((SELECT SUM(cni.total_amount) FROM credit_note_items cni JOIN credit_notes cn ON cn.id = cni.credit_note_id WHERE cni.source_invoice_item_id = item.id AND cn.status = 'issued'), 0) AS credited_value
+        COALESCE((SELECT SUM(cni.total_amount) FROM credit_note_items cni JOIN credit_notes cn ON cn.id = cni.credit_note_id WHERE cni.source_invoice_item_id = item.id AND cn.status = 'issued'), 0) AS credited_value,
+        COALESCE((SELECT SUM(cni.vat_amount) FROM credit_note_items cni JOIN credit_notes cn ON cn.id = cni.credit_note_id WHERE cni.source_invoice_item_id = item.id AND cn.status = 'issued'), 0) AS credited_vat
       FROM invoice_items item WHERE item.invoice_id = ?
       ORDER BY CASE WHEN item.product_order IS NULL THEN 1 ELSE 0 END, item.product_order, item.id
     `).all(invoice.id) as any[]).map((item) => {
       const finishedProductId = resolveFinishedProduct(connection, item);
+      const vatRate = (invoice.vat_rate_percent ?? 0) as OneOffVatRate;
+      const sourceVat = calculateOneOffVat([{ quantity: item.quantity, unitPrice: item.unit_price }], vatRate).vatAmount;
       return {
         id: item.id,
         productName: item.product_name,
@@ -334,6 +338,8 @@ export function getCreditNoteDraft(connection: SqliteDatabase, invoiceIdsInput?:
         totalPrice: item.total_price,
         remainingQuantity: Math.max(0, item.quantity - item.credited_quantity),
         remainingValue: roundMoney(Math.max(0, item.total_price - item.credited_value)),
+        vatRatePercent: vatRate,
+        remainingVat: roundMoney(Math.max(0, sourceVat - item.credited_vat)),
         canReturnToStock: Boolean(finishedProductId),
         finishedProductId,
       };
@@ -389,7 +395,7 @@ export function createCreditNoteTransaction(connection: SqliteDatabase, input: C
       SELECT item.id AS source_item_id, item.invoice_id, item.product_name, item.product_name_ro,
              item.variant_label, item.unit, item.quantity, item.unit_price, item.total_price,
              item.external_product_id, item.finished_product_id, item.product_order,
-             i.invoice_date, i.invoice_number, i.status AS invoice_status,
+             i.invoice_date, i.invoice_number, i.status AS invoice_status, i.vat_rate_percent,
              s.name AS store_name, s.company_id, c.name AS company_name, c.address AS company_address,
              c.cui AS company_cui, c.reg_com AS company_reg_com, cl.name AS client_name,
              ii.issuer_id
@@ -417,34 +423,61 @@ export function createCreditNoteTransaction(connection: SqliteDatabase, input: C
       if (selection.quantity > source.quantity + EPSILON) throw new Error(`Cantitatea creditată pentru ${source.product_name} depășește cantitatea facturată.`);
       if (selection.unitAmount > source.unit_price + EPSILON) throw new Error(`Valoarea unitară creditată pentru ${source.product_name} depășește prețul facturat.`);
       const used = connection.prepare(`
-        SELECT COALESCE(SUM(cni.quantity), 0) AS quantity, COALESCE(SUM(cni.total_amount), 0) AS value
+        SELECT COALESCE(SUM(cni.quantity), 0) AS quantity, COALESCE(SUM(cni.total_amount), 0) AS value,
+               COALESCE(SUM(cni.net_amount), 0) AS net, COALESCE(SUM(cni.vat_amount), 0) AS vat
         FROM credit_note_items cni JOIN credit_notes cn ON cn.id = cni.credit_note_id
         WHERE cni.source_invoice_item_id = ? AND cn.status = 'issued'
-      `).get(source.source_item_id) as { quantity: number; value: number };
+      `).get(source.source_item_id) as { quantity: number; value: number; net: number; vat: number };
       if (used.quantity + selection.quantity > source.quantity + EPSILON) throw new Error(`Cantitatea rămasă pentru ${source.product_name} este insuficientă.`);
       const total = roundMoney(selection.quantity * selection.unitAmount);
       if (used.value + total > source.total_price + EPSILON) throw new Error(`Valoarea rămasă pentru ${source.product_name} este insuficientă.`);
+      const vatRate = (source.vat_rate_percent ?? 0) as OneOffVatRate;
+      if (vatRate !== 0 && vatRate !== 20) throw new Error('Cota VAT a facturii sursă este invalidă.');
+      const sourceTax = calculateOneOffVat([{ quantity: source.quantity, unitPrice: source.unit_price }], vatRate);
+      const selectedTax = calculateOneOffVat([{ quantity: selection.quantity, unitPrice: selection.unitAmount }], vatRate);
+      const netRemaining = roundMoney(Math.max(0, sourceTax.netAmount - used.net));
+      const sourceVat = sourceTax.vatAmount;
+      const vatRemaining = roundMoney(Math.max(0, sourceVat - used.vat));
+      let net = selectedTax.netAmount;
+      let vat = selectedTax.vatAmount;
+      if (used.value + total >= roundMoney(source.total_price) - EPSILON) {
+        net = netRemaining;
+        vat = vatRemaining;
+      } else {
+        vat = Math.min(vat, vatRemaining);
+        net = roundMoney(total - vat);
+        if (net > netRemaining + EPSILON) {
+          net = netRemaining;
+          vat = roundMoney(total - net);
+        }
+      }
+      if (Math.abs(roundMoney(net + vat) - total) > EPSILON || net > netRemaining + EPSILON || vat > vatRemaining + EPSILON) {
+        throw new Error(`Separarea VAT pentru ${source.product_name} nu este validă.`);
+      }
       const finishedProductId = resolveFinishedProduct(connection, source);
       if (selection.returnToStock && !finishedProductId) throw new Error(`Produsul ${source.product_name} nu este mapat neechivoc în stoc; folosește o ajustare manuală.`);
-      return { selection, source, total, finishedProductId };
+      return { selection, source, net, vatRate, vat, total, finishedProductId };
     });
+    const netAmount = roundMoney(prepared.reduce((sum, row) => sum + row.net, 0));
+    const vatAmount = roundMoney(prepared.reduce((sum, row) => sum + row.vat, 0));
     const totalAmount = roundMoney(prepared.reduce((sum, row) => sum + row.total, 0));
     if (totalAmount <= EPSILON) throw new Error('Totalul Credit Note-ului trebuie să fie mai mare decât zero.');
     const sequence = issuer.next_credit_note_number;
     const reference = `${issuer.credit_note_series}-${sequence}`;
     const creditNote = connection.prepare(`
       INSERT INTO credit_notes (company_id, issuer_id, reference, series, sequence_number, issue_date, reason, backdate_reason, issuer_snapshot_json, customer_snapshot_json, net_amount, vat_amount, total_amount)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
-    `).run(first.company_id, first.issuer_id, reference, issuer.credit_note_series, sequence, issueDate, reason, backdateReason, JSON.stringify(issuerSnapshot(issuer)), JSON.stringify(customerSnapshot(first)), totalAmount, totalAmount);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(first.company_id, first.issuer_id, reference, issuer.credit_note_series, sequence, issueDate, reason, backdateReason, JSON.stringify(issuerSnapshot(issuer)), JSON.stringify(customerSnapshot(first)), netAmount, vatAmount, totalAmount);
     const creditNoteId = Number(creditNote.lastInsertRowid);
     const insertItem = connection.prepare(`
       INSERT INTO credit_note_items (credit_note_id, source_invoice_id, source_invoice_item_id, store_name, product_name, product_name_ro, variant_label, unit, quantity, unit_amount, net_amount, vat_rate, vat_amount, total_amount, product_order, external_product_id, finished_product_id, return_to_stock)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const byInvoice = new Map<number, number>();
+    const byInvoice = new Map<number, { net: number; vat: number; total: number }>();
     for (const row of prepared) {
-      insertItem.run(creditNoteId, row.source.invoice_id, row.source.source_item_id, row.source.store_name, row.source.product_name, row.source.product_name_ro, row.source.variant_label, row.source.unit, row.selection.quantity, row.selection.unitAmount, row.total, row.total, row.source.product_order, row.source.external_product_id, row.finishedProductId, row.selection.returnToStock ? 1 : 0);
-      byInvoice.set(row.source.invoice_id, roundMoney((byInvoice.get(row.source.invoice_id) || 0) + row.total));
+      insertItem.run(creditNoteId, row.source.invoice_id, row.source.source_item_id, row.source.store_name, row.source.product_name, row.source.product_name_ro, row.source.variant_label, row.source.unit, row.selection.quantity, row.selection.unitAmount, row.net, row.vatRate, row.vat, row.total, row.source.product_order, row.source.external_product_id, row.finishedProductId, row.selection.returnToStock ? 1 : 0);
+      const previous = byInvoice.get(row.source.invoice_id) || { net: 0, vat: 0, total: 0 };
+      byInvoice.set(row.source.invoice_id, { net: roundMoney(previous.net + row.net), vat: roundMoney(previous.vat + row.vat), total: roundMoney(previous.total + row.total) });
       if (row.selection.returnToStock) {
         const stock = connection.prepare('SELECT current_stock FROM finished_products WHERE id = ?').get(row.finishedProductId) as { current_stock: number };
         const before = Number(stock.current_stock);
@@ -454,8 +487,8 @@ export function createCreditNoteTransaction(connection: SqliteDatabase, input: C
           .run(row.finishedProductId, row.selection.quantity, before, after, creditNoteId, `Retur stoc ${reference}`);
       }
     }
-    const insertLink = connection.prepare('INSERT INTO credit_note_invoice_links (credit_note_id, invoice_id, credited_net, credited_vat, credited_total) VALUES (?, ?, ?, 0, ?)');
-    for (const [invoiceId, amount] of byInvoice) insertLink.run(creditNoteId, invoiceId, amount, amount);
+    const insertLink = connection.prepare('INSERT INTO credit_note_invoice_links (credit_note_id, invoice_id, credited_net, credited_vat, credited_total) VALUES (?, ?, ?, ?, ?)');
+    for (const [invoiceId, amount] of byInvoice) insertLink.run(creditNoteId, invoiceId, amount.net, amount.vat, amount.total);
     if (connection.prepare('UPDATE billing_issuers SET next_credit_note_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND next_credit_note_number = ?').run(sequence + 1, issuer.id, sequence).changes !== 1) {
       throw new Error('Contorul Credit Note a fost modificat concurent. Reîncearcă emiterea.');
     }
@@ -463,7 +496,7 @@ export function createCreditNoteTransaction(connection: SqliteDatabase, input: C
     let generatedCredit = 0;
     for (const invoiceId of byInvoice.keys()) {
       const beforeApplied = creditApplied(connection, invoiceId);
-      const beforeCashExcess = Math.max(0, Number((connection.prepare('SELECT paid_amount FROM invoices WHERE id = ?').get(invoiceId) as { paid_amount: number }).paid_amount) - (getInvoiceFinancials(connection, invoiceId).netAmount + (byInvoice.get(invoiceId) || 0)));
+      const beforeCashExcess = Math.max(0, Number((connection.prepare('SELECT paid_amount FROM invoices WHERE id = ?').get(invoiceId) as { paid_amount: number }).paid_amount) - (getInvoiceFinancials(connection, invoiceId).netAmount + (byInvoice.get(invoiceId)?.total || 0)));
       const financials = getInvoiceFinancials(connection, invoiceId);
       const overSettled = Math.max(0, financials.cashPaid + beforeApplied - financials.netAmount);
       if (overSettled > EPSILON && beforeApplied > EPSILON) releaseAppliedCredit(connection, invoiceId, Math.min(overSettled, beforeApplied), `Eliberare automată la emiterea ${reference}`);

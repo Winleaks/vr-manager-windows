@@ -22,12 +22,14 @@ import {
   reissueCancelledWeeklyInvoiceTransaction,
   setBillingTestModeTransaction,
   updatePaymentTransaction,
+  deletePaymentTransaction,
   updateInvoiceTransaction,
 } from './repositories/billingTransactions.ts';
-import { ensureCreditNoteSchema, createCreditNoteTransaction, applyCompanyCreditTransaction } from './creditNotes.ts';
+import { ensureCreditNoteSchema, createCreditNoteTransaction, applyCompanyCreditTransaction, getInvoiceFinancials, getCreditNoteDraft } from './creditNotes.ts';
 import { paymentReport, statementReport, outstandingReport, weeklyBillingStats } from './billingReports.ts';
 import { installBillingPublication, prepareBillingDelivery } from './billingPublication.ts';
 import { ensureOneOffCustomerSchema } from './oneOffCustomers.ts';
+import { ensureOneOffInvoiceVatSchema } from './oneOffInvoiceVat.ts';
 import { installDocumentSyncQueue, dueDocuments } from './documentSyncQueue.ts';
 
 function issuerInput(issuer: any, overrides: Record<string, unknown> = {}) {
@@ -736,6 +738,54 @@ test('payment correction preserves credit-note/applied-credit protections and re
   } finally { connection.close(); }
 });
 
+test('deleting one invoice receipt reopens only its invoice, audits the removal and safely replays', () => {
+  const { connection, company1, store1, goodnessId } = fixture();
+  try {
+    const [first, second] = createInvoiceBatchTransaction(connection, [10, 20].map(amount => ({ storeId: store1,
+      items: [{ productName: 'Bread', quantity: 1, unitPrice: amount }] })), '2026-09-01');
+    for (const invoice of [first, second]) recordCompanyPaymentTransaction(connection, {
+      companyId: company1, issuerId: goodnessId, invoiceId: invoice.invoiceId,
+      amount: invoice.totalAmount, paymentDate: '2026-09-02', method: 'cash',
+    });
+    const payment = connection.prepare('SELECT id, amount FROM payments WHERE invoice_id=?').get(first.invoiceId) as { id: number; amount: number };
+    const input = { id: payment.id, expectedAmount: payment.amount, expectedRevision: 0, operationId: randomUUID(), reason: 'Dublură introdusă din greșeală' };
+    assert.throws(() => deletePaymentTransaction(connection, { ...input, expectedAmount: 9 }), /modificat între timp/);
+    const result = deletePaymentTransaction(connection, input);
+    assert.deepEqual(result, { id: payment.id, invoiceId: first.invoiceId, amount: 10 });
+    assert.deepEqual(deletePaymentTransaction(connection, input), result, 'response-loss retry is idempotent');
+    assert.throws(() => deletePaymentTransaction(connection, { ...input, reason: 'Alt motiv' }), /alte date/);
+    assert.equal(connection.prepare('SELECT 1 FROM payments WHERE id=?').get(payment.id), undefined);
+    assert.deepEqual(connection.prepare('SELECT paid_amount, status FROM invoices WHERE id=?').get(first.invoiceId), { paid_amount: 0, status: 'unpaid' });
+    assert.deepEqual(connection.prepare('SELECT paid_amount, status FROM invoices WHERE id=?').get(second.invoiceId), { paid_amount: 20, status: 'paid' });
+    const audit = connection.prepare("SELECT details FROM billing_audit_events WHERE event_type='payment_deleted'").get() as { details: string };
+    assert.equal(JSON.parse(audit.details).reason, input.reason);
+  } finally { connection.close(); }
+});
+
+test('deleting unused advance recalculates credit; consumed credit or failed audit cannot be deleted', () => {
+  const { connection, company1, goodnessId } = fixture();
+  try {
+    recordCompanyPaymentTransaction(connection, { companyId: company1, issuerId: goodnessId, amount: 12, paymentDate: '2026-09-02', method: 'transfer' });
+    const payment = connection.prepare('SELECT id, amount FROM payments WHERE invoice_id IS NULL').get() as { id: number; amount: number };
+    const input = { id: payment.id, expectedAmount: payment.amount, expectedRevision: 0, operationId: randomUUID(), reason: 'Încasare introdusă greșit' };
+    const snapshot = () => ['payments', 'company_credit_entries', 'company_issuer_credits', 'billing_audit_events'].map(table => connection.prepare(`SELECT * FROM ${table}`).all());
+    connection.prepare("UPDATE company_credit_entries SET available_amount=5 WHERE source_type='payment_overpayment' AND source_id=?").run(payment.id);
+    const used = snapshot();
+    assert.throws(() => deletePaymentTransaction(connection, input), /Creditul.*utilizat/);
+    assert.deepEqual(snapshot(), used);
+    connection.prepare("UPDATE company_credit_entries SET available_amount=12 WHERE source_type='payment_overpayment' AND source_id=?").run(payment.id);
+    connection.exec("CREATE TRIGGER reject_payment_deletion_audit BEFORE INSERT ON billing_audit_events WHEN NEW.event_type='payment_deleted' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END;");
+    const before = snapshot();
+    assert.throws(() => deletePaymentTransaction(connection, input), /audit unavailable/);
+    assert.deepEqual(snapshot(), before, 'payment, credit and balance roll back together');
+    connection.exec('DROP TRIGGER reject_payment_deletion_audit');
+    deletePaymentTransaction(connection, input);
+    assert.equal(connection.prepare('SELECT 1 FROM payments WHERE id=?').get(payment.id), undefined);
+    assert.deepEqual(connection.prepare("SELECT status, available_amount FROM company_credit_entries WHERE source_type='payment_overpayment' AND source_id=?").get(payment.id), { status: 'reversed', available_amount: 0 });
+    assert.equal((connection.prepare('SELECT balance FROM company_issuer_credits WHERE company_id=? AND issuer_id=?').get(company1, goodnessId) as any).balance, 0);
+  } finally { connection.close(); }
+});
+
 test('manual invoice supports one-off customer and ad-hoc product without polluting permanent catalog', () => {
   const { connection, goodnessId } = fixture();
   try {
@@ -774,6 +824,93 @@ test('manual invoice supports one-off customer and ad-hoc product without pollut
       items: [{ productName: '', quantity: 1, unitPrice: 1 }],
     }), /Denumirea produsului/);
     assert.equal((connection.prepare("SELECT COUNT(*) AS value FROM clients WHERE is_one_off=1").get() as any).value, 1, 'failed validation occurs before entity creation');
+  } finally { connection.close(); }
+});
+
+test('one-off VAT choice persists gross and survives edits, credit notes, and issuer-change validation', () => {
+  const { connection, goodnessId, vatraId } = fixture();
+  try {
+    const now = new Date();
+    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    connection.prepare("UPDATE billing_issuers SET credit_note_series='CN-TGB', next_credit_note_number=1, credit_note_sequence_confirmed=1 WHERE id=?").run(goodnessId);
+    const create = (issuerId: number, vatRatePercent: 0 | 20) => createManualInvoiceTransaction(connection, {
+      invoiceDate: date, issuerId, vatRatePercent, oneOffCustomer: { name: `Occasional ${issuerId}-${vatRatePercent}` },
+      items: [{ productName: 'Factory machine', quantity: 2, unitPrice: 10.03 }],
+    });
+    const taxed = create(goodnessId, 20);
+    const invoice = () => connection.prepare('SELECT total_amount, vat_rate_percent, vat_net_amount, vat_amount, status FROM invoices WHERE id=?').get(taxed.invoiceId) as any;
+    assert.deepEqual(invoice(), { total_amount: 20.06, vat_rate_percent: 20, vat_net_amount: 16.72, vat_amount: 3.34, status: 'unpaid' });
+    const audit = connection.prepare("SELECT details FROM billing_audit_events WHERE event_type='one_off_invoice_vat_selected' AND invoice_id=?").get(taxed.invoiceId) as { details: string };
+    assert.deepEqual(JSON.parse(audit.details), { vatRatePercent: 20, netAmount: 16.72, vatAmount: 3.34, totalAmount: 20.06 });
+    assert.equal(getInvoiceFinancials(connection, taxed.invoiceId).outstanding, 20.06);
+    const item = connection.prepare('SELECT id, product_name, quantity, unit_price FROM invoice_items WHERE invoice_id=?').get(taxed.invoiceId) as any;
+    assert.equal(updateInvoiceTransaction(connection, taxed.invoiceId, taxed.invoiceNumber, date,
+      [{ id: item.id, productName: item.product_name, quantity: 2, unitPrice: 11.03 }]).totalAmount, 22.06);
+    assert.deepEqual(invoice(), { total_amount: 22.06, vat_rate_percent: 20, vat_net_amount: 18.38, vat_amount: 3.68, status: 'unpaid' });
+    assert.throws(() => changeInvoiceIssuerTransaction(connection, {
+      invoiceId: taxed.invoiceId, expectedReference: taxed.invoiceNumber, targetIssuerId: vatraId,
+      invoiceDate: date, reason: 'Wrong issuer', operationId: 'vat-issuer-change-0001',
+    }), /VAT 20%/);
+    assert.equal(invoice().status, 'unpaid');
+    const editedItemId = (connection.prepare('SELECT id FROM invoice_items WHERE invoice_id=?').get(taxed.invoiceId) as { id: number }).id;
+    const first = createCreditNoteTransaction(connection, { issueDate: date, reason: 'Partial return', items: [{ invoiceItemId: editedItemId, quantity: 1, unitAmount: 11.03 }] });
+    assert.equal(first.totalAmount, 11.03);
+    const draftAfterFirst = getCreditNoteDraft(connection, [taxed.invoiceId])[0].items[0];
+    assert.equal(draftAfterFirst.remainingValue, 11.03);
+    assert.equal(draftAfterFirst.remainingVat, 1.84);
+    const second = createCreditNoteTransaction(connection, { issueDate: date, reason: 'Final return', items: [{ invoiceItemId: editedItemId, quantity: 1, unitAmount: 11.03 }] });
+    assert.equal(second.totalAmount, 11.03);
+    assert.deepEqual(connection.prepare('SELECT net_amount, vat_amount, total_amount FROM credit_notes ORDER BY id').all(), [
+      { net_amount: 9.19, vat_amount: 1.84, total_amount: 11.03 },
+      { net_amount: 9.19, vat_amount: 1.84, total_amount: 11.03 },
+    ]);
+    assert.equal(getInvoiceFinancials(connection, taxed.invoiceId).outstanding, 0);
+    const untaxed = create(vatraId, 0);
+    assert.deepEqual(connection.prepare('SELECT total_amount, vat_rate_percent, vat_net_amount, vat_amount FROM invoices WHERE id=?').get(untaxed.invoiceId),
+      { total_amount: 20.06, vat_rate_percent: 0, vat_net_amount: 20.06, vat_amount: 0 });
+    const count = (connection.prepare('SELECT COUNT(*) AS n FROM invoices').get() as any).n;
+    assert.throws(() => create(vatraId, 20), /înregistrată VAT/);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS n FROM invoices').get() as any).n, count);
+    assert.throws(() => createManualInvoiceTransaction(connection, {
+      invoiceDate: date, issuerId: goodnessId, vatRatePercent: 5 as 0 | 20, oneOffCustomer: { name: 'Invalid' },
+      items: [{ productName: 'Machine', quantity: 1, unitPrice: 10 }],
+    }), /Cota VAT/);
+    const hundred = createManualInvoiceTransaction(connection, {
+      invoiceDate: date, issuerId: goodnessId, vatRatePercent: 20, oneOffCustomer: { name: 'VAT inclusive example' },
+      items: [{ productName: 'Asset sale', quantity: 1, unitPrice: 100 }],
+    });
+    assert.deepEqual(connection.prepare('SELECT total_amount, vat_net_amount, vat_amount FROM invoices WHERE id=?').get(hundred.invoiceId),
+      { total_amount: 100, vat_net_amount: 83.33, vat_amount: 16.67 });
+    assert.equal(invoice().status, 'credited');
+  } finally { connection.close(); }
+});
+
+test('VAT migration adds nullable metadata without changing historical invoice totals', () => {
+  const connection = new Database(':memory:');
+  try {
+    connection.exec(initialSchema);
+    connection.exec('ALTER TABLE invoices DROP COLUMN vat_rate_percent; ALTER TABLE invoices DROP COLUMN vat_net_amount; ALTER TABLE invoices DROP COLUMN vat_amount;');
+    connection.exec("INSERT INTO clients(id,name) VALUES(1,'Old'); INSERT INTO companies(id,client_id,name) VALUES(1,1,'Old'); INSERT INTO stores(id,company_id,name) VALUES(1,1,'Old'); INSERT INTO invoices(id,store_id,invoice_number,invoice_date,total_amount) VALUES(1,1,'OLD-1','2026-09-01',18.25);");
+    ensureOneOffInvoiceVatSchema(connection);
+    ensureOneOffInvoiceVatSchema(connection);
+    assert.deepEqual(connection.prepare('SELECT total_amount,vat_rate_percent,vat_net_amount,vat_amount FROM invoices WHERE id=1').get(),
+      { total_amount: 18.25, vat_rate_percent: null, vat_net_amount: null, vat_amount: null });
+  } finally { connection.close(); }
+});
+
+test('one-off VAT persistence failure rolls back customer, invoice, and issuer number', () => {
+  const { connection, goodnessId } = fixture();
+  try {
+    const before = connection.prepare('SELECT next_invoice_number FROM billing_issuers WHERE id=?').get(goodnessId);
+    connection.exec("CREATE TRIGGER reject_one_off_vat BEFORE UPDATE OF vat_rate_percent ON invoices WHEN NEW.vat_rate_percent=20 BEGIN SELECT RAISE(ABORT, 'VAT save unavailable'); END;");
+    assert.throws(() => createManualInvoiceTransaction(connection, {
+      invoiceDate: '2026-09-24', issuerId: goodnessId, vatRatePercent: 20,
+      oneOffCustomer: { name: 'Rolled back buyer' }, items: [{ productName: 'Machine', quantity: 1, unitPrice: 100 }],
+    }), /VAT save unavailable/);
+    assert.deepEqual(connection.prepare('SELECT next_invoice_number FROM billing_issuers WHERE id=?').get(goodnessId), before);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS n FROM invoices').get() as any).n, 0);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS n FROM companies WHERE is_one_off=1').get() as any).n, 0);
+    assert.equal((connection.prepare('SELECT COUNT(*) AS n FROM clients WHERE is_one_off=1').get() as any).n, 0);
   } finally { connection.close(); }
 });
 

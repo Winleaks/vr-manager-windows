@@ -14,6 +14,8 @@ export function paymentReport(db: Database.Database, from: string, to: string) {
   const { start, end } = reportPeriod(from, to);
   return db.prepare(`SELECT p.*, c.name AS company_name, s.name AS store_name,
     i.invoice_number, bi.legal_name AS issuer_name,
+    (SELECT COALESCE(MAX(a.id), 0) FROM billing_audit_events a
+      WHERE a.event_type = 'payment_updated' AND json_extract(a.details, '$.paymentId') = p.id) AS edit_revision,
     (SELECT GROUP_CONCAT(name, ' ') FROM stores WHERE company_id = c.id) AS company_stores
     FROM payments p JOIN companies c ON c.id = p.company_id
     LEFT JOIN invoices i ON i.id = p.invoice_id LEFT JOIN stores s ON s.id = i.store_id

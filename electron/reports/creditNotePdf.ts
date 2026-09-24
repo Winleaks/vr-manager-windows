@@ -69,7 +69,7 @@ export function generateCreditNotePdf(note: any): Uint8Array {
   }
   doc.setFont('Arial', 'normal'); doc.setFontSize(9); doc.setTextColor(71, 85, 105);
   doc.text(`Credited subtotal: ${money(note.net_amount)}`, 196, y, { align: 'right' });
-  doc.text(issuer.vatRegistered ? `VAT credited (0%): ${money(note.vat_amount)}` : 'Issuer not VAT registered', 196, y + 6, { align: 'right' });
+  doc.text(issuer.vatRegistered ? `VAT credited: ${money(note.vat_amount)}` : 'Issuer not VAT registered', 196, y + 6, { align: 'right' });
   doc.setFont('Arial', 'bold'); doc.setTextColor(15, 23, 42); doc.setFontSize(12); doc.text(`TOTAL CREDITED: ${money(note.total_amount)}`, 196, y + 14, { align: 'right' });
   doc.setFont('Arial', 'normal'); doc.setFontSize(8); doc.setTextColor(71, 85, 105);
   doc.text('This document adjusts the original invoices listed above. Keep it with the source documents.', 14, y + 26, { maxWidth: 182 });

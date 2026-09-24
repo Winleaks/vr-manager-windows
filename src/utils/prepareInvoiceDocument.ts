@@ -20,7 +20,8 @@ export async function prepareInvoiceDocument(invoiceId: number, uploadCloud = fa
         address: invoice.company_address || invoice.store_address,
       },
       store: { name: invoice.store_name, address: invoice.store_address, postcode: invoice.store_postcode, phone: invoice.store_phone },
-      items: invoice.items, totalAmount: invoice.total_amount, accountOutstanding: invoice.accountOutstanding,
+      items: invoice.items, totalAmount: invoice.total_amount, vatRatePercent: invoice.vat_rate_percent,
+      vatNetAmount: invoice.vat_net_amount, vatAmount: invoice.vat_amount, accountOutstanding: invoice.accountOutstanding,
     },
   );
   const local = await api.system.savePdfAuto({ invoiceId, buffer });
