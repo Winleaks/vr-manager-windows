@@ -8,6 +8,7 @@ export type CloudSyncHealth = 'disconnected' | 'healthy' | 'stale' | 'error';
 export interface UploadedFileMetadata {
   id?: string | null;
   name?: string | null;
+  mimeType?: string | null;
   parents?: string[] | null;
   modifiedTime?: string | null;
   md5Checksum?: string | null;

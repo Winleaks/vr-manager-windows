@@ -3,8 +3,10 @@ import { moneyInPence } from '../database/billingPublication.ts';
 import type { ProtectedInvoice, ProtectedRegistryVault } from './types.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DRIVE_FILE_ID = /^[A-Za-z0-9_-]{10,200}$/;
 const MAX_PLATFORM_REVISION = 9_007_199_254_740_991;
 const PROTECTED_ID_DIGITS = 14;
+const CLIENT_DOCUMENT_REVISION_OFFSET = 1000;
 
 export interface ProtectedBillingDelivery {
   source_id: string;
@@ -22,7 +24,7 @@ export interface ProtectedBillingDelivery {
     applied_credit: number;
     outstanding: number;
     cancelled: boolean;
-    drive_file_id: null;
+    drive_file_id: string | null;
   }>;
   deleted: string[];
 }
@@ -55,8 +57,9 @@ export function protectedBillingRevision(vault: Pick<ProtectedRegistryVault, 're
     throw new Error('Versiunea registrului separat este invalidă.');
   }
   // Wall-clock milliseconds create a namespace far above legacy SQLite queue
-  // revisions. The suffix preserves ordering for serialized same-ms mutations.
-  const revision = updatedAt * 1000 + (vault.revision % 1000);
+  // revisions. The extra offset keeps the client-document snapshot newer than
+  // the metadata-only snapshot published by v0.1.119 for the same vault.
+  const revision = updatedAt * 1000 + CLIENT_DOCUMENT_REVISION_OFFSET + (vault.revision % 1000);
   if (!Number.isSafeInteger(revision) || revision < 1 || revision > MAX_PLATFORM_REVISION) {
     throw new Error('Versiunea registrului separat depășește limita platformei.');
   }
@@ -80,7 +83,11 @@ function normalInvoiceTombstones(db: Database.Database, companyId: number) {
   return [...ids].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
 }
 
-export function prepareProtectedBillingDeliveries(db: Database.Database, vault: ProtectedRegistryVault): ProtectedBillingDelivery[] {
+export function prepareProtectedBillingDeliveries(
+  db: Database.Database,
+  vault: ProtectedRegistryVault,
+  documentFileIds: ReadonlyMap<string, string> = new Map(),
+): ProtectedBillingDelivery[] {
   if (vault.mode !== 'live') return [];
   const identity = db.prepare('SELECT source_id FROM billing_publication_identity WHERE id=1').get() as { source_id: string } | undefined;
   if (!identity || !UUID.test(identity.source_id)) throw new Error('Identitatea Writer pentru publicare este invalidă.');
@@ -106,6 +113,8 @@ export function prepareProtectedBillingDeliveries(db: Database.Database, vault: 
         const applied = moneyInPence(appliedCredit(vault, invoice.id));
         if (paid > total || credited > total || applied > total) throw new Error('Decontarea unei facturi din registrul separat este invalidă.');
         const cancelled = invoice.status === 'cancelled';
+        const documentFileId = cancelled ? null : documentFileIds.get(invoice.id) || null;
+        if (documentFileId && !DRIVE_FILE_ID.test(documentFileId)) throw new Error('Identitatea PDF-ului pentru portal este invalidă.');
         return {
           id: protectedBillingInvoiceId(invoice),
           store_id: invoice.storeExternalId,
@@ -117,9 +126,9 @@ export function prepareProtectedBillingDeliveries(db: Database.Database, vault: 
           applied_credit: applied,
           outstanding: cancelled ? 0 : Math.max(0, total - paid - credited - applied),
           cancelled,
-          // This change only mirrors invoice metadata and balance. Protected
-          // Drive folders and their download permissions remain untouched.
-          drive_file_id: null,
+          // The portal copy lives in the existing client-download tree. The
+          // authoritative PDF under Duplicat remains untouched and private.
+          drive_file_id: documentFileId,
         };
       });
     const credit = moneyInPence(vault.creditEntries
@@ -137,8 +146,13 @@ export function prepareProtectedBillingDeliveries(db: Database.Database, vault: 
   return deliveries;
 }
 
-export async function publishProtectedBillingVault(db: Database.Database, vault: ProtectedRegistryVault, client: BillingPublicationClient) {
-  const deliveries = prepareProtectedBillingDeliveries(db, vault);
+export async function publishProtectedBillingVault(
+  db: Database.Database,
+  vault: ProtectedRegistryVault,
+  client: BillingPublicationClient,
+  documentFileIds: ReadonlyMap<string, string> = new Map(),
+) {
+  const deliveries = prepareProtectedBillingDeliveries(db, vault, documentFileIds);
   if (!deliveries.length) return { published: 0, skipped: true };
   const control = await client.request<{ sync_enabled: boolean; protocol_version?: number }>('billing.status');
   if (!control.sync_enabled) return { published: 0, skipped: true };

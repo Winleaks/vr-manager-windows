@@ -12,7 +12,7 @@ function harness() {
   const code = source.slice(source.indexOf('async function fetchUploadedMetadata'), source.indexOf('export async function saveToCloud')).replaceAll('export ', '');
   const state = { folders: 0, creates: 0, lists: 0, uploads: 0, role: 'writer', corrupt: false, version: '1', tokens: true };
   let bytes = Buffer.from('encrypted fixture');
-  const metadata = () => ({ id: 'file', name: 'fixture.vault', version: state.version, parents: ['folder'], md5Checksum: state.corrupt ? 'wrong' : createHash('md5').update(bytes).digest('hex'), size: String(bytes.length) });
+  const metadata = () => ({ id: 'file', name: 'fixture.vault', mimeType: 'application/octet-stream', version: state.version, parents: ['folder'], md5Checksum: state.corrupt ? 'wrong' : createHash('md5').update(bytes).digest('hex'), size: String(bytes.length) });
   const drive = { files: {
     list: async () => { state.lists++; return { data: { files: [metadata()] } }; },
     get: async (args: any) => ({ data: args.alt === 'media' ? bytes : metadata() }),
@@ -31,8 +31,9 @@ function harness() {
   const compiled = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
   const api = new Function(...Object.keys(bindings), compiled + '\nreturn {readVerifiedPrivateCloudFile, writeVerifiedPrivateCloudFile, readProtectedViewerVault};')(...Object.values(bindings));
   const read = () => api.readVerifiedPrivateCloudFile(['Duplicat'], 'fixture.vault');
-  const write = (expectedVersion: string) => api.writeVerifiedPrivateCloudFile({ folderNames: ['Duplicat'], filename: 'fixture.vault', mimeType: 'application/octet-stream', buffer: Buffer.from('next encrypted fixture'), expectedVersion });
-  return { state, oauth2Client, read, write, readViewer: () => api.readProtectedViewerVault() };
+  const write = (expectedVersion: string) => api.writeVerifiedPrivateCloudFile({ folderNames: ['Duplicat'], filename: 'fixture.vault', mimeType: 'application/octet-stream', buffer: Buffer.from(`next encrypted fixture ${expectedVersion}`), expectedVersion });
+  const writeSame = (expectedVersion: string) => api.writeVerifiedPrivateCloudFile({ folderNames: ['Duplicat'], filename: 'fixture.vault', mimeType: 'application/octet-stream', buffer: Buffer.from(bytes), expectedVersion });
+  return { state, oauth2Client, read, write, writeSame, readViewer: () => api.readProtectedViewerVault() };
 }
 
 test('Viewer reads the fixed encrypted vault without creating folders or uploading, and cannot use Writer primitives', async () => {
@@ -56,6 +57,14 @@ test('real private Drive adapter resolves folders once per operation, but reads 
   assert.equal(h.state.uploads, 3);
   await withPrivateCloudOperation(() => h.read());
   assert.equal(h.state.folders, 4, 'no folder IDs carried into the next operation');
+});
+
+test('verified private Drive upload reuses an identical file without rewriting it', async () => {
+  const h = harness();
+  const result = await h.writeSame('1');
+  assert.equal(result.fileId, 'file');
+  assert.equal(h.state.uploads, 0);
+  assert.equal(h.state.lists, 1);
 });
 
 test('private Drive retains version/checksum/Writer guards and isolates changed accounts', async () => {

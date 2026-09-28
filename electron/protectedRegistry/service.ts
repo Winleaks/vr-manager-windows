@@ -6,7 +6,7 @@ import { applyProtectedInvoiceEdit, protectedInvoiceEditBlock, protectedInvoiceE
 import type { ProtectedInvoiceEditInput } from '../../src/shared/protectedInvoiceEdit.ts';
 import { protectedInvoiceOutstanding } from './invoiceOutstanding.ts';
 import { protectedPaymentDisplay } from './paymentDisplay.ts';
-import { publishProtectedBillingVault, queueNormalPublicationAfterProtected } from './billingPublication.ts';
+import { prepareProtectedBillingDeliveries, publishProtectedBillingVault, queueNormalPublicationAfterProtected } from './billingPublication.ts';
 import { protectedRegistryOverview } from './overview.ts';
 import { applyAutomaticProtectedCredit } from './automaticCredit.ts';
 import { localInvoiceCatalog, priceInvoiceCatalog } from '../integrations/invoiceCatalogPricing.ts';
@@ -37,7 +37,7 @@ import { requirePositiveInteger, requireText } from '../database/businessValidat
 import { aggregateWeeklyOrders } from '../integrations/weeklyInvoiceImport.ts';
 import { createVrBakerClient } from '../integrations/vrBakerIntegration.ts';
 import * as billingRepo from '../database/repositories/billingRepo.ts';
-import { protectedCloudDocumentFolders } from '../reports/clientDocumentStorage.ts';
+import { normalCloudDocumentFolders, protectedCloudDocumentFolders } from '../reports/clientDocumentStorage.ts';
 import {
   createPinVerifier,
   decryptVault,
@@ -152,7 +152,19 @@ async function publishProtectedBilling() {
       return loadVaultFromCloud(key);
     }));
     if (!latest || getDeviceRole() !== 'writer' || protectedOutbox.hasPending()) return;
-    await publishProtectedBillingVault(db, latest.vault, createVrBakerClient());
+    // Validate every company/store association before creating client-facing
+    // document copies. A broken mapping must never place a PDF in the portal.
+    prepareProtectedBillingDeliveries(db, latest.vault);
+    const assigned = new Set(latest.vault.assignments
+      .map((entry) => entry.companyKey)
+      .filter((key) => key.startsWith('vrbaker:')));
+    const documentFileIds = new Map<string, string>();
+    for (const invoice of latest.vault.invoices) {
+      if (invoice.testDocument || invoice.status === 'cancelled' || !assigned.has(invoice.companyKey)) continue;
+      const fileId = await uploadProtectedClientInvoicePdf(invoice, latest.vault, latest.cloudScope);
+      documentFileIds.set(invoice.id, fileId);
+    }
+    await publishProtectedBillingVault(db, latest.vault, createVrBakerClient(), documentFileIds);
   } catch {
     // The encrypted vault and PDF synchronization are authoritative and must
     // never fail because the read-only client mirror is temporarily offline.
@@ -1162,6 +1174,22 @@ async function uploadProtectedInvoicePdf(invoice: ProtectedInvoice, vault: Prote
   const folderNames = protectedCloudDocumentFolders(invoice.companyName, 'Facturi');
   await writeVerifiedPrivateCloudFile({ folderNames, filename, mimeType: 'application/pdf', buffer, accountScope });
   return { filename, folder: folderNames.join('/') };
+}
+
+async function uploadProtectedClientInvoicePdf(invoice: ProtectedInvoice, vault: ProtectedRegistryVault, accountScope?: string) {
+  assertWriter();
+  if (invoice.testDocument || invoice.status === 'cancelled') throw new Error('Factura nu poate fi publicată în portal.');
+  const buffer = renderProtectedInvoicePdf(invoice, vault);
+  const filename = `Invoice_${invoice.reference}.pdf`;
+  const result = await writeVerifiedPrivateCloudFile({
+    folderNames: normalCloudDocumentFolders(invoice.companyName, 'Facturi'),
+    filename,
+    mimeType: 'application/pdf',
+    buffer,
+    accountScope,
+  });
+  if (!result.fileId) throw new Error('Google Drive nu a confirmat PDF-ul destinat portalului.');
+  return result.fileId;
 }
 
 function protectedDocumentFolders(type: 'invoice' | 'credit-note', record: ProtectedInvoice | ProtectedCreditNote) {

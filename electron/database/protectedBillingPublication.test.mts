@@ -49,7 +49,9 @@ function fixture() {
 test('protected live registry publishes only client-safe invoice metadata and balance', () => {
   const { db, vault, invoice } = fixture();
   try {
-    const [delivery] = prepareProtectedBillingDeliveries(db, vault);
+    const metadataOnlyRevision = Date.parse(vault.updatedAt) * 1000 + (vault.revision % 1000);
+    assert.ok(protectedBillingRevision(vault) > metadataOnlyRevision, 'document publication must supersede v0.1.119 metadata');
+    const [delivery] = prepareProtectedBillingDeliveries(db, vault, new Map([[invoice.id, 'protected_portal_pdf_123']]));
     assert.equal(delivery.company_id, company);
     assert.equal(delivery.source_id, source);
     assert.equal(delivery.revision, protectedBillingRevision(vault));
@@ -59,7 +61,7 @@ test('protected live registry publishes only client-safe invoice metadata and ba
     assert.deepEqual(delivery.invoices[0], {
       id: protectedBillingInvoiceId(invoice), store_id: store, number: 'TGBL-2930', date: '2026-09-28',
       total: 10000, paid: 2000, credited: 1000, applied_credit: 500, outstanding: 6500,
-      cancelled: false, drive_file_id: null,
+      cancelled: false, drive_file_id: 'protected_portal_pdf_123',
     });
     assert.ok(!JSON.stringify(delivery).includes('items'));
     assert.ok(!JSON.stringify(delivery).includes('companySnapshot'));
@@ -90,7 +92,7 @@ test('protected publication keeps every company and store strictly isolated', ()
 });
 
 test('test registry never reaches the platform; live publication uses existing idempotent protocol', async () => {
-  const { db, vault } = fixture();
+  const { db, vault, invoice } = fixture();
   const calls: Array<{ action: string; payload: any; key?: string }> = [];
   const client = { request: async (action: string, payload?: any, key?: string) => {
     calls.push({ action, payload, key });
@@ -102,10 +104,21 @@ test('test registry never reaches the platform; live publication uses existing i
     assert.deepEqual(await publishProtectedBillingVault(db, vault, client), { published: 0, skipped: true });
     assert.equal(calls.length, 0);
     vault.mode = 'live';
-    assert.deepEqual(await publishProtectedBillingVault(db, vault, client), { published: 1, skipped: false });
+    assert.deepEqual(await publishProtectedBillingVault(db, vault, client, new Map([[invoice.id, 'protected_portal_pdf_123']])), { published: 1, skipped: false });
     assert.deepEqual(calls.map(call => call.action), ['billing.status', 'billing.stage', 'billing.commit']);
     assert.match(calls[1].key || '', /:protected:/);
-    assert.equal(calls[1].payload.invoices[0].drive_file_id, null);
+    assert.equal(calls[1].payload.invoices[0].drive_file_id, 'protected_portal_pdf_123');
+  } finally { db.close(); }
+});
+
+test('portal PDF references are allowlisted and cancelled invoices never expose a document', () => {
+  const { db, vault, invoice } = fixture();
+  try {
+    assert.throws(() => prepareProtectedBillingDeliveries(db, vault, new Map([[invoice.id, '../private.pdf']])), /Identitatea PDF-ului/);
+    invoice.status = 'cancelled';
+    const [delivery] = prepareProtectedBillingDeliveries(db, vault, new Map([[invoice.id, 'protected_portal_pdf_123']]));
+    assert.equal(delivery.invoices[0].drive_file_id, null);
+    assert.equal(delivery.invoices[0].outstanding, 0);
   } finally { db.close(); }
 });
 

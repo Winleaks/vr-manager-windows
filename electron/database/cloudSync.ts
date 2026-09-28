@@ -547,7 +547,7 @@ async function findFileForUpload(drive: any, filename: string, parentId: string)
 async function fetchUploadedMetadata(drive: any, fileId: string): Promise<UploadedFileMetadata> {
   const response = await drive.files.get({
     fileId,
-    fields: 'id,name,parents,modifiedTime,md5Checksum,size',
+    fields: 'id,name,mimeType,parents,modifiedTime,md5Checksum,size',
   }, documentRequestOptions);
   return response.data;
 }
@@ -565,6 +565,17 @@ async function uploadVerifiedBuffer(
   if (input.expectedFileId && existing?.id !== input.expectedFileId) throw Error('Registrul a fost modificat: destinația Drive nu mai corespunde salvării temporare.');
   if (input.expectedVersion !== undefined && (existing?.version || null) !== input.expectedVersion) {
     throw new Error('Registrul a fost modificat în Google Drive de o altă operație. Reîncarcă înainte de a continua.');
+  }
+  if (existing?.id && existing.name === input.filename && existing.mimeType === input.mimeType
+    && existing.parents?.includes(input.parentId)
+    && existing.md5Checksum?.toLowerCase() === expectedMd5.toLowerCase()
+    && Number(existing.size) === expectedSize) {
+    return assertUploadedFileMatches(existing, {
+      name: input.filename,
+      parentId: input.parentId,
+      md5Checksum: expectedMd5,
+      size: expectedSize,
+    });
   }
   let fileId: string;
 
@@ -649,7 +660,7 @@ async function findExactCloudFile(drive: any, parentId: string, filename: string
     q: `name='${escapeDriveQueryValue(filename)}' and '${parentId}' in parents and trashed=false`,
     orderBy: 'modifiedTime desc',
     pageSize: 2,
-    fields: 'files(id,name,version,modifiedTime,md5Checksum,size,parents),nextPageToken',
+    fields: 'files(id,name,mimeType,version,modifiedTime,md5Checksum,size,parents),nextPageToken',
   });
   if ((response.data.files?.length || 0) > 1 || response.data.nextPageToken) throw new InvoiceDriveDocumentError('Există mai multe PDF-uri sau fișiere cu același nume în folderul Drive. Rezolvă duplicatele înainte de încărcare.');
   return response.data.files?.[0] || null;
