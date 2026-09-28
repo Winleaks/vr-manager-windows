@@ -2,7 +2,7 @@ import { confirmAction, notify } from '../utils/feedback';
 import { useState, useEffect, useCallback } from 'react';
 import { 
   Receipt, Search, Edit3, Trash2, FilePlus2,
-  CheckCircle2, Clock, AlertCircle, Building2, Store, FileText, Loader2, RefreshCw, FileMinus2
+  CheckCircle2, Clock, AlertCircle, Building2, Store, FileText, Loader2, RefreshCw, FileMinus2, Banknote
 } from 'lucide-react';
 import { api } from '../shared/api';
 import DatePicker from 'react-datepicker';
@@ -13,6 +13,7 @@ import { prepareInvoiceDocument } from '../utils/prepareInvoiceDocument';
 import { InvoiceEditorModal } from '../components/InvoiceEditorModal';
 import { TextConfirmationModal } from '../components/TextConfirmationModal';
 import { InvoiceDocumentActions } from '../components/InvoiceDocumentActions';
+import { InvoicePaymentModal } from '../components/InvoicePaymentModal';
 import { useNavigationState } from '../hooks/navigationMemory';
 
 interface InvoiceItem {
@@ -31,6 +32,7 @@ interface Invoice {
   replacement_reference?: string;
   replaced_by_invoice_id?: number;
   id: number;
+  company_id: number;
   store_id: number;
   invoice_number: string;
   invoice_date: string;
@@ -83,6 +85,7 @@ export function BillingInvoices() {
 
   // Modal editare
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
+  const [paymentInvoice, setPaymentInvoice] = useState<Invoice | null>(null);
   const [generatingPdfId, setGeneratingPdfId] = useState<number | null>(null);
 
   const loadInvoices = useCallback(async () => {
@@ -367,6 +370,13 @@ export function BillingInvoices() {
                             preparePdf={() => prepareInvoicePdf(inv)}
                           />}
                           {!isCancelled && Number(inv.creditedAmount || 0) < inv.total_amount - 0.005 && <button onClick={() => { window.location.hash = `/facturare/credit-notes?invoice=${inv.id}`; }} className="p-2 text-amber-700 hover:bg-amber-50 rounded-lg" title="Creează Credit Note"><FileMinus2 size={16} /></button>}
+                          {isWriter && !isCancelled && Number(inv.outstanding || 0) > 0.005 && <button
+                            type="button"
+                            onClick={() => setPaymentInvoice(inv)}
+                            className="rounded-lg p-2 text-emerald-700 transition-colors hover:bg-emerald-50"
+                            title="Înregistrează plata"
+                            aria-label={`Înregistrează plata pentru factura ${inv.invoice_number}`}
+                          ><Banknote size={16} aria-hidden="true" /></button>}
 
                           {/* Editează */}
                           {!isCancelled && Number(inv.creditedAmount || 0) <= 0.005 && Number(inv.appliedCredit || 0) <= 0.005 && <button
@@ -409,6 +419,17 @@ export function BillingInvoices() {
           setEditingInvoice(null);
           setInvoiceNotice(message);
           void loadInvoices();
+        }}
+      />}
+
+      {paymentInvoice && <InvoicePaymentModal
+        key={paymentInvoice.id}
+        invoice={paymentInvoice}
+        onClose={() => setPaymentInvoice(null)}
+        onSaved={async () => {
+          setPaymentInvoice(null);
+          setInvoiceNotice(`Încasarea pentru factura #${paymentInvoice.invoice_number} a fost salvată. Soldul și statusul au fost recalculate.`);
+          await loadInvoices();
         }}
       />}
 
