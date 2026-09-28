@@ -1,3 +1,11 @@
+### VR - Hub Management v0.1.119
+
+- Facturile și soldurile companiilor din registrul separat apar în „Invoices & Balance” din contul clientului după sincronizarea Writer-ului. Fiecare client primește exclusiv facturile companiei și magazinelor asociate contului său.
+- Registrul separat rămâne sursa autoritară pentru facturi, încasări, Credit Notes și credit. Platforma primește numai datele financiare necesare afișării; nu modifică registrul separat și nu primește pozițiile facturilor sau alte detalii protejate.
+- Publicarea este disponibilă numai pe Writer și numai în modul live. Modul de test nu publică nimic, iar o întrerupere a platformei nu blochează salvarea criptată în Drive; aceeași versiune este reîncercată idempotent.
+- PDF-urile registrului separat și permisiunile folderelor Drive nu sunt schimbate. În această versiune, pagina clientului afișează numărul, data, totalul, plățile, creditul și restul de plată, fără descărcarea PDF-ului protejat.
+- Nu există migrare de bază de date sau modificare a valorilor financiare existente. Actualizează Writer-ul, deschide registrul separat și apoi reîncarcă pagina clientului după sincronizare.
+
 ### VR - Hub Management v0.1.118
 
 - Writer poate șterge încasările introduse greșit din Istoric Plăți și din profilul clientului. Ștergerea recalculează atomic soldul facturii și al clientului, păstrează auditul și refuză creditele deja consumate ori datele modificate între timp.

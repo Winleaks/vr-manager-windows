@@ -22,7 +22,7 @@ import { checkForUpdates, initializeUpdater } from './updater/updateCoordinator'
 import { cashRepo } from './database/repositories/cashRepo'
 import { millisecondsUntilNextLocalMidnight } from './database/cashDayRollover'
 import { runStartupCashReconciliation } from './startupCashReconciliation'
-import { cleanupStaleProtectedRegistryTemporaryFiles, lockAllProtectedRegistrySessions, stopProtectedRegistrySync } from './protectedRegistry/service'
+import { cleanupStaleProtectedRegistryTemporaryFiles, lockAllProtectedRegistrySessions, startProtectedBillingPublisher, stopProtectedRegistrySync } from './protectedRegistry/service'
 import { cleanupStaleWindowsShareSnapshots } from './reports/windowsShareSnapshot'
 
 const DIST_PATH = path.join(__dirname, '../dist')
@@ -142,6 +142,7 @@ app.whenReady().then(async () => {
   })
   initDb()
   startBillingPublisher()
+  startProtectedBillingPublisher()
   startDocumentSync()
   if (getDeviceRole() === 'writer') {
     try {

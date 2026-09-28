@@ -47,6 +47,7 @@ import {
   recoverProtectedRegistry,
   setProtectedRegistryAssignment,
   setProtectedRegistryMode,
+  scheduleProtectedBillingPublication,
   touchProtectedRegistrySession,
   unlockProtectedRegistry,
 } from '../protectedRegistry/service.ts';
@@ -64,7 +65,11 @@ export function registerProtectedRegistryHandlers() {
   handleTrustedIpc('protectedRegistry:changeInvoiceIssuer', (event, data: InvoiceIssuerChangeInput<string>) => changeProtectedInvoiceIssuer(event.sender.id, data));
   handleTrustedIpc('protectedRegistry:status', (event) => protectedRegistryStatus(event.sender.id));
   handleTrustedIpc('protectedRegistry:configure', (event, data) => configureProtectedRegistry(event.sender.id, data?.pin, data?.pinConfirmation));
-  handleTrustedIpc('protectedRegistry:unlock', (event, pin) => unlockProtectedRegistry(event.sender.id, pin));
+  handleTrustedIpc('protectedRegistry:unlock', async (event, pin) => {
+    const result = await unlockProtectedRegistry(event.sender.id, pin);
+    scheduleProtectedBillingPublication();
+    return result;
+  });
   handleTrustedIpc('protectedRegistry:lock', (event) => lockProtectedRegistry(event.sender.id));
   handleTrustedIpc('protectedRegistry:touch', (event) => touchProtectedRegistrySession(event.sender.id));
   handleTrustedIpc('protectedRegistry:recover', (event, data) => recoverProtectedRegistry(event.sender.id, data?.recoveryKey, data?.newPin, data?.newPinConfirmation));
@@ -72,8 +77,16 @@ export function registerProtectedRegistryHandlers() {
   handleTrustedIpc('protectedRegistry:rotateRecoveryKey', (event, data) => rotateProtectedRecoveryKey(event.sender.id, data?.currentPin, data?.confirmed));
   handleTrustedIpc('protectedRegistry:getOverview', (event, data) => getProtectedRegistryOverview(event.sender.id, data?.from, data?.to));
   handleTrustedIpc('protectedRegistry:getCompanies', (event) => listProtectedRegistryCompanies(event.sender.id));
-  handleTrustedIpc('protectedRegistry:setAssignment', (event, data) => setProtectedRegistryAssignment(event.sender.id, data?.companyId, data?.assigned, data?.operationId));
-  handleTrustedIpc('protectedRegistry:setMode', (event, data) => setProtectedRegistryMode(event.sender.id, data?.mode, data?.confirmation, data?.operationId));
+  handleTrustedIpc('protectedRegistry:setAssignment', async (event, data) => {
+    const result = await setProtectedRegistryAssignment(event.sender.id, data?.companyId, data?.assigned, data?.operationId);
+    scheduleProtectedBillingPublication();
+    return result;
+  });
+  handleTrustedIpc('protectedRegistry:setMode', async (event, data) => {
+    const result = await setProtectedRegistryMode(event.sender.id, data?.mode, data?.confirmation, data?.operationId);
+    scheduleProtectedBillingPublication();
+    return result;
+  });
   handleTrustedIpc('protectedRegistry:clearTestFinancialData', (event, data) => clearProtectedRegistryTestFinancialData(event.sender.id, data?.confirmation, data?.operationId));
   handleTrustedIpc('protectedRegistry:previewWeekly', (event, startDate, endDate) => previewProtectedWeeklyInvoices(event.sender.id, startDate, endDate));
   handleTrustedIpc('protectedRegistry:createWeekly', (event, data) => createProtectedWeeklyInvoices(event.sender.id, data?.startDate, data?.endDate, data?.storeExternalIds, data?.operationId));

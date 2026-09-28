@@ -124,8 +124,11 @@ export class ProtectedOutboxWorker {
   private lastError: string | null = null;
   private readonly store: ProtectedOutboxStore;
   private readonly commit: (value: PendingProtectedSave) => Promise<void>;
+  private readonly onAcknowledged?: (value: PendingProtectedSave) => void;
   private stopped = false;
-  constructor(store: ProtectedOutboxStore, commit: (value: PendingProtectedSave) => Promise<void>) { this.store = store; this.commit = commit; }
+  constructor(store: ProtectedOutboxStore, commit: (value: PendingProtectedSave) => Promise<void>, onAcknowledged?: (value: PendingProtectedSave) => void) {
+    this.store = store; this.commit = commit; this.onAcknowledged = onAcknowledged;
+  }
   stop() { this.stopped = true; if (this.timer) clearTimeout(this.timer); this.timer = null; }
   status(): ProtectedSyncStatus {
     const pending = this.store.count();
@@ -158,6 +161,7 @@ export class ProtectedOutboxWorker {
         if (!entry) break;
         await this.commit(entry.value);
         this.store.acknowledge(entry.name);
+        try { this.onAcknowledged?.(entry.value); } catch {}
       }
       this.failures = 0;
       this.lastError = null;

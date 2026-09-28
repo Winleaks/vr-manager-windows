@@ -6,6 +6,7 @@ import { applyProtectedInvoiceEdit, protectedInvoiceEditBlock, protectedInvoiceE
 import type { ProtectedInvoiceEditInput } from '../../src/shared/protectedInvoiceEdit.ts';
 import { protectedInvoiceOutstanding } from './invoiceOutstanding.ts';
 import { protectedPaymentDisplay } from './paymentDisplay.ts';
+import { publishProtectedBillingVault, queueNormalPublicationAfterProtected } from './billingPublication.ts';
 import { protectedRegistryOverview } from './overview.ts';
 import { applyAutomaticProtectedCredit } from './automaticCredit.ts';
 import { localInvoiceCatalog, priceInvoiceCatalog } from '../integrations/invoiceCatalogPricing.ts';
@@ -115,7 +116,11 @@ const sessionTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const recoveryRotations = new Set<number>();
 let routingOperationQueue: Promise<void> = Promise.resolve();
 const protectedOutbox = new ProtectedOutboxStore(path.join(app.getPath('userData'), 'protected-pending-v1'), keyBuffer);
-const protectedUploader = new ProtectedOutboxWorker(protectedOutbox, commitPendingProtectedSave);
+const protectedUploader = new ProtectedOutboxWorker(protectedOutbox, commitPendingProtectedSave, () => scheduleProtectedBillingPublication());
+let protectedBillingPublishing = false;
+let protectedBillingQueued = false;
+let protectedBillingTimer: ReturnType<typeof setInterval> | null = null;
+let protectedBillingDebounce: ReturnType<typeof setTimeout> | null = null;
 const deferredEvents = new Set([
   'protected_invoice_batch_issued', 'protected_manual_invoice_issued', 'protected_invoice_updated',
   'protected_invoice_issuer_changed', 'protected_invoice_cancelled', 'protected_invoice_reissued',
@@ -123,7 +128,62 @@ const deferredEvents = new Set([
   'protected_credit_note_issued', 'protected_credit_note_cancelled',
 ]);
 
-export function stopProtectedRegistrySync() { protectedUploader.stop(); }
+export function stopProtectedRegistrySync() {
+  protectedUploader.stop();
+  if (protectedBillingTimer) clearInterval(protectedBillingTimer);
+  if (protectedBillingDebounce) clearTimeout(protectedBillingDebounce);
+  protectedBillingTimer = null;
+  protectedBillingDebounce = null;
+  protectedBillingQueued = false;
+}
+
+async function publishProtectedBilling() {
+  if (protectedBillingPublishing || getDeviceRole() !== 'writer' || !isProtectedRegistryEnabled()) {
+    if (protectedBillingPublishing) protectedBillingQueued = true;
+    return;
+  }
+  protectedBillingPublishing = true;
+  try {
+    if (protectedOutbox.hasPending()) return;
+    const latest = await withRegistryRoutingLock(() => withPrivateCloudOperation(async () => {
+      if (protectedOutbox.hasPending()) return null;
+      const key = keyBuffer();
+      await reconcilePending(key);
+      return loadVaultFromCloud(key);
+    }));
+    if (!latest || getDeviceRole() !== 'writer' || protectedOutbox.hasPending()) return;
+    await publishProtectedBillingVault(db, latest.vault, createVrBakerClient());
+  } catch {
+    // The encrypted vault and PDF synchronization are authoritative and must
+    // never fail because the read-only client mirror is temporarily offline.
+    // The same immutable revision is retried on the next schedule.
+  } finally {
+    protectedBillingPublishing = false;
+    if (protectedBillingQueued) {
+      protectedBillingQueued = false;
+      scheduleProtectedBillingPublication();
+    }
+  }
+}
+
+export function scheduleProtectedBillingPublication() {
+  if (getDeviceRole() !== 'writer') return;
+  protectedBillingQueued = true;
+  if (protectedBillingDebounce) return;
+  protectedBillingDebounce = setTimeout(() => {
+    protectedBillingDebounce = null;
+    protectedBillingQueued = false;
+    void publishProtectedBilling();
+  }, 250);
+  protectedBillingDebounce.unref();
+}
+
+export function startProtectedBillingPublisher() {
+  if (getDeviceRole() !== 'writer' || protectedBillingTimer) return;
+  scheduleProtectedBillingPublication();
+  protectedBillingTimer = setInterval(scheduleProtectedBillingPublication, 300000);
+  protectedBillingTimer.unref();
+}
 
 function assertProtectedCloudSettled() {
   if (protectedOutbox.hasPending()) throw Error('Registrul are salvări în curs. Așteaptă confirmarea sincronizării înainte de această operațiune.');
@@ -147,7 +207,7 @@ export async function retryProtectedRegistrySync(webContentsId: number) {
 }
 
 async function commitPendingProtectedSave(pending: PendingProtectedSave) {
-  return withPrivateCloudOperation(async () => {
+  await withPrivateCloudOperation(async () => {
     await initializeProtectedCloudScope();
     const assertScope = () => {
       assertWriter();
@@ -812,6 +872,9 @@ export async function setProtectedRegistryAssignment(webContentsId: number, comp
     const assignedKeys = new Set(committed.assignments.map(entry => entry.companyKey));
     const companies = db.prepare('SELECT id,supabase_company_id FROM companies').all() as Array<{ id: number; supabase_company_id: string | null }>;
     replaceNormalBillingVisibility(db, companies.filter(company => assignedKeys.has(companyKey(company))).map(company => company.id));
+    // `typeof` keeps the isolated legacy service harness independent from the
+    // platform mirror adapter while the packaged app always has the import.
+    if (!assigned && typeof queueNormalPublicationAfterProtected === 'function') queueNormalPublicationAfterProtected(db, committed, key);
   });
   return { success: true, revision: vault.revision };
 }
