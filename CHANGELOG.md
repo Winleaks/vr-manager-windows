@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.120
+
+- În lista Facturi din registrul normal, Writer are un buton cu icon pentru înregistrarea rapidă a plății. Factura și suma restantă sunt completate automat; se pot alege metoda, banca și data încasării. Facturile anulate sau achitate nu afișează acțiunea.
+- Încasarea actualizează soldurile prin fluxul existent: factura selectată este achitată prima, surplusul merge la alte facturi restante ale aceleiași companii și aceluiași emitent, apoi rămâne credit disponibil.
+- Facturile live din registrul separat primesc o copie PDF verificată pentru descărcare în contul clientului, după sincronizarea Writer-ului. Accesul rămâne limitat la compania clientului; documentele anulate și cele de test nu sunt publicate.
+- Include toate modificările v0.1.119, fără migrare nouă de bază de date. Actualizează mai întâi Writer-ul și deblochează registrul separat pentru sincronizarea PDF-urilor. Datele existente și salvările criptate în așteptare trebuie păstrate.
+
 ### VR - Hub Management v0.1.119
 
 - Facturile și soldurile companiilor din registrul separat apar în „Invoices & Balance” din contul clientului după sincronizarea Writer-ului. Fiecare client primește exclusiv facturile companiei și magazinelor asociate contului său.
