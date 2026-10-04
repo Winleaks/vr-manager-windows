@@ -1,3 +1,4 @@
+import { resolveVrBakerEntities } from '../../integrations/vrBakerEntities';
 import { db } from '../db';
 import { normalBillingReadDatabase } from '../normalBillingVisibility';
 const normalRead = () => normalBillingReadDatabase(db);
@@ -705,6 +706,7 @@ export function syncProductsFromVrBaker(products: VrBakerProduct[]) {
 
 export function syncEntitiesFromVrBaker(companies: VrBakerCompany[], stores: VrBakerStore[], options: {complete?:boolean} = {}) {
   return db.transaction(() => {
+    ({ companies, stores } = resolveVrBakerEntities(companies, stores));
     assertEntitySyncSafe(db,companies,stores,options.complete === true);
     const companyIds = new Map<string, number>();
     for (const company of companies) {

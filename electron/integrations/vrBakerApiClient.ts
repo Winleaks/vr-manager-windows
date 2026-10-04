@@ -1,3 +1,4 @@
+import { resolveVrBakerEntities } from './vrBakerEntities.ts';
 import { randomUUID } from 'crypto';
 
 export const VR_BAKER_API_ENDPOINT = 'https://qcblxsbzopvsgohfghrv.supabase.co/functions/v1/external-api';
@@ -30,6 +31,7 @@ export interface VrBakerStore {
   phone: string;
   routeOrder: number | null;
   zone: VrBakerZone | null;
+  companyId?: string | null;
   company: VrBakerCompany | null;
   platformActive?: boolean;
 }
@@ -186,6 +188,9 @@ function parseZone(value: unknown): VrBakerZone | null {
 
 function parseStore(value: unknown): VrBakerStore {
   const store = requireRecord(value, 'Magazinul VR Baker');
+  const company = parseCompany(store.client_company);
+  const companyId = store.client_company_id == null ? company?.id ?? null : requireUuid(store.client_company_id, 'ID companie magazin');
+  if (company && companyId?.toLowerCase() !== company.id.toLowerCase()) throw new Error('Asocierea companiei magazinului este inconsistentă.');
   return {
     id: requireUuid(store.id, 'ID magazin'),
     name: requireString(store.name, 'Numele magazinului', 300),
@@ -194,7 +199,8 @@ function parseStore(value: unknown): VrBakerStore {
     phone: optionalString(store.phone, 100),
     routeOrder: optionalRouteOrder(store.route_order),
     zone: parseZone(store.zone),
-    company: parseCompany(store.client_company),
+    companyId,
+    company,
     platformActive: typeof store.active === 'boolean' ? store.active : undefined,
   };
 }
@@ -408,7 +414,7 @@ export class VrBakerApiClient {
       const store = parseStore(value);
       if (typeof store.platformActive !== 'boolean') throw new Error('Statutul magazinului VR Baker lipsește. Datele locale au fost păstrate.');
       const raw = requireRecord(value, 'Magazinul');
-      if ((raw.client_company_id == null ? null : requireUuid(raw.client_company_id, 'Compania magazinului').toLowerCase()) !== (store.company?.id.toLowerCase() ?? null)) {
+      if ((raw.client_company_id == null ? null : requireUuid(raw.client_company_id, 'Compania magazinului').toLowerCase()) !== (store.companyId?.toLowerCase() ?? null)) {
         throw new Error('Asocierea magazinului nu poate fi verificată în exportul VR Baker.');
       }
       return store;
@@ -432,7 +438,8 @@ export class VrBakerApiClient {
         seen.add(oldStoreId); merges.push({oldStoreId,storeId});
       }
     }
-    return { companies, stores, merges };
+    const resolved = resolveVrBakerEntities(companies, stores);
+    return { ...resolved, merges };
   }
 
   async fetchStores() {

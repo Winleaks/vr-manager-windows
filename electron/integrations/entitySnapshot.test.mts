@@ -21,7 +21,7 @@ test('old API, empty/truncated exports and count mismatch never permit absence r
 });
 test('duplicate IDs, omitted status and broken company relationship reject snapshot',async()=>{
   for(const [companies,stores] of [[envelope([company,company]),envelope([store])],[envelope([company]),envelope([{...store,active:undefined}])],
-    [envelope([company]),envelope([{...store,client_company:null}])]]){
+    [envelope([company]),envelope([{...store,client_company:null,client_company_id:'33333333-3333-3333-3333-333333333333'}])]]){
     await assert.rejects(client(companies,stores).fetchEntitySnapshot());
   }
 });
@@ -56,4 +56,9 @@ test('entity sync UI checks resolved IPC failures and shows numeric success coun
   assert.match(status,/setInterval\(\(\)=>void poll\(\),5000\)/);
   assert.match(status,/active=false;clearInterval\(timer\)/);
   assert.match(status,/if\(!folderEdited.current\)setFolder/);
+});
+
+test('complete export resolves missing joined company from explicit ID, including same-name store', async()=>{
+  const result=await client(undefined,envelope([{...store,name:company.name,client_company:null}])).fetchEntitySnapshot();
+  assert.equal(result.stores[0].company?.id,company.id);
 });
