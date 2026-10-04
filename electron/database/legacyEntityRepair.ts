@@ -5,7 +5,7 @@ import type { VrBakerCompany, VrBakerStore, VrBakerStoreMerge } from '../integra
 
 export interface LegacyRepairMove {
   storeId: number; storeExternalId: string; storeName: string;
-  fromCompanyId: number; toCompanyId: number; toCompanyExternalId: string; toCompanyName: string;
+  fromCompanyId: number; toCompanyId: number | null; toCompanyExternalId: string; toCompanyName: string;
   invoices: { id: number; invoice_number: string }[];
   toStoreId?: number; toStoreExternalId?: string; toStoreName?: string;
 }
@@ -65,8 +65,8 @@ export function planLegacyEntityRepair(db: Database.Database, snapshot: EntitySn
     if (!local || local.supabase_company_id !== 'vrbaker-unassigned-company') continue;
     const mergeTarget = merged ? db.prepare('SELECT * FROM stores WHERE supabase_store_id=? COLLATE NOCASE').get(remote.id) as any : null;
     if (merged && !mergeTarget) throw new Error('Magazinul păstrat trebuie sincronizat înainte de unire.');
-    const target = db.prepare('SELECT * FROM companies WHERE supabase_company_id=? COLLATE NOCASE AND vrbaker_missing=0').get(remote.company.id) as any;
-    if (!target) continue; // First sync creates new legal company records; never guess a local target.
+    const target = db.prepare('SELECT * FROM companies WHERE supabase_company_id=? COLLATE NOCASE ').get(remote.company.id) as any;
+    if (merged && !target) throw new Error('Compania magazinului păstrat trebuie sincronizată înainte de unire.');
     const sourceCompany = db.prepare('SELECT * FROM companies WHERE id=?').get(local.company_id) as any;
     if (merged && mergeTarget.company_id !== target.id) throw new Error('Compania magazinului păstrat nu corespunde.');
     const invoices = db.prepare('SELECT * FROM invoices WHERE store_id=? ORDER BY id').all(local.id) as any[];
@@ -91,7 +91,7 @@ export function planLegacyEntityRepair(db: Database.Database, snapshot: EntitySn
       throw new Error(`Magazinul „${local.name}” necesită verificarea plăților/creditelor înainte de repararea asocierii. Nu s-au mutat facturi.`);
     }
     moves.push({storeId:local.id,storeExternalId:sourceId,storeName:local.name,fromCompanyId:local.company_id,
-      toCompanyId:target.id,toCompanyExternalId:remote.company.id,toCompanyName:remote.company.name,
+      toCompanyId:target?.id ?? null,toCompanyExternalId:remote.company.id,toCompanyName:remote.company.name,
       ...(merged ? {toStoreId:mergeTarget.id,toStoreExternalId:remote.id,toStoreName:remote.name} : {}),
       invoices:invoices.map(i=>({id:i.id,invoice_number:i.invoice_number}))});
     evidence.push({local,sourceCompany,target,invoices,remoteCompany:remote.company,mergeTarget,batches});
@@ -106,6 +106,19 @@ export function applyLegacyEntityRepair(db: Database.Database, snapshot: EntityS
   const fresh = planLegacyEntityRepair(db,snapshot);
   if (fresh.fingerprint !== approved.fingerprint) throw new Error('Datele s-au schimbat după confirmare. Reia sincronizarea și verifică noua listă.');
   for (const move of fresh.moves) {
+    if (move.toCompanyId === null) {
+      const remote = snapshot.companies.find(c => c.id.toLowerCase() === move.toCompanyExternalId.toLowerCase());
+      if (!remote) throw new Error('Compania confirmată lipsește din export.');
+      const existing = db.prepare('SELECT id FROM companies WHERE supabase_company_id=? COLLATE NOCASE').get(remote.id) as {id:number}|undefined;
+      if (existing) move.toCompanyId = existing.id;
+      else {
+        const client = db.prepare('SELECT id FROM clients WHERE supabase_client_id=? COLLATE NOCASE').get(remote.id) as {id:number}|undefined;
+        const clientId = client?.id ?? Number(db.prepare('INSERT INTO clients(name,supabase_client_id) VALUES(?,?)').run(remote.name,remote.id).lastInsertRowid);
+        move.toCompanyId = Number(db.prepare(`INSERT INTO companies(client_id,name,cui,reg_com,address,supabase_company_id,issuer_id)
+          VALUES(?,?,?,?,?,?,(SELECT id FROM billing_issuers WHERE is_default=1))`)
+          .run(clientId,remote.name,remote.vatNumber||null,remote.registrationNumber||null,remote.address||null,remote.id).lastInsertRowid);
+      }
+    }
     if (move.toStoreId) {
       db.prepare('UPDATE invoices SET store_id=?,pdf_path=NULL WHERE store_id=?').run(move.toStoreId,move.storeId);
       db.prepare('UPDATE invoice_import_batches SET store_external_id=? WHERE store_external_id=? COLLATE NOCASE').run(move.toStoreExternalId,move.storeExternalId);

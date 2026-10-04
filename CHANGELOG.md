@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.122
+
+- Repară asocierea magazinelor create prin fluxul rapid al platformei, inclusiv când compania confirmată nu a fost importată încă în Hub.
+- Compania nouă și mutarea asocierii sunt salvate în aceeași tranzacție, după confirmare și backup verificat. Numerele, produsele și sumele facturilor sunt păstrate; conflictele de plăți sau credite opresc repararea.
+- Platforma creează acum legătura de companie și pentru clienții rapizi. După actualizarea Writer-ului, sincronizează Clienți și Entități și confirmă repararea afișată.
+- Include integral v0.1.121. Fără migrare nouă a bazei locale.
+
 ### VR - Hub Management v0.1.121
 
 - Sincronizarea clienților și entităților folosește ID-ul explicit al companiei când obiectul asociat lipsește din răspunsul magazinului. Un magazin cu același nume ca societatea este identificat separat, după ID.

@@ -93,3 +93,35 @@ test('coordinator cancels, fails on backup/role drift and rolls back repair with
     }finally{db.close();}
   }
 });
+
+test('newly repaired quick-client company imports on first sync with approved history and rollback', async()=>{
+  for (const mode of ['ok','cancel','sync-failure','changed','paid']) {
+    const {db,snapshot}=fixture();
+    try {
+      db.exec('DELETE FROM companies WHERE id=2');
+      const beforeItems=db.prepare('SELECT * FROM invoice_items').all();
+      let fetches=0;
+      const run=()=>synchronizeEntitiesWithRepair({connection:db,assertCurrent:()=>{},
+        fetchSnapshot:async()=>{fetches++;return mode==='changed' && fetches>1 ? {...snapshot,companies:[{...company,name:'Changed'}],stores:[{...store,company:{...company,name:'Changed'}}]} : snapshot;},
+        confirm:async plan=>{assert.equal(plan.moves[0].toCompanyId,null);return mode!=='cancel';},
+        backup:async()=>'verified-backup',synchronize:()=>{
+          if(mode==='sync-failure')throw new Error('sync failed');
+          assertEntitySyncSafe(db,snapshot.companies,snapshot.stores);
+          return {ok:true};
+        }});
+      if(mode==='paid')db.exec('UPDATE invoices SET paid_amount=1');
+      if(mode!=='ok') {
+        await assert.rejects(run());
+        assert.equal((db.prepare('SELECT COUNT(*) n FROM companies').get() as any).n,1);
+        assert.equal((db.prepare('SELECT company_id FROM stores').get() as any).company_id,1);
+      } else {
+        const result=await run();assert.equal(result.repairedInvoices,1);
+        assert.equal((db.prepare('SELECT COUNT(*) n FROM companies').get() as any).n,2);
+        assert.equal(planLegacyEntityRepair(db,snapshot).moves.length,0);
+        assert.deepEqual(db.prepare('SELECT invoice_number,total_amount,paid_amount FROM invoices').get(),{invoice_number:'FIX-78',total_amount:57.5,paid_amount:0});
+      }
+      assert.deepEqual(db.prepare('SELECT * FROM invoice_items').all(),beforeItems);
+      assert.deepEqual(db.pragma('foreign_key_check'),[]);
+    } finally {db.close();}
+  }
+});
