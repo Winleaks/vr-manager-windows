@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.121
+
+- Sincronizarea clienților și entităților folosește ID-ul explicit al companiei când obiectul asociat lipsește din răspunsul magazinului. Un magazin cu același nume ca societatea este identificat separat, după ID.
+- Asocierile lipsă sau contradictorii opresc sincronizarea fără modificarea datelor locale. Asocierea nu este dedusă doar din nume.
+- Păstrează protecțiile pentru istoricul facturat: confirmare și backup verificat înainte de repararea asocierilor. Fără migrare nouă de bază de date.
+- După actualizarea Writer-ului, rulează sincronizarea din Clienți și Entități. Dacă platforma nu furnizează nicio asociere, aceasta trebuie corectată în platformă.
+
 ### VR - Hub Management v0.1.120
 
 - În lista Facturi din registrul normal, Writer are un buton cu icon pentru înregistrarea rapidă a plății. Factura și suma restantă sunt completate automat; se pot alege metoda, banca și data încasării. Facturile anulate sau achitate nu afișează acțiunea.

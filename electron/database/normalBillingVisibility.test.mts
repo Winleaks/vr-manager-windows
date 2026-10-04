@@ -11,6 +11,7 @@ import * as credits from './creditNotes.ts';
 import * as reports from './billingReports.ts';
 import * as validation from './businessValidation.ts';
 import * as entities from './entitySync.ts';
+import * as resolvedEntities from '../integrations/vrBakerEntities.ts';
 import * as legacy from './legacyEntityRepair.ts';
 import { installDocumentSyncQueue, documentSyncStatus } from './documentSyncQueue.ts';
 import { installBillingPublication } from './billingPublication.ts';
@@ -37,7 +38,7 @@ function fixture() {
   const mocks: Record<string, unknown> = {
     '../db': { db }, '../normalBillingVisibility': visibility, '../billingReports.ts': reports,
     '../billingIssuers': issuers, '../creditNotes': credits, '../businessValidation': validation,
-    '../entitySync': entities, '../legacyEntityRepair': legacy, './billingTransactions': {},
+    '../../integrations/vrBakerEntities': resolvedEntities, '../entitySync': entities, '../legacyEntityRepair': legacy, './billingTransactions': {},
   };
   const compiled = ts.transpileModule(readFileSync(new URL('./repositories/billingRepo.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const repo: any = {};
