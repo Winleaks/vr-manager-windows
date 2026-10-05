@@ -8,6 +8,16 @@ import {
   prepareBillingDelivery,
 } from "../database/billingPublication";
 let running = false;
+let scheduled: ReturnType<typeof setTimeout> | null = null;
+let requested = false;
+/** Event-driven wake-up; durable SQLite revisions remain the source of pending work. */
+export function scheduleBillingPublication() {
+  if (getDeviceRole() !== 'writer') return;
+  requested = true;
+  if (running || scheduled) return;
+  scheduled = setTimeout(() => { scheduled = null; requested = false; void publishBilling(); }, 250);
+  scheduled.unref();
+}
 export function isBillingPublishing() { return running; }
 export async function publishBilling() {
   if (running || getDeviceRole() !== "writer") return;
@@ -63,6 +73,7 @@ export async function publishBilling() {
         }, `${data.source_id}:${company_id}:${data.revision}:commit`);
         if (db !== connection) return;
         acknowledgeBillingDelivery(db, company_id, data.revision);
+        if (db.prepare('SELECT 1 FROM billing_publication_queue WHERE company_id=? AND revision>published_revision').get(company_id)) requested = true;
       } catch (error) {
         if (db !== connection) return;
         const localMessage = error instanceof Error &&
@@ -78,6 +89,7 @@ export async function publishBilling() {
     if(getDeviceRole()==='writer') db.prepare("UPDATE billing_publication_queue SET last_error=?,retry_at=? WHERE revision>published_revision").run('Publicarea este indisponibilă. Verifică protocolul platformei și permisiunea billing:write.',Date.now()+300000);
   } finally {
     running = false;
+    if (requested) scheduleBillingPublication();
   }
 }
 export function startBillingPublisher() {

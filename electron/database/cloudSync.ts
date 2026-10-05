@@ -1043,6 +1043,7 @@ async function uploadCurrentInvoicePdf(invoiceId: number): Promise<{success:bool
     const {source_id} = db.prepare('SELECT source_id FROM billing_publication_identity WHERE id=1').get() as {source_id:string};
     const buffer=generateInvoicePDF({...inv.issuer_settings,invoiceLogo:getAppSetting('invoice_logo')||''},{
       invoiceNumber:inv.invoice_number,invoiceDate:inv.invoice_date,
+      dueDate:inv.due_date,
       client:{name:inv.company_name,cui:inv.company_cui,regCom:inv.company_reg_com,address:inv.company_address||inv.store_address},
       store:{name:inv.store_name,address:inv.store_address,postcode:inv.store_postcode,phone:inv.store_phone},
       items:inv.items,totalAmount:inv.total_amount,vatRatePercent:inv.vat_rate_percent,

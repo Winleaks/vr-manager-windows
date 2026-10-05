@@ -7,6 +7,7 @@ import type { ProtectedInvoiceEditInput } from '../../src/shared/protectedInvoic
 import { protectedInvoiceOutstanding } from './invoiceOutstanding.ts';
 import { protectedPaymentDisplay } from './paymentDisplay.ts';
 import { prepareProtectedBillingDeliveries, publishProtectedBillingVault, queueNormalPublicationAfterProtected } from './billingPublication.ts';
+import { invoicePaymentTerms } from '../../src/shared/invoicePaymentTerms.ts';
 import { protectedRegistryOverview } from './overview.ts';
 import { applyAutomaticProtectedCredit } from './automaticCredit.ts';
 import { localInvoiceCatalog, priceInvoiceCatalog } from '../integrations/invoiceCatalogPricing.ts';
@@ -119,6 +120,11 @@ const protectedOutbox = new ProtectedOutboxStore(path.join(app.getPath('userData
 const protectedUploader = new ProtectedOutboxWorker(protectedOutbox, commitPendingProtectedSave, () => scheduleProtectedBillingPublication());
 let protectedBillingPublishing = false;
 let protectedBillingQueued = false;
+let protectedFinancialGeneration = 0;
+export function hasPendingProtectedFinancialPublication() {
+  return protectedOutbox.hasPending() || protectedBillingPublishing ||
+    (db.prepare("SELECT value FROM app_settings WHERE key='protected_financial_pending'").get() as {value:string}|undefined)?.value==='1';
+}
 let protectedBillingTimer: ReturnType<typeof setInterval> | null = null;
 let protectedBillingDebounce: ReturnType<typeof setTimeout> | null = null;
 const deferredEvents = new Set([
@@ -143,6 +149,7 @@ async function publishProtectedBilling() {
     return;
   }
   protectedBillingPublishing = true;
+  const generation=protectedFinancialGeneration;
   try {
     if (protectedOutbox.hasPending()) return;
     const latest = await withRegistryRoutingLock(() => withPrivateCloudOperation(async () => {
@@ -164,7 +171,8 @@ async function publishProtectedBilling() {
       const fileId = await uploadProtectedClientInvoicePdf(invoice, latest.vault, latest.cloudScope);
       documentFileIds.set(invoice.id, fileId);
     }
-    await publishProtectedBillingVault(db, latest.vault, createVrBakerClient(), documentFileIds);
+    const outcome=await publishProtectedBillingVault(db, latest.vault, createVrBakerClient(), documentFileIds);
+    if(!outcome.skipped&&generation===protectedFinancialGeneration&&!protectedOutbox.hasPending()) db.prepare("INSERT INTO app_settings(key,value) VALUES('protected_financial_pending','0') ON CONFLICT(key) DO UPDATE SET value='0'").run();
   } catch {
     // The encrypted vault and PDF synchronization are authoritative and must
     // never fail because the read-only client mirror is temporarily offline.
@@ -179,7 +187,9 @@ async function publishProtectedBilling() {
 }
 
 export function scheduleProtectedBillingPublication() {
-  if (getDeviceRole() !== 'writer') return;
+  if (getDeviceRole() !== 'writer' || !isProtectedRegistryEnabled()) return;
+  protectedFinancialGeneration++;
+  db.prepare("INSERT INTO app_settings(key,value) VALUES('protected_financial_pending','1') ON CONFLICT(key) DO UPDATE SET value='1'").run();
   protectedBillingQueued = true;
   if (protectedBillingDebounce) return;
   protectedBillingDebounce = setTimeout(() => {
@@ -1100,6 +1110,7 @@ function createProtectedInvoiceRecord(input: {
     series,
     sequenceNumber: input.sequenceNumber,
     invoiceDate: input.invoiceDate,
+    dueDate: invoicePaymentTerms(input.invoiceDate,input.periodStart,input.periodEnd,!!input.sourceOrders?.length).due_date,
     companyKey: companyKey({ id: input.store.company_id, supabase_company_id: input.store.supabase_company_id }),
     companyId: input.store.company_id,
     companyName: input.store.company_name,
@@ -1147,6 +1158,8 @@ function renderProtectedInvoicePdf(invoice: ProtectedInvoice, vault: ProtectedRe
     {
       invoiceNumber: invoice.reference,
       invoiceDate: invoice.invoiceDate,
+      // Historical PDF snapshots are not automatically changed by the terms rollout.
+      dueDate: invoice.dueDate,
       client: {
         name: String(invoice.companySnapshot.name || invoice.companyName),
         cui: String(invoice.companySnapshot.vatNumber || ''),

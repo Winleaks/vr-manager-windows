@@ -1,4 +1,5 @@
 import {installBillingPublication} from './billingPublication';
+import { installInvoicePaymentTerms } from './invoicePaymentTerms';
 import { installDocumentSyncQueue } from './documentSyncQueue';
 import { installInvoiceDriveIdentity } from './invoiceDriveIdentity';
 import { installNormalBillingVisibility } from './normalBillingVisibility';
@@ -171,7 +172,7 @@ export function initDb() {
 
   // Preserve a verified copy before adding the persistent billing publication queue.
   // This also covers older Credit Notes migrations during a direct upgrade.
-  createPreMigrationSnapshotIfNeeded(23)
+  createPreMigrationSnapshotIfNeeded(24)
   
   // 2. Rularea migrărilor de schemă
   runMigrations()
@@ -395,6 +396,7 @@ function runMigrations() {
       ,{version:21,description:'Vizibilitate facturare normală replicată pe Viewer',up:()=>installNormalBillingVisibility(db)}
       ,{version:22,description:'Clienți ocazionali și produse vândute în afara catalogului',up:()=>ensureOneOffCustomerSchema(db)}
       ,{version:23,description:'Tratament VAT explicit pentru facturi ocazionale',up:()=>ensureOneOffInvoiceVatSchema(db)}
+      ,{version:24,description:'Scadențe și publicare termene de plată',up:()=>installInvoicePaymentTerms(db)}
     ];
 
     for (const migration of migrations) {

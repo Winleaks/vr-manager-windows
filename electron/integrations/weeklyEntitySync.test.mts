@@ -36,6 +36,7 @@ function fixture(mode='ok'){
  const mocks:any={
   '../database/repositories/billingRepo':{syncEntitiesFromVrBaker:synchronize,getIssuerPreviewByStoreExternalId:()=>({}),getWeeklyImportState:()=>({billingState:'invoiced'}),createWeeklyInvoices:()=>{issued++;throw Error('Must not issue');}},
   '../database/db':database,
+  '../integrations/billingPublisher':{scheduleBillingPublication:()=>{}},
   '../ipc/trustedHandler':{},
   './trustedHandler':{handleTrustedIpc:(name:string,handler:Function)=>handlers.set(name,handler)},
   '../integrations/weeklyEntitySync':{synchronizeWeeklySnapshot},

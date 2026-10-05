@@ -36,6 +36,7 @@ interface Invoice {
   store_id: number;
   invoice_number: string;
   invoice_date: string;
+  due_date?: string | null;
   total_amount: number;
   paid_amount: number;
   status: string;
@@ -332,6 +333,7 @@ export function BillingInvoices() {
                       </td>
                       <td className="py-4 px-6 text-slate-600">
                         {inv.invoice_date}
+                        <small className="block mt-1 text-slate-500">Payment due: {inv.due_date || 'Needs review'}</small>
                       </td>
                       <td className="py-4 px-6">
                         <div className="font-semibold text-slate-800 flex items-center gap-1.5">

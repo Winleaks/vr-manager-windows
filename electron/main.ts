@@ -4,7 +4,8 @@ import { app, BrowserWindow, dialog, session } from 'electron'
 import { execFileSync } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { initDb, backupDb, closeDb } from './database/db'
+import { db, initDb, backupDb, closeDb } from './database/db'
+import { pendingFinancialCompanyCount } from './database/financialPublicationState';
 import { registerRawMaterialHandlers } from './ipc/rawMaterialHandlers'
 import { registerFinishedProductHandlers } from './ipc/finishedProductHandlers'
 import { registerRecipeHandlers } from './ipc/recipeHandlers'
@@ -22,7 +23,7 @@ import { checkForUpdates, initializeUpdater } from './updater/updateCoordinator'
 import { cashRepo } from './database/repositories/cashRepo'
 import { millisecondsUntilNextLocalMidnight } from './database/cashDayRollover'
 import { runStartupCashReconciliation } from './startupCashReconciliation'
-import { cleanupStaleProtectedRegistryTemporaryFiles, lockAllProtectedRegistrySessions, startProtectedBillingPublisher, stopProtectedRegistrySync } from './protectedRegistry/service'
+import { cleanupStaleProtectedRegistryTemporaryFiles, lockAllProtectedRegistrySessions, startProtectedBillingPublisher, stopProtectedRegistrySync, hasPendingProtectedFinancialPublication } from './protectedRegistry/service'
 import { cleanupStaleWindowsShareSnapshots } from './reports/windowsShareSnapshot'
 
 const DIST_PATH = path.join(__dirname, '../dist')
@@ -31,6 +32,17 @@ process.env.PUBLIC = app.isPackaged ? DIST_PATH : path.join(DIST_PATH, '../publi
 
 let win: BrowserWindow | null
 let cashDayRolloverTimer: ReturnType<typeof setTimeout> | null = null
+let confirmedQuit=false;
+function confirmFinancialClose() {
+  if(confirmedQuit||getDeviceRole()!=='writer'||!db?.open)return true;
+  let pending=true;
+  try{pending=pendingFinancialCompanyCount(db)>0||hasPendingProtectedFinancialPublication();}catch{/* Unknown is not synchronized. */}
+  if(!pending)return true;
+  return dialog.showMessageBoxSync({type:'warning',title:'Financial changes are not synchronized',
+    message:'Some financial changes have not been confirmed by the client platform.',
+    detail:'Keep Hub open and retry publication. Closing now leaves the platform on the last confirmed balance; clients may remain restricted until publication succeeds.',
+    buttons:['Keep Hub open','Close anyway'],defaultId:0,cancelId:0})===1;
+}
 const CASH_RECONCILIATION_TARGET = 241.74
 const CASH_RECONCILIATION_MARKER = 'daily_cash_reconciliation_v0_1_83_241_74'
 
@@ -74,6 +86,14 @@ function createWindow() {
   })
 
   trustIpcSender(win.webContents)
+  // On Windows, before-quit runs after the last window has disappeared.
+  // Intercept its close first, so "Keep Hub open" leaves a usable window.
+  win.on('close',event=>{
+    if(process.platform==='win32'){
+      if(!confirmFinancialClose()){event.preventDefault();return;}
+      confirmedQuit=true;
+    }
+  });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   win.webContents.on('will-navigate', (event, targetUrl) => {
     if (!isAllowedAppUrl(targetUrl)) event.preventDefault()
@@ -102,7 +122,9 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if(!confirmFinancialClose()){event.preventDefault();return;}
+  confirmedQuit=true;
   stopProtectedRegistrySync();
   if (cashDayRolloverTimer) clearTimeout(cashDayRolloverTimer)
   closeDb();

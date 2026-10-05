@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { invoicePaymentTerms, type InvoicePaymentTerms } from '../../src/shared/invoicePaymentTerms.ts';
 import { moneyInPence } from '../database/billingPublication.ts';
 import type { ProtectedInvoice, ProtectedRegistryVault } from './types.ts';
 
@@ -6,14 +7,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const DRIVE_FILE_ID = /^[A-Za-z0-9_-]{10,200}$/;
 const MAX_PLATFORM_REVISION = 9_007_199_254_740_991;
 const PROTECTED_ID_DIGITS = 14;
-const CLIENT_DOCUMENT_REVISION_OFFSET = 1000;
+const CLIENT_DOCUMENT_REVISION_OFFSET = 2000;
 
 export interface ProtectedBillingDelivery {
   source_id: string;
   company_id: string;
   revision: number;
   credit: number;
-  invoices: Array<{
+  invoices: Array<InvoicePaymentTerms & {
     id: string;
     store_id: string;
     number: string;
@@ -120,6 +121,7 @@ export function prepareProtectedBillingDeliveries(
           store_id: invoice.storeExternalId,
           number: invoice.reference,
           date: invoice.invoiceDate,
+          ...invoicePaymentTerms(invoice.invoiceDate,invoice.periodStart,invoice.periodEnd,invoice.sourceOrderIds.length>0),
           total,
           paid,
           credited,

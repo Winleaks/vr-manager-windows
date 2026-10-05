@@ -60,6 +60,7 @@ test('protected live registry publishes only client-safe invoice metadata and ba
     assert.equal(delivery.invoices.length, 1);
     assert.deepEqual(delivery.invoices[0], {
       id: protectedBillingInvoiceId(invoice), store_id: store, number: 'TGBL-2930', date: '2026-09-28',
+      due_date:'2026-10-02',due_basis:'manual',period_start:null,period_end:null,
       total: 10000, paid: 2000, credited: 1000, applied_credit: 500, outstanding: 6500,
       cancelled: false, drive_file_id: 'protected_portal_pdf_123',
     });

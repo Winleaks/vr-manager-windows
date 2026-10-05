@@ -36,6 +36,7 @@ export function generateInvoicePDF(
   invoiceData: {
     invoiceNumber: string;
     invoiceDate: string; 
+    dueDate?: string | null;
     client: {
       name: string;
       cui?: string; // VAT Number client
@@ -127,6 +128,7 @@ export function generateInvoicePDF(
   doc.text(referenceValue, referenceX + referenceLabelWidth, currentY + 8.5);
   doc.setFont('Arial', 'normal');
   doc.text(`Date: ${formatPdfDate(invoiceData.invoiceDate)}`, 196, currentY + 12.5, { align: "right" });
+  if (invoiceData.dueDate) doc.text(`Payment due: ${formatPdfDate(invoiceData.dueDate)}`, 196, currentY + 16.5, { align: 'right' });
 
 
   if (invoiceData.accountOutstanding) {
@@ -139,7 +141,7 @@ export function generateInvoicePDF(
     doc.setFont('Arial', 'normal'); doc.setFontSize(6.5); doc.setTextColor(71,85,105);
     doc.text('This store - includes this invoice', 192, 36.5, {align:'right'});
   }
-  currentY += invoiceData.accountOutstanding ? 32 : 18;
+  currentY += invoiceData.accountOutstanding ? 32 : invoiceData.dueDate ? 22 : 18;
 
   // --- SEPARATOR LINE ---
   doc.setDrawColor(226, 232, 240); // Slate-200

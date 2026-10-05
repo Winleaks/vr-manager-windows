@@ -1,7 +1,7 @@
 name: Verify client billing on Windows
 on:
   push:
-    branches: ['razvancristofor/client-billing-publication']
+    branches: ['razvancristofor/client-billing-publication', 'razvancristofor/invoice-payment-terms']
 permissions:
   contents: read
 jobs:

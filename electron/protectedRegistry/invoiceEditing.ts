@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { invoicePaymentTerms } from '../../src/shared/invoicePaymentTerms.ts';
 import type { ProtectedInvoiceEditInput } from '../../src/shared/protectedInvoiceEdit.ts';
 import type { ProtectedInvoice, ProtectedInvoiceItem, ProtectedRegistryVault } from './types.ts';
 import { requireText } from '../database/businessValidation.ts';
@@ -71,6 +72,7 @@ export function applyProtectedInvoiceEdit(vault: ProtectedRegistryVault, request
   if (total + 0.005 < invoice.paidAmount) throw Error('Totalul nu poate fi mai mic decât încasările păstrate. Reversează întâi încasarea afectată.');
   const before = { invoiceDate: invoice.invoiceDate, items: invoice.items, totalAmount: invoice.totalAmount };
   invoice.invoiceDate = request.invoiceDate; invoice.items = items; invoice.totalAmount = total;
+  invoice.dueDate=invoicePaymentTerms(invoice.invoiceDate,invoice.periodStart,invoice.periodEnd,invoice.sourceOrderIds.length>0).due_date;
   invoice.status = invoice.paidAmount >= total - 0.005 ? 'paid' : invoice.paidAmount > 0.005 ? 'partial' : 'unpaid';
   vault.audit.push({ id: randomUUID(), eventType: 'protected_invoice_edit_details', resourceType: 'invoice', resourceId: invoice.id,
     operationId: request.operationId, details: { requestHash: requestHash(request), before, after: { invoiceDate: invoice.invoiceDate, items, totalAmount: total } }, createdAt: new Date().toISOString() });

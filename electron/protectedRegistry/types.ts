@@ -33,6 +33,7 @@ export interface ProtectedInvoice {
   series: ProtectedInvoiceSeries;
   sequenceNumber: number;
   invoiceDate: string;
+  dueDate?: string | null;
   companyKey: string;
   companyId: number;
   companyName: string;

@@ -1,3 +1,11 @@
+### VR - Hub Management v0.1.123
+
+- Termene de plată: facturile săptămânale ajung la scadență joia de după perioada facturată; cele manuale, la patru zile calendaristice după data facturii.
+- Publică scadențele și soldurile prin protocolul financiar existent, cu revizii atomice și reîncercări. Încasările și corectările declanșează imediat publicarea.
+- Afișează distinct modificările financiare sincronizate sau în așteptare; avertizează înainte de închiderea Writer-ului cu modificări nepublicate.
+- Facturile PDF noi includ scadența. Documentele istorice nu sunt regenerate automat. Migrarea locală 24 păstrează sumele și livrările deja pregătite.
+- Blocarea comenzilor rămâne dezactivată în platformă până la reconcilierea scadențelor și stabilirea zilei de luni pentru lansare. Soldurile confirmate nu expiră dacă PC-ul este închis.
+
 ### VR - Hub Management v0.1.122
 
 - Repară asocierea magazinelor create prin fluxul rapid al platformei, inclusiv când compania confirmată nu a fost importată încă în Hub.

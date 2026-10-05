@@ -14,6 +14,7 @@ export async function prepareInvoiceDocument(invoiceId: number, uploadCloud = fa
     { ...invoice.issuer_settings, invoiceLogo: sharedSettings.invoiceLogo },
     {
       invoiceNumber: invoice.invoice_number, invoiceDate: invoice.invoice_date,
+      dueDate: invoice.due_date,
       client: {
         name: invoice.company_name || invoice.client_name || invoice.store_name,
         cui: invoice.company_cui, regCom: invoice.company_reg_com,

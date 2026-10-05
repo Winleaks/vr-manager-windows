@@ -29,11 +29,13 @@ import {
   loadProtectedRoutingPolicy,
   withRegistryRoutingLock,
   ensureNormalBillingVisibility,
+  hasPendingProtectedFinancialPublication,
 } from '../protectedRegistry/service';
 import { assignEstimatedInvoiceReferences } from '../../src/utils/invoicePreviewNumbering';
 import { localInvoiceCatalog, priceInvoiceCatalog } from '../integrations/invoiceCatalogPricing';
 import { synchronizeWeeklySnapshot } from '../integrations/weeklyEntitySync';
 import { getDeviceRole } from '../device/deviceRole';
+import { scheduleBillingPublication } from '../integrations/billingPublisher';
 import type { InvoiceIssuerChangeInput } from '../../src/shared/invoiceIssuerChange.ts';
 
 const visibilityChannels = new Set(['getClients', 'getCompanies', 'getStores', 'getAllCompaniesAndStores', 'getManualInvoiceCompanies',
@@ -44,7 +46,9 @@ const visibilityChannels = new Set(['getClients', 'getCompanies', 'getStores', '
 const dbForVisibility = () => db;
 const handleTrustedIpc: typeof registerTrustedIpc = (channel, handler) => registerTrustedIpc(channel, async (event, ...args) => {
   if (visibilityChannels.has(channel.replace('billing:', ''))) await ensureNormalBillingVisibility();
-  return handler(event, ...args);
+  const result = await handler(event, ...args);
+  if (new Set(['recordCompanyPayment','updatePayment','deletePayment','cancelInvoice','updateInvoice','createManualInvoice','createWeeklyInvoices','createWeeklyInvoicesByZone','createCreditNote','cancelCreditNote','applyCompanyCredit','reverseCreditApplication','changeInvoiceIssuer','reissueCancelledInvoice']).has(channel.replace('billing:', ''))) scheduleBillingPublication();
+  return result;
 });
 
 function message(error: unknown) {
@@ -315,6 +319,8 @@ export function registerBillingHandlers() {
     const retired = retiredLegacyCompanyIds(db);
     return {
     publishing:isBillingPublishing(),
+    writer:getDeviceRole()==='writer',
+    protectedPending:hasPendingProtectedFinancialPublication(),
     identity:db.prepare('SELECT source_id FROM billing_publication_identity WHERE id=1').get(),
     pending:db.prepare('SELECT q.*,c.name FROM billing_publication_queue q JOIN companies c ON c.id=q.company_id WHERE q.revision>q.published_revision AND c.vrbaker_missing=0').all().filter((row:any)=>!retired.has(row.company_id)),
     excluded:db.prepare('SELECT c.id,c.name FROM companies c WHERE c.vrbaker_missing=1').all(),
@@ -324,7 +330,12 @@ export function registerBillingHandlers() {
   handleTrustedIpc('billing:publishNow', async () => {
     db.prepare('UPDATE billing_publication_queue SET retry_at=0').run();
     const {publishBilling}=await import('../integrations/billingPublisher');
-    await publishBilling();return {success:true};
+    await publishBilling();
+    if(hasPendingProtectedFinancialPublication()) {
+      const {scheduleProtectedBillingPublication}=await import('../protectedRegistry/service');
+      scheduleProtectedBillingPublication();
+    }
+    return {success:true};
   });
   handleTrustedIpc('billing:getSettings' , () => {
     const defaultIssuer = billingRepo.getBillingIssuers().find((issuer) => issuer.is_default === 1);

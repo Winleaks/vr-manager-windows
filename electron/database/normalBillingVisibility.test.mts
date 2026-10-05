@@ -9,6 +9,7 @@ import * as visibility from './normalBillingVisibility.ts';
 import * as issuers from './billingIssuers.ts';
 import * as credits from './creditNotes.ts';
 import * as reports from './billingReports.ts';
+import * as terms from './invoicePaymentTerms.ts';
 import * as validation from './businessValidation.ts';
 import * as entities from './entitySync.ts';
 import * as resolvedEntities from '../integrations/vrBakerEntities.ts';
@@ -37,6 +38,7 @@ function fixture() {
     INSERT INTO credit_note_invoice_links(credit_note_id,invoice_id,credited_net,credited_total) VALUES(1,1,10,10),(2,2,90,90);`);
   const mocks: Record<string, unknown> = {
     '../db': { db }, '../normalBillingVisibility': visibility, '../billingReports.ts': reports,
+    '../invoicePaymentTerms':terms,
     '../billingIssuers': issuers, '../creditNotes': credits, '../businessValidation': validation,
     '../../integrations/vrBakerEntities': resolvedEntities, '../entitySync': entities, '../legacyEntityRepair': legacy, './billingTransactions': {},
   };

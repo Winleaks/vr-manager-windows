@@ -16,6 +16,7 @@ import { DailyCashLayout } from './pages/DailyCashLayout';
 import { ProtectedRegistry, ProtectedRegistryHotspot } from './pages/ProtectedRegistry';
 import { FeedbackHost } from './components/FeedbackHost';
 import { DocumentSyncBanner } from './components/DocumentSyncBanner';
+import { FinancialSyncBanner } from './components/FinancialSyncBanner';
 
 function Sidebar() {
   const location = useLocation();
@@ -86,6 +87,7 @@ export default function App() {
   return (
     <>
       <DocumentSyncBanner />
+      <FinancialSyncBanner />
       <HashRouter>
         <Routes>
           <Route path="/" element={<Hub />} />

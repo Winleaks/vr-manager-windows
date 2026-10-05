@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { readInvoicePaymentTerms } from './invoicePaymentTerms.ts';
 import {getInvoiceFinancials} from "./creditNotes.ts";
 import { randomUUID } from "node:crypto";
 
@@ -131,6 +132,7 @@ export function prepareBillingDelivery(
         store_id: i.supabase_store_id,
         number: i.invoice_number,
         date: i.invoice_date,
+        ...readInvoicePaymentTerms(db,i.id,i.invoice_date),
         total,
         paid,
         credited:financial?moneyInPence(financial.creditedAmount):0,
