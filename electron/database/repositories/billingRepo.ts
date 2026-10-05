@@ -1,5 +1,6 @@
 import { resolveVrBakerEntities } from '../../integrations/vrBakerEntities';
 import { db } from '../db';
+import { readInvoicePaymentTerms } from '../invoicePaymentTerms';
 import { normalBillingReadDatabase } from '../normalBillingVisibility';
 const normalRead = () => normalBillingReadDatabase(db);
 function assertVisible(table: 'companies' | 'stores' | 'clients' | 'invoices' | 'invoice_items' | 'payments' | 'credit_notes' | 'invoice_credit_applications', id: number) {
@@ -506,6 +507,8 @@ function hydrateInvoice(inv: any) {
   `).all(inv.id) as any[];
   return {
     ...inv,
+    // inv was already selected through the authorized normal-register projection.
+    ...readInvoicePaymentTerms(db,inv.id,inv.invoice_date),
     ...getInvoiceFinancials(db, inv.id),
     issuer_settings: invoiceSettingsFromIdentity(inv),
     items: items.map(item => ({
