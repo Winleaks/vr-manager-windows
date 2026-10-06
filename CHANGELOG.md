@@ -1,3 +1,8 @@
+### Nepublicat — limba interfeței Hub
+
+- Interfața Hub este în română, inclusiv mesajele sincronizării financiare, reîncercarea, avertizarea la închidere și scadențele afișate în listele facturilor.
+- Facturile PDF rămân în engleză. Nu se modifică documentele, calculele financiare, datele sau protocolul de sincronizare.
+
 ### VR - Hub Management v0.1.123
 
 - Termene de plată: facturile săptămânale ajung la scadență joia de după perioada facturată; cele manuale, la patru zile calendaristice după data facturii.

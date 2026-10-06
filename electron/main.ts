@@ -38,10 +38,10 @@ function confirmFinancialClose() {
   let pending=true;
   try{pending=pendingFinancialCompanyCount(db)>0||hasPendingProtectedFinancialPublication();}catch{/* Unknown is not synchronized. */}
   if(!pending)return true;
-  return dialog.showMessageBoxSync({type:'warning',title:'Financial changes are not synchronized',
-    message:'Some financial changes have not been confirmed by the client platform.',
-    detail:'Keep Hub open and retry publication. Closing now leaves the platform on the last confirmed balance; clients may remain restricted until publication succeeds.',
-    buttons:['Keep Hub open','Close anyway'],defaultId:0,cancelId:0})===1;
+  return dialog.showMessageBoxSync({type:'warning',title:'Modificările financiare nu sunt sincronizate',
+    message:'Unele modificări financiare nu au fost confirmate de platforma clienților.',
+    detail:'Păstrează Hub deschis și reîncearcă sincronizarea. Dacă închizi acum, platforma va folosi ultimul sold confirmat; comenzile clienților pot rămâne blocate până la finalizarea sincronizării.',
+    buttons:['Păstrează Hub deschis','Închide oricum'],defaultId:0,cancelId:0})===1;
 }
 const CASH_RECONCILIATION_TARGET = 241.74
 const CASH_RECONCILIATION_MARKER = 'daily_cash_reconciliation_v0_1_83_241_74'

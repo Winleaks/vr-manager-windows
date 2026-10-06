@@ -333,7 +333,7 @@ export function BillingInvoices() {
                       </td>
                       <td className="py-4 px-6 text-slate-600">
                         {inv.invoice_date}
-                        <small className="block mt-1 text-slate-500">Payment due: {inv.due_date || 'Needs review'}</small>
+                        <small className="block mt-1 text-slate-500">Scadență: {inv.due_date || 'Necesită verificare'}</small>
                       </td>
                       <td className="py-4 px-6">
                         <div className="font-semibold text-slate-800 flex items-center gap-1.5">
