@@ -1,4 +1,7 @@
-### Nepublicat — limba interfeței Hub
+### VR - Hub Management v0.1.124
+
+- Facturile punctuale/manuale sunt scadente în ziua emiterii; facturile săptămânale păstrează termenul de joi calculat din perioada facturată.
+- Migrarea locală 25 actualizează scadențele manuale și pregătește o nouă revizie de sincronizare, fără modificarea sumelor sau a PDF-urilor istorice. Publicările deja pregătite rămân intacte.
 
 - Interfața Hub este în română, inclusiv mesajele sincronizării financiare, reîncercarea, avertizarea la închidere și scadențele afișate în listele facturilor.
 - Facturile PDF rămân în engleză. Nu se modifică documentele, calculele financiare, datele sau protocolul de sincronizare.
