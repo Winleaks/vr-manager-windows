@@ -1,5 +1,5 @@
 import {installBillingPublication} from './billingPublication';
-import { installInvoicePaymentTerms } from './invoicePaymentTerms';
+import { installInvoicePaymentTerms, installSameDayInvoicePaymentTerms } from './invoicePaymentTerms';
 import { installDocumentSyncQueue } from './documentSyncQueue';
 import { installInvoiceDriveIdentity } from './invoiceDriveIdentity';
 import { installNormalBillingVisibility } from './normalBillingVisibility';
@@ -397,6 +397,7 @@ function runMigrations() {
       ,{version:22,description:'Clienți ocazionali și produse vândute în afara catalogului',up:()=>ensureOneOffCustomerSchema(db)}
       ,{version:23,description:'Tratament VAT explicit pentru facturi ocazionale',up:()=>ensureOneOffInvoiceVatSchema(db)}
       ,{version:24,description:'Scadențe și publicare termene de plată',up:()=>installInvoicePaymentTerms(db)}
+      ,{version:25,description:'Scadență în ziua emiterii pentru facturi punctuale',up:()=>installSameDayInvoicePaymentTerms(db)}
     ];
 
     for (const migration of migrations) {

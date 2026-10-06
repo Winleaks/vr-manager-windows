@@ -8,6 +8,29 @@ export function readInvoicePaymentTerms(db: Database.Database, id: number, issue
     : 'SELECT period_start,period_end FROM invoice_import_batches WHERE invoice_id=?').get(id) as {period_start:string;period_end:string}|undefined;
   return invoicePaymentTerms(issued,period?.period_start,period?.period_end,!!period);
 }
+/** Upgrade v24 installations without replacing prepared financial publications or PDFs. */
+export function installSameDayInvoicePaymentTerms(db: Database.Database) {
+  db.exec(`
+    DROP TRIGGER invoice_terms_insert;
+    DROP TRIGGER invoice_terms_date;
+    CREATE TRIGGER invoice_terms_insert AFTER INSERT ON invoices BEGIN
+      UPDATE invoices SET due_date=date(NEW.invoice_date),due_basis='manual' WHERE id=NEW.id;
+    END;
+    CREATE TRIGGER invoice_terms_date AFTER UPDATE OF invoice_date ON invoices BEGIN
+      UPDATE invoices SET due_date=CASE WHEN due_basis='manual' THEN date(NEW.invoice_date) ELSE due_date END WHERE id=NEW.id;
+    END;
+    UPDATE invoices SET due_date=date(invoice_date) WHERE due_basis='manual' AND due_date IS NOT date(invoice_date);
+  `);
+  if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='invoice_replacements'").get()) db.exec(`
+    DROP TRIGGER invoice_terms_replacement;
+    CREATE TRIGGER invoice_terms_replacement AFTER INSERT ON invoice_replacements BEGIN
+      UPDATE invoices SET
+        due_date=(SELECT CASE WHEN old.due_basis='manual' THEN date(invoices.invoice_date) ELSE old.due_date END FROM invoices old WHERE old.id=NEW.cancelled_invoice_id),
+        due_basis=(SELECT due_basis FROM invoices WHERE id=NEW.cancelled_invoice_id)
+      WHERE id=NEW.replacement_invoice_id;
+    END;
+  `);
+}
 /** Prepared deliveries remain immutable across upgrades and response-loss retries. */
 export function installInvoicePaymentTerms(db: Database.Database) {
   db.exec(`

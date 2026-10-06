@@ -20,7 +20,7 @@ export function invoicePaymentTerms(invoiceDate: unknown, periodStart?: unknown,
     return { due_date: addCalendarDays(end, (7 - weekday) % 7 + 4), due_basis: 'weekly', period_start: start, period_end: end };
   }
   const issued = calendarDate(invoiceDate);
-  return issued ? { due_date: addCalendarDays(issued, 4), due_basis: 'manual', period_start: null, period_end: null } : review;
+  return issued ? { due_date: issued, due_basis: 'manual', period_start: null, period_end: null } : review;
 }
 export function firstFridayAfter(date: string): string {
   const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
