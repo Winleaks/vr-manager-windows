@@ -1,3 +1,9 @@
+### VR - Hub Management v0.1.125
+
+- Câmpul „Payment due” este complet vizibil când factura afișează „Account balance”. Caseta soldului și separatorul se poziționează sub scadență, fără suprapunere.
+- Corecția se aplică PDF-urilor generate sau regenerate după actualizare. Sumele, scadențele și PDF-urile deja salvate nu sunt modificate automat.
+- Include toate modificările v0.1.124, fără migrare de bază de date.
+
 ### VR - Hub Management v0.1.124
 
 - Facturile punctuale/manuale sunt scadente în ziua emiterii; facturile săptămânale păstrează termenul de joi calculat din perioada facturată.

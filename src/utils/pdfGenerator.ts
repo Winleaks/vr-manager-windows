@@ -131,17 +131,18 @@ export function generateInvoicePDF(
   if (invoiceData.dueDate) doc.text(`Payment due: ${formatPdfDate(invoiceData.dueDate)}`, 196, currentY + 16.5, { align: 'right' });
 
 
+  const balanceTop = invoiceData.dueDate ? 28 : 24;
   if (invoiceData.accountOutstanding) {
     doc.setFillColor(248, 250, 252);
-    doc.roundedRect(130, 24, 66, 14, 2, 2, 'F');
+    doc.roundedRect(130, balanceTop, 66, 14, 2, 2, 'F');
     doc.setFont('Arial', 'bold'); doc.setFontSize(7); doc.setTextColor(71,85,105);
-    doc.text('ACCOUNT BALANCE', 192, 27.5, {align:'right'});
+    doc.text('ACCOUNT BALANCE', 192, balanceTop + 3.5, {align:'right'});
     doc.setFontSize(13); doc.setTextColor(15,23,42);
-    doc.text('£' + invoiceData.accountOutstanding.total.toLocaleString('en-GB', {minimumFractionDigits:2, maximumFractionDigits:2}), 192, 33, {align:'right'});
+    doc.text('£' + invoiceData.accountOutstanding.total.toLocaleString('en-GB', {minimumFractionDigits:2, maximumFractionDigits:2}), 192, balanceTop + 9, {align:'right'});
     doc.setFont('Arial', 'normal'); doc.setFontSize(6.5); doc.setTextColor(71,85,105);
-    doc.text('This store - includes this invoice', 192, 36.5, {align:'right'});
+    doc.text('This store - includes this invoice', 192, balanceTop + 12.5, {align:'right'});
   }
-  currentY += invoiceData.accountOutstanding ? 32 : invoiceData.dueDate ? 22 : 18;
+  currentY = invoiceData.accountOutstanding ? balanceTop + 17 : currentY + (invoiceData.dueDate ? 22 : 18);
 
   // --- SEPARATOR LINE ---
   doc.setDrawColor(226, 232, 240); // Slate-200
