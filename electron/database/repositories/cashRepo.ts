@@ -62,12 +62,14 @@ export const cashRepo = {
   },
 
   getTransactions: (dayId: number) => {
+    const linked = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE name='driver_cash_receipts'").get());
     return db.prepare(`
-      SELECT t.*, 
+      SELECT t.*, ${linked ? 'r.amount_pence AS driver_cash_amount_pence, r.revision AS driver_cash_revision,' : ''} 
              d.name as driver_name, 
              e.name as employee_name
       FROM cash_transactions t
-      LEFT JOIN drivers d ON (t.category = 'driver_collection' AND t.reference_id = d.id)
+      ${linked ? 'LEFT JOIN driver_cash_receipts r ON r.root_id=t.driver_cash_root' : ''}
+    LEFT JOIN drivers d ON (t.category = 'driver_collection' AND t.reference_id = d.id)
       LEFT JOIN employees e ON ((t.category = 'direct_sale' OR t.category = 'employee_collection') AND t.reference_id = e.id)
       WHERE t.cash_day_id = ?
       ORDER BY t.created_at DESC

@@ -1,3 +1,4 @@
+import {assertDriverCashTransactionMutable} from '../driverCashGuard.ts';
 import type Database from 'better-sqlite3';
 import {
   optionalText,
@@ -169,6 +170,7 @@ export function updateCashReceiptTransaction(
   data: CashReceiptUpdateInput,
 ) {
   const transactionId = requirePositiveInteger(data.id, 'Încasarea');
+  assertDriverCashTransactionMutable(connection,transactionId);
   const amount = requireMoneyPositive(data.amount, 'Suma încasării');
   const referenceId = data.reference_id === null ? null : requirePositiveInteger(data.reference_id, 'Șoferul');
   const referenceName = referenceId === null ? requireText(data.reference_name, 'Sursa încasării', 300) : null;
@@ -504,6 +506,7 @@ export function reopenCashDayTransaction(
 
 export function deleteCashTransaction(connection: SqliteDatabase, transactionIdInput: number) {
   const transactionId = requirePositiveInteger(transactionIdInput, 'Tranzacția de casă');
+  assertDriverCashTransactionMutable(connection,transactionId);
   return connection.transaction(() => {
     const cashTransaction = connection.prepare(`
       SELECT t.id, t.category, d.is_closed

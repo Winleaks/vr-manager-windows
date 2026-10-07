@@ -164,4 +164,6 @@ export function recordDailyCashReportPrepared(connection: SqliteDatabase, dayIdI
     INSERT INTO cash_day_events (cash_day_id, event_type, balance)
     VALUES (?, 'report_prepared', ?)
   `).run(dayId, money(balanceInput));
+  if(connection.prepare("SELECT 1 FROM sqlite_master WHERE name='driver_cash_report_invalidations'").get())
+    connection.prepare('DELETE FROM driver_cash_report_invalidations WHERE cash_day_id=?').run(dayId);
 }

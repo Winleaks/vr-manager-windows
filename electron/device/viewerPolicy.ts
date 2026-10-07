@@ -47,6 +47,7 @@ const VIEWER_ALLOWED_CHANNELS = new Set([
   'get-stock-movements',
   'get-drivers',
   'get-employees',
+  'driver-cash-status',
   'get-active-cash-day',
   'get-cash-transactions',
   'get-cash-transactions-by-date',

@@ -1,3 +1,4 @@
+import {assertDriverCashPaymentMutable} from '../driverCashGuard.ts';
 import type Database from 'better-sqlite3';
 import type { InvoiceIssuerChangeInput } from '../../../src/shared/invoiceIssuerChange.ts';
 import type { UpdatePaymentInput } from '../../../src/shared/paymentEdit.ts';
@@ -1050,6 +1051,7 @@ export function deleteInvoiceForTestingTransaction(connection: SqliteDatabase, i
 
 export function updatePaymentTransaction(connection: SqliteDatabase, input: UpdatePaymentInput) {
   const paymentId = requirePositiveInteger(input.id, 'Încasarea');
+  assertDriverCashPaymentMutable(connection,paymentId);
   const amount = requireMoneyPositive(input.amount, 'Suma încasată');
   const method = requireText(input.method, 'Metoda de plată', 20);
   if (method !== 'cash' && method !== 'transfer') throw new Error('Metoda de plată trebuie să fie cash sau transfer bancar.');
@@ -1156,6 +1158,7 @@ export function updatePaymentTransaction(connection: SqliteDatabase, input: Upda
 
 export function deletePaymentTransaction(connection: SqliteDatabase, input: DeletePaymentInput) {
   const paymentId = requirePositiveInteger(input?.id, 'Încasarea');
+  assertDriverCashPaymentMutable(connection,paymentId);
   const reason = requireText(input?.reason, 'Motivul ștergerii', 500);
   const operationId = requireText(input?.operationId, 'Identificatorul ștergerii', 36).toLowerCase();
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operationId)) throw new Error('Identificatorul ștergerii nu este valid.');

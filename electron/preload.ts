@@ -96,6 +96,11 @@ export const desktopApi = {
     toggleActive: (id: number, isActive: boolean) => ipcRenderer.invoke('toggle-employee', id, isActive),
   },
   dailyCash: {
+    getDriverCashStatus: () => ipcRenderer.invoke('driver-cash-status'),
+    correctDriverReceipt: (data: {rootId:string;amount:number;expectedRevision:number}) => ipcRenderer.invoke('driver-cash-correct',data),
+    retryDriverCashConflict: (operationId:string) => ipcRenderer.invoke('driver-cash-retry',operationId),
+    discardRejectedDriverCashOffice: (rootId:string) => ipcRenderer.invoke('driver-cash-discard-rejected',rootId),
+    syncDriverCash: () => ipcRenderer.invoke('driver-cash-sync'),
     getActiveDay: () => ipcRenderer.invoke('get-active-cash-day'),
     getTransactions: (dayId: number) => ipcRenderer.invoke('get-cash-transactions', dayId),
     addTransaction: (data: any) => ipcRenderer.invoke('add-cash-transaction', data),
@@ -103,7 +108,7 @@ export const desktopApi = {
     reopenDay: (dayId: number) => ipcRenderer.invoke('reopen-cash-day', dayId),
     initializeBalance: (dayId: number, actualBalance: number) =>
       ipcRenderer.invoke('initialize-cash-balance', dayId, actualBalance),
-    updateReceipt: (data: { id: number; amount: number; reference_id: number | null; reference_name?: string; notes?: string | null }) =>
+    updateReceipt: (data: { id: number; amount: number; reference_id: number | null; reference_name?: string; notes?: string | null; expectedRevision?: number }) =>
       ipcRenderer.invoke('update-cash-receipt', data),
     getTransactionsByDateRange: (startDate: string, endDate: string, category?: string) =>
       ipcRenderer.invoke('get-cash-transactions-by-date', startDate, endDate, category),

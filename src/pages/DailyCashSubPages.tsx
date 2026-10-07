@@ -1,3 +1,4 @@
+import {DriverCashStatus} from '../components/DriverCashStatus';
 import { confirmAction, notify } from '../utils/feedback';
 import React, { useEffect, useState } from 'react';
 import { useCashStore } from '../store/cashStore';
@@ -50,12 +51,12 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
     fetchData();
   }, [dateFilter, category, transactionsTrigger]);
 
-  const totalSum = data.reduce((sum, t) => sum + t.amount, 0);
+  const totalSum = data.reduce((sum, t) => sum + (t.type === 'OUT' ? -t.amount : t.amount), 0);
   const managesDriverReceipts = category === 'driver_collection' && deviceRole === 'writer';
 
   const beginReceiptEdit = (transaction: any) => {
     setEditingReceipt(transaction);
-    setEditAmount(Number(transaction.amount).toFixed(2));
+    setEditAmount(Number(transaction.driver_cash_amount_pence != null ? transaction.driver_cash_amount_pence / 100 : transaction.amount).toFixed(2));
     setEditDriverId(String(transaction.reference_id || 'other'));
     setEditSource(transaction.reference_name || '');
     setEditNotes(transaction.notes || '');
@@ -71,7 +72,7 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
       return;
     }
     try {
-      await api.dailyCash.updateReceipt({ id: editingReceipt.id, amount, reference_id: referenceId, reference_name: editSource, notes: editNotes });
+      await api.dailyCash.updateReceipt({ id: editingReceipt.id, amount, reference_id: referenceId, reference_name: editSource, notes: editNotes, expectedRevision: editingReceipt.driver_cash_revision });
       setEditingReceipt(null);
       await loadData();
     } catch (error: any) {
@@ -80,7 +81,7 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
   };
 
   const handleReceiptDelete = async (transaction: any) => {
-    if (!(await confirmAction(`Ștergi încasarea de £${Number(transaction.amount).toFixed(2)}?`))) return;
+    if (!(await confirmAction(`Ștergi încasarea de £${Number(transaction.driver_cash_amount_pence != null ? transaction.driver_cash_amount_pence / 100 : transaction.amount).toFixed(2)}?`))) return;
     try {
       await api.dailyCash.deleteTransaction(transaction.id);
       await loadData();
@@ -100,6 +101,7 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
 
   return (
     <div className="p-8 pb-32">
+      {category === 'driver_collection' && <DriverCashStatus writer={deviceRole === 'writer'} onChanged={loadData} />}
       <div className="flex flex-col gap-5 mb-8">
         <div>
           <h1 className="text-3xl font-bold text-slate-800 flex items-center gap-3">
@@ -173,6 +175,7 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
                        <td className="p-4 text-slate-500 text-sm">{timeFormatted}</td>
                        <td className="p-4">
                           <div className="font-medium text-slate-800">
+                            {t.driver_recorded_at && <span className="block text-xs">Aplicație șofer · {new Date(t.driver_recorded_at).toLocaleString()}</span>}
                             {t.driver_name ? <span className="flex items-center gap-1"><Truck size={14} className="text-slate-400"/> {t.driver_name}</span> : 
                              t.employee_name ? <span className="flex items-center gap-1"><User size={14} className="text-slate-400"/> {t.employee_name}</span> : 
                              t.reference_name ? <span className="flex items-center gap-1"><User size={14} className="text-slate-400"/> {t.reference_name}</span> : 
@@ -181,7 +184,7 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
                        </td>
                        <td className="p-4 text-slate-600 text-sm">{t.notes || '-'}</td>
                        <td className="p-4 text-right">
-                         <span className={`font-bold ${theme.text}`}>£{t.amount.toFixed(2)}</span>
+                         <span className={`font-bold ${theme.text}`}>£{(t.type === 'OUT' ? -t.amount : t.amount).toFixed(2)}</span>
                        </td>
                        {managesDriverReceipts && (
                          <td className="p-4 text-right">
@@ -216,7 +219,7 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
             <form onSubmit={handleReceiptUpdate} className="p-5 space-y-4">
               <label className="block text-sm font-medium text-slate-700">
                 Șofer
-                <select required value={editDriverId} onChange={(event) => setEditDriverId(event.target.value)} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg bg-white">
+                <select required disabled={!!editingReceipt?.driver_cash_root} value={editDriverId} onChange={(event) => setEditDriverId(event.target.value)} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg bg-white">
                   <option value="">-- Selectează sursa --</option><option value="other">Altă sursă</option>
                   {drivers.map((driver: any) => <option key={driver.id} value={driver.id}>{driver.name}</option>)}
                 </select>
@@ -228,7 +231,7 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
               </label>
               <label className="block text-sm font-medium text-slate-700">
                 Note
-                <input type="text" value={editNotes} onChange={(event) => setEditNotes(event.target.value)} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg" />
+                <input type="text" disabled={!!editingReceipt?.driver_cash_root} value={editNotes} onChange={(event) => setEditNotes(event.target.value)} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg" />
               </label>
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setEditingReceipt(null)} className="px-4 py-2 rounded-lg bg-slate-100 text-slate-700">Renunță</button>

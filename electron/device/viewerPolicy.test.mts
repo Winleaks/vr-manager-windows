@@ -67,3 +67,8 @@ test('viewer denies business writes, cloud publishing and unknown channels', () 
   assert.equal(isChannelAllowedForRole('viewer', 'sync-finished-products'), false);
   assert.equal(isChannelAllowedForRole('viewer', 'a-future-channel'), false);
 });
+
+test('driver receipt status is readable on Viewer; every financial mutation stays Writer-only',()=>{
+  assert.equal(isChannelAllowedForRole('viewer','driver-cash-status'),true);
+  for(const channel of ['driver-cash-correct','driver-cash-retry','driver-cash-sync']) assert.equal(isChannelAllowedForRole('viewer',channel),false);
+});

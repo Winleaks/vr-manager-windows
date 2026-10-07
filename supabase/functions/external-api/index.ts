@@ -202,11 +202,48 @@ function optionalOrderStatus(value: unknown): string | undefined {
   return value;
 }
 
+function ensureCashDatabaseSuccess(error: unknown): void {
+  if (!error) return;
+  const code=(error as {code?:string}).code;
+  if (code==='PT409' || code==='23505') throw new ExternalApiRequestError(409,'cash_conflict','Încasarea a fost modificată sau necesită verificare.');
+  if (code==='42501') throw new ExternalApiRequestError(403,'cash_writer_denied','Writer neautorizat.');
+  if (code==='22023') throw new ExternalApiRequestError(400,'cash_invalid','Datele încasării sunt invalide.');
+  throw new Error('database_operation_failed');
+}
 function ensureDatabaseSuccess(error: unknown): void {
   if (error) throw new Error("database_operation_failed");
 }
 
 const actions: Record<string, ActionDefinition> = {
+  "driver.cash.pending": {
+    methods: new Set(["POST"]), scope: "billing:write", mutates: false,
+    handler: async (p) => {
+      const {data,error}=await supabaseAdmin.rpc("hub_driver_cash_pending",{p_source:requireUuid(p.source_id,"source_id"),p_after:parseBoundedInteger(p.after,0,0,Number.MAX_SAFE_INTEGER,"after")});
+      ensureCashDatabaseSuccess(error); return data;
+    },
+  },
+  "driver.cash.ack": {
+    methods: new Set(["POST"]), scope: "billing:write", mutates: true,
+    handler: async (p) => {
+      const {data,error}=await supabaseAdmin.rpc("hub_driver_cash_ack",{p_source:requireUuid(p.source_id,"source_id"),p_operation_id:requireUuid(p.operation_id,"operation_id"),p_state:p.state,p_result:p.result});
+      ensureCashDatabaseSuccess(error); return data;
+    },
+  },
+  "driver.cash.correct": {
+    methods: new Set(["POST"]), scope: "billing:write", mutates: true,
+    handler: async (p) => {
+      const {data,error}=await supabaseAdmin.rpc("hub_correct_driver_cash",{p_source:requireUuid(p.source_id,"source_id"),p_operation_id:requireUuid(p.operation_id,"operation_id"),p_root_operation_id:requireUuid(p.root_operation_id,"root_operation_id"),p_previous_operation_id:requireUuid(p.previous_operation_id,"previous_operation_id"),p_expected_revision:p.expected_revision,p_recorded_at_ms:p.recorded_at_ms,p_amount_pence:p.amount_pence});
+      ensureCashDatabaseSuccess(error); return data;
+    },
+  },
+
+  "driver.cash.retry": {
+    methods:new Set(["POST"]),scope:"billing:write",mutates:true,
+    handler:async(p)=>{
+      const {data,error}=await supabaseAdmin.rpc("hub_retry_driver_cash",{p_source:requireUuid(p.source_id,"source_id"),p_operation_id:requireUuid(p.operation_id,"operation_id")});
+      ensureCashDatabaseSuccess(error);return data;
+    },
+  },
   "billing.status": {
     methods: new Set(["POST"]), scope: "billing:write", mutates: false,
     handler: async () => {

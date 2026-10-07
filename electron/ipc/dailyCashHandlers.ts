@@ -1,3 +1,5 @@
+import {db} from '../database/db';
+import {correctHubDriverCash,driverCashStatus,retryDriverCashConflict,syncDriverCash,discardRejectedDriverCashOffice} from '../integrations/driverCashSync';
 import { app, shell } from 'electron';
 import { driverRepo } from '../database/repositories/driverRepo';
 import { employeeRepo } from '../database/repositories/employeeRepo';
@@ -38,6 +40,12 @@ export function registerDailyCashHandlers() {
     return employeeRepo.toggleActive(id, isActive);
   });
 
+  handleTrustedIpc('driver-cash-status', () => driverCashStatus());
+  handleTrustedIpc('driver-cash-correct', (_e, data) => correctHubDriverCash(data.rootId,data.amount,data.expectedRevision));
+  handleTrustedIpc('driver-cash-retry', (_e, operationId) => retryDriverCashConflict(operationId));
+  handleTrustedIpc('driver-cash-discard-rejected',(_e,rootId)=>discardRejectedDriverCashOffice(rootId));
+  handleTrustedIpc('driver-cash-sync', () => syncDriverCash());
+
   // Cash Transactions
   handleTrustedIpc('get-active-cash-day', () => {
     return cashRepo.getActiveDay(getDeviceRole() === 'writer');
@@ -58,6 +66,8 @@ export function registerDailyCashHandlers() {
     return cashRepo.initializeBalance(dayId, actualBalance);
   });
   handleTrustedIpc('update-cash-receipt', (_e, data) => {
+    const linked = db.prepare('SELECT driver_cash_root FROM cash_transactions WHERE id=? AND driver_cash_root IS NOT NULL').get(data.id);
+    if (linked) return correctHubDriverCash(data.id,data.amount,data.expectedRevision);
     return cashRepo.updateReceipt(data);
   });
   handleTrustedIpc('get-cash-transactions-by-date', (_e, startDate, endDate, category) => {
@@ -93,6 +103,8 @@ export function registerDailyCashHandlers() {
     return { success: true, filePath, deliveryMethod: 'explorer-fallback', usedWebFallback };
   });
   handleTrustedIpc('delete-cash-transaction', (_e, transactionId) => {
+    const linked = db.prepare('SELECT r.revision AS driver_cash_revision FROM cash_transactions t JOIN driver_cash_receipts r ON r.root_id=t.driver_cash_root WHERE t.id=?').get(transactionId) as {driver_cash_revision:number}|undefined;
+    if (linked) return correctHubDriverCash(transactionId,0,linked.driver_cash_revision);
     return cashRepo.deleteTransaction(transactionId);
   });
 }

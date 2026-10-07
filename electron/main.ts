@@ -1,3 +1,4 @@
+import {startDriverCashSync} from './integrations/driverCashSync';
 import {startBillingPublisher} from './integrations/billingPublisher';
 import { startDocumentSync } from './integrations/documentSync';
 import { app, BrowserWindow, dialog, session } from 'electron'
@@ -164,6 +165,7 @@ app.whenReady().then(async () => {
   })
   initDb()
   startBillingPublisher()
+  startDriverCashSync()
   startProtectedBillingPublisher()
   startDocumentSync()
   if (getDeviceRole() === 'writer') {
