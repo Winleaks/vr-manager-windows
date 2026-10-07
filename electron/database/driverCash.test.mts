@@ -1,3 +1,4 @@
+import {processDriverCashBatch} from '../integrations/driverCashProcessor.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -59,4 +60,36 @@ test('closed current day reopens with audit; unknown mapping rolls back complete
  applyDriverCash(db,command,'2026-10-07');assert.equal((db.prepare('SELECT is_closed FROM cash_days').get() as any).is_closed,0);
  assert.equal((db.prepare("SELECT count(*) AS value FROM cash_day_events WHERE event_type='reopen'").get() as any).value,1);
  assert.throws(()=>applyDriverCash(db,{...command,operation_id:randomUUID(),root_operation_id:randomUUID(),store_id:randomUUID()}),/inițială/);db.close();
+});
+
+test('lost acknowledgment retries once without duplicating money and restored older ledger stops',async()=>{
+ const {db,command}=fixture();let cursor=0;let sent=0;
+ const input={...command,sequence_id:1,state:'PENDING'};
+ const deps={current:()=>true,verifyCompany:()=>{},saveCursor:(n:number)=>{cursor=n;},ack:async()=>{sent++;if(sent===1)throw new Error('lost response');}};
+ await assert.rejects(processDriverCashBatch(db,[input],'writer',deps),/lost response/);
+ assert.equal(cursor,0);assert.equal((db.prepare('SELECT COUNT(*) AS count FROM cash_transactions').get() as any).count,1);
+ await processDriverCashBatch(db,[{...input,driver_name:'Updated driver label'}],'writer',deps);
+ assert.equal(cursor,1);assert.equal((db.prepare('SELECT COUNT(*) AS count FROM cash_transactions').get() as any).count,1);
+ const other=fixture();await assert.rejects(processDriverCashBatch(other.db,[{...input,state:'PROCESSED'}],'writer',deps),/restaurarea/);
+ assert.equal((other.db.prepare('SELECT COUNT(*) AS count FROM payments').get() as any).count,0);
+ db.close();other.db.close();
+});
+test('two stores share oldest-invoice allocation without crossing company or issuer',()=>{
+ const {db,command}=fixture();const issuer=(db.prepare('SELECT issuer_id FROM companies WHERE id=1').get() as any).issuer_id;
+ db.exec("INSERT INTO stores(id,company_id,name) VALUES(2,1,'Other store');UPDATE invoices SET store_id=2 WHERE id=1;");
+ const foreign=(db.prepare('SELECT id FROM billing_issuers WHERE id!=? LIMIT 1').get(issuer) as any).id;
+ db.prepare("INSERT INTO invoices(id,store_id,invoice_number,invoice_date,total_amount,paid_amount,status) VALUES(3,1,'OTHER','2020-01-01',100,0,'unpaid')").run();
+ db.prepare("INSERT INTO invoice_identities(invoice_id,issuer_id,series,sequence_number,reference,issuer_snapshot_json) VALUES(3,?,'OTHER',1,'OTHER','{}')").run(foreign);
+ applyDriverCash(db,{...command,amount_pence:6000},'2026-10-07');
+ assert.deepEqual(db.prepare('SELECT paid_amount FROM invoices ORDER BY id').all(),[{paid_amount:50},{paid_amount:10},{paid_amount:0}]);db.close();
+});
+
+test('missing explicit company is retained as a conflict without assigning cash by label',async()=>{
+ const {db,command}=fixture();let acknowledged:any;
+ await processDriverCashBatch(db,[{...command,company_id:null,sequence_id:1,state:'PENDING'}],'writer',{
+  current:()=>true,verifyCompany:()=>{},saveCursor:()=>{},ack:async(payload)=>{acknowledged=payload;},
+ });
+ assert.equal(acknowledged.state,'CONFLICT');assert.match(acknowledged.result.error,/Asocierea/);
+ assert.equal((db.prepare('SELECT COUNT(*) AS value FROM payments').get() as any).value,0);
+ assert.equal((db.prepare('SELECT COUNT(*) AS value FROM cash_transactions').get() as any).value,0);db.close();
 });

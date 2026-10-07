@@ -1,3 +1,11 @@
+### VR - Hub Management v0.1.126
+
+- Writer preia automat declarațiile de încasare din aplicația șoferilor, la pornire și la fiecare 30 de secunde. Hub-ul poate fi închis în timpul livrărilor; declarațiile rămân pe server până la import.
+- O încasare apare în Daily Cash → Încasări șoferi și crește casa. Aceeași tranzacție achită facturile restante ale companiei și emitentului, de la cea mai veche; surplusul devine credit. Biroul nu o introduce din nou.
+- Corectările refac împreună casa, facturile și creditul, cu istoric. Asocierile lipsă, intervențiile concurente și creditul deja utilizat apar pentru verificare. Viewer poate doar consulta.
+- Încasările întârziate și diferențele intră în ziua curentă. O zi curentă închisă se redeschide cu audit și raportul trebuie regenerat; zilele istorice rămân intacte.
+- Migrarea locală 26 păstrează operațiile existente. Include toate corecțiile și documentele v0.1.125.
+
 ### VR - Hub Management v0.1.125
 
 - Câmpul „Payment due” este complet vizibil când factura afișează „Account balance”. Caseta soldului și separatorul se poziționează sub scadență, fără suprapunere.

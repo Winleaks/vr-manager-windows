@@ -116,8 +116,8 @@ export const desktopApi = {
       ipcRenderer.invoke('get-historical-z-reports', startDate, endDate),
     getDailyReport: (date: string) => ipcRenderer.invoke('get-daily-cash-report', date),
     prepareWhatsAppReport: (date: string) => ipcRenderer.invoke('prepare-daily-cash-whatsapp', date),
-    deleteTransaction: (transactionId: number) =>
-      ipcRenderer.invoke('delete-cash-transaction', transactionId),
+    deleteTransaction: (transactionId: number, expectedRevision?:number) =>
+      ipcRenderer.invoke('delete-cash-transaction', transactionId, expectedRevision),
     onDayRolledOver: (callback: EventCallback) => subscribe('cash-day-rolled-over', callback),
     onDayRolloverError: (callback: EventCallback) => subscribe('cash-day-rollover-error', callback),
   },

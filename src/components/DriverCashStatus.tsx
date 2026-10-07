@@ -8,7 +8,7 @@ export function DriverCashStatus({writer,onChanged}:{writer:boolean;onChanged:()
   const [error,setError]=useState('');
   useEffect(()=>{
     let active=true;
-    const refresh=()=>api.dailyCash.getDriverCashStatus().then(value=>{if(active) setStatus(value);}).catch(()=>{});
+    const refresh=()=>api.dailyCash.getDriverCashStatus().then(value=>{if(active) setStatus(value);}).catch(()=>{if(active)setError('Declarațiile șoferilor nu au putut fi încărcate.');});
     refresh();const timer=setInterval(()=>{refresh();void onChanged();},15000);
     return()=>{active=false;clearInterval(timer);};
   },[onChanged]);
@@ -18,21 +18,21 @@ export function DriverCashStatus({writer,onChanged}:{writer:boolean;onChanged:()
     catch(e:any){setError(e?.message||'Operația necesită verificare.');}
     finally{setBusy(false);}
   }
-  if(!status)return null;
+  if(!status)return error?<p role="alert" className="text-red-700">{error}</p>:null;
   return <section className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
     <div className="flex items-center justify-between gap-3"><h2 className="font-semibold">Declarații din aplicația șoferilor</h2>
       {writer&&<button disabled={busy} onClick={()=>void action(api.dailyCash.syncDriverCash)} className="text-sm text-blue-700">Sincronizează acum</button>}
     </div>
     {(error||status.error)&&<p role="alert" className="mt-2 text-sm text-red-700">{error||status.error}</p>}
     {status.conflicts.map((c:any)=><div key={c.operation_id} className="mt-2 rounded bg-red-50 p-3 text-sm">
-      <span>{JSON.parse(c.result).error||'Încasarea necesită verificare.'}</span>
+      <span>{JSON.parse(c.result).driver_name} · {JSON.parse(c.result).store_name} · {JSON.parse(c.result).error||'Încasarea necesită verificare.'}</span>
       {writer&&<button disabled={busy} onClick={()=>void action(()=>api.dailyCash.retryDriverCashConflict(c.operation_id))} className="ml-3 underline">Reîncearcă după rezolvare</button>}
     </div>)}
     {status.officeRequests.map((r:any)=><p key={r.root_id} className="mt-2 text-sm text-amber-800">{r.last_error||'Corectare de la birou în așteptarea sincronizării.'}{writer&&r.state==='CONFLICT'&&<button disabled={busy} onClick={()=>void action(()=>api.dailyCash.discardRejectedDriverCashOffice(r.root_id))} className="ml-2 underline">Renunță la corectarea respinsă</button>}</p>)}
     {status.invalidReports?.map((r:any)=><p key={r.date} className="mt-2 text-sm text-amber-800">Raportul Daily Cash pentru {r.date} trebuie regenerat după încasările din aplicație.</p>)}
     <details className="mt-3"><summary className="cursor-pointer text-sm">Ultimele declarații, inclusiv cele fără încasare</summary>
       <div className="mt-2 space-y-2">{status.receipts.map((r:any)=><div key={r.root_id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm">
-        <span>{r.driver_name} · {r.store_name} · {new Date(r.recorded_at_ms).toLocaleString()} · {r.amount_pence?`£${(r.amount_pence/100).toFixed(2)}`:'Fără încasare'}</span>
+        <span>{r.driver_name} · {r.store_name} · {r.company_name} · {new Date(r.recorded_at_ms).toLocaleString()} · {r.amount_pence?`£${(r.amount_pence/100).toFixed(2)}`:'Fără încasare'}</span>
         {writer&&<button disabled={busy} onClick={()=>{setEditing(r);setAmount((r.amount_pence/100).toFixed(2));}} className="text-blue-700">Corectează încasarea</button>}
       </div>)}</div>
     </details>

@@ -6,18 +6,20 @@ import { rolloverCashDay, localIsoDate } from './cashDayRollover.ts';
 
 export interface DriverCashCommand {
   operation_id: string; root_operation_id: string; previous_operation_id: string | null;
-  sequence_id?: number; state?: string; revision: number; recorded_at_ms: number; amount_pence: number;
-  driver_id: string; driver_name: string; store_id: string; store_name: string; company_id: string;
+  collected_at_ms?: number; sequence_id?: number; state?: string; revision: number; recorded_at_ms: number; amount_pence: number;
+  driver_id: string; driver_name: string; store_id: string; store_name: string; company_id: string | null;
 }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function validateDriverCashCommand(input: unknown): DriverCashCommand {
   if (!input || typeof input !== 'object') throw new Error('Format încasare invalid.');
   const c = input as DriverCashCommand;
-  for (const key of ['operation_id','root_operation_id','driver_id','store_id','company_id'] as const)
+  for (const key of ['operation_id','root_operation_id','driver_id','store_id'] as const)
     if (typeof c[key] !== 'string' || !uuid.test(c[key])) throw new Error('Identitate încasare invalidă.');
+  if (c.company_id !== null && (typeof c.company_id !== 'string' || !uuid.test(c.company_id))) throw new Error('Identitate companie invalidă.');
   if (c.previous_operation_id !== null && (typeof c.previous_operation_id !== 'string' || !uuid.test(c.previous_operation_id))) throw new Error('Operație anterioară invalidă.');
   if (!Number.isSafeInteger(c.revision) || c.revision < 1 || !Number.isSafeInteger(c.recorded_at_ms) || c.recorded_at_ms < 946684800000 ||
       !Number.isSafeInteger(c.amount_pence) || c.amount_pence < 0 || c.amount_pence > 100000000000) throw new Error('Sumă sau versiune invalidă.');
+  if(c.collected_at_ms !== undefined && (!Number.isSafeInteger(c.collected_at_ms) || c.collected_at_ms<946684800000 || c.collected_at_ms>c.recorded_at_ms)) throw new Error('Data încasării este invalidă.');
   for (const key of ['driver_name','store_name'] as const) if (typeof c[key] !== 'string' || c[key].length > 300) throw new Error('Denumire invalidă.');
   if (c.revision === 1 && (c.operation_id !== c.root_operation_id || c.previous_operation_id !== null)) throw new Error('Confirmare inițială invalidă.');
   return c;
@@ -41,7 +43,7 @@ export function installDriverCash(db: Database.Database) {
 }
 export function driverCashRequest(c: DriverCashCommand) {
   return JSON.stringify({operation_id:c.operation_id,root_operation_id:c.root_operation_id,previous_operation_id:c.previous_operation_id,
-    revision:c.revision,recorded_at_ms:c.recorded_at_ms,amount_pence:c.amount_pence,driver_id:c.driver_id,store_id:c.store_id,company_id:c.company_id});
+    revision:c.revision,collected_at_ms:c.collected_at_ms??c.recorded_at_ms,recorded_at_ms:c.recorded_at_ms,amount_pence:c.amount_pence,driver_id:c.driver_id,store_id:c.store_id,company_id:c.company_id});
 }
 function companyPaymentDate(ms: number) {
   return new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(ms);
@@ -79,7 +81,7 @@ export function applyDriverCash(db: Database.Database, input: unknown, today = l
     }
     if (c.amount_pence > 0 && (!old || before !== c.amount_pence)) {
       const maxId = (db.prepare('SELECT COALESCE(MAX(id),0) AS id FROM payments').get() as any).id;
-      recordCompanyPaymentTransaction(db,{companyId:identity.company_id,issuerId,amount:c.amount_pence/100,paymentDate:companyPaymentDate(c.recorded_at_ms),
+      recordCompanyPaymentTransaction(db,{companyId:identity.company_id,issuerId,amount:c.amount_pence/100,paymentDate:companyPaymentDate(c.collected_at_ms??c.recorded_at_ms),
         method:'cash',notes:`Aplicație șofer · ${c.driver_name} · ${c.store_name} · ${c.root_operation_id}`});
       const payments = db.prepare('SELECT id,amount FROM payments WHERE id>? AND company_id=? AND issuer_id=?').all(maxId,identity.company_id,issuerId) as any[];
       if (Math.round(payments.reduce((s,p)=>s+p.amount,0)*100) !== c.amount_pence) throw new Error('Alocările nu corespund sumei încasate.');
@@ -97,12 +99,12 @@ export function applyDriverCash(db: Database.Database, input: unknown, today = l
       // Keep import time for accounting; the actual collection time is stored separately.
       db.prepare(`INSERT INTO cash_transactions(cash_day_id,type,category,amount,reference_id,notes,driver_cash_root,driver_recorded_at)
         VALUES(?,?,'driver_collection',?,?,?,?,?)`).run(day.currentDayId,difference>0?'IN':'OUT',Math.abs(difference)/100,driver.id,
-        `Aplicație șofer · ${c.store_name} · ${difference<0?'Corectare încasare':'Încasare'} · ${c.root_operation_id}`,c.root_operation_id,new Date(c.recorded_at_ms).toISOString());
+        `Aplicație șofer · ${c.store_name} · ${difference<0?'Corectare încasare':'Încasare'} · ${c.root_operation_id}`,c.root_operation_id,new Date(c.collected_at_ms??c.recorded_at_ms).toISOString());
       db.prepare('INSERT INTO driver_cash_report_invalidations(cash_day_id) VALUES(?) ON CONFLICT(cash_day_id) DO UPDATE SET invalidated_at=CURRENT_TIMESTAMP').run(day.currentDayId);
     }
     db.prepare(`INSERT INTO driver_cash_receipts VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(root_id) DO UPDATE SET
       latest_operation_id=excluded.latest_operation_id,revision=excluded.revision,amount_pence=excluded.amount_pence,recorded_at_ms=excluded.recorded_at_ms`)
-      .run(c.root_operation_id,c.operation_id,c.revision,identity.company_id,identity.id,driver.id,issuerId,c.amount_pence,c.recorded_at_ms);
+      .run(c.root_operation_id,c.operation_id,c.revision,identity.company_id,identity.id,driver.id,issuerId,c.amount_pence,c.collected_at_ms??c.recorded_at_ms);
     const result = {root_operation_id:c.root_operation_id,revision:c.revision,amount_pence:c.amount_pence};
     db.prepare("INSERT INTO driver_cash_operations(operation_id,root_id,request,state,result) VALUES(?,?,?,'PROCESSED',?)")
       .run(c.operation_id,c.root_operation_id,request,JSON.stringify(result));
@@ -111,7 +113,7 @@ export function applyDriverCash(db: Database.Database, input: unknown, today = l
   }))();
 }
 export function recordDriverCashConflict(db: Database.Database,c: DriverCashCommand,error: string) {
-  const result = {error:error.slice(0,500)};
+  const result = {error:error.slice(0,500),driver_name:c.driver_name,store_name:c.store_name,store_id:c.store_id,company_id:c.company_id};
   db.prepare("INSERT OR IGNORE INTO driver_cash_operations(operation_id,root_id,request,state,result) VALUES(?,?,?,'CONFLICT',?)")
     .run(c.operation_id,c.root_operation_id,driverCashRequest(c),JSON.stringify(result));
   return {state:'CONFLICT',result};

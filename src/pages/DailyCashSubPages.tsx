@@ -83,7 +83,7 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
   const handleReceiptDelete = async (transaction: any) => {
     if (!(await confirmAction(`Ștergi încasarea de £${Number(transaction.driver_cash_amount_pence != null ? transaction.driver_cash_amount_pence / 100 : transaction.amount).toFixed(2)}?`))) return;
     try {
-      await api.dailyCash.deleteTransaction(transaction.id);
+      await api.dailyCash.deleteTransaction(transaction.id,transaction.driver_cash_revision);
       await loadData();
     } catch (error: any) {
       notify(error?.message || 'Încasarea nu a putut fi ștearsă.');
@@ -182,13 +182,13 @@ export function TransactionHistoryPage({ title, category, icon, color, modalType
                              '-'}
                           </div>
                        </td>
-                       <td className="p-4 text-slate-600 text-sm">{t.notes || '-'}</td>
+                       <td className="p-4 text-slate-600 text-sm">{t.driver_cash_root ? <><span className="block">{t.driver_cash_store_name} · {t.driver_cash_company_name}</span><span>{t.type === 'OUT' ? 'Corectare încasare' : 'Încasare'}</span></> : t.notes || '-'}</td>
                        <td className="p-4 text-right">
                          <span className={`font-bold ${theme.text}`}>£{(t.type === 'OUT' ? -t.amount : t.amount).toFixed(2)}</span>
                        </td>
                        {managesDriverReceipts && (
                          <td className="p-4 text-right">
-                           {Number(t.cash_day_closed) === 0 ? (
+                           {Number(t.cash_day_closed) === 0 || t.driver_cash_root ? (
                              <div className="inline-flex gap-1">
                                <button type="button" onClick={() => beginReceiptEdit(t)} className="p-2 rounded-lg text-blue-600 hover:bg-blue-50" title="Modifică încasarea">
                                  <Pencil size={16} />

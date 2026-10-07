@@ -1,8 +1,9 @@
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { db, waitForDatabaseReady } from '../database/db';
 import { getDeviceRole } from '../device/deviceRole';
 import { createVrBakerClient } from './vrBakerIntegration';
-import { applyDriverCash, recordDriverCashConflict, validateDriverCashCommand, driverCashRequest } from '../database/driverCash';
+import {processDriverCashBatch} from './driverCashProcessor';
+import {normalBillingReadDatabase} from '../database/normalBillingVisibility';
 import { publishBilling } from './billingPublisher';
 let running: Promise<void> | undefined;
 export function syncDriverCash() {
@@ -35,29 +36,12 @@ async function run() {
   const cursor = Number((db.prepare("SELECT value FROM app_settings WHERE key='driver_cash_cursor'").get() as any)?.value || 0);
   const incoming = await client.request<unknown>('driver.cash.pending',{source_id:source,after:cursor});
   if (!Array.isArray(incoming) || incoming.length>50) throw new Error('Lista încasărilor este invalidă.');
-  for (const input of incoming) {
-    if (db!==connection || getDeviceRole()!=='writer') return;
-    const command = validateDriverCashCommand(input);
-    const known = db.prepare('SELECT request,state,result FROM driver_cash_operations WHERE operation_id=?').get(command.operation_id) as any;
-    if (!Number.isSafeInteger(command.sequence_id) || (command.sequence_id ?? 0)<1) throw new Error('Secvența încasării este invalidă.');
-    if (command.state === 'PROCESSED' && (!known || known.request !== driverCashRequest(command) || known.state!=='PROCESSED'))
-      throw new Error('Baza Hub nu conține o încasare deja procesată pe server. Verifică restaurarea sau identitatea Writer înainte de continuare.');
-    if (command.state === 'CONFLICT') {
-      recordDriverCashConflict(db,command,'Încasarea necesită verificare la birou.');
-      saveCursor(command.sequence_id!);continue;
-    }
-    if (command.state!=='PENDING' && command.state!=='PROCESSED') throw new Error('Stare încasare invalidă.');
-    let receipt;
-    try { receipt = applyDriverCash(db,command); }
-    catch (error) {
-      // Storage failures remain retriable; verified business conflicts require office review.
-      if ((error as any)?.code?.startsWith('SQLITE_')) throw error;
-      receipt = recordDriverCashConflict(db,command,error instanceof Error?error.message:'Încasarea necesită verificare.');
-    }
-    if (command.state === 'PENDING') await client.request('driver.cash.ack',{source_id:source,operation_id:command.operation_id,...receipt},`${command.operation_id}:ack:${receipt.state}:${createHash('sha256').update(JSON.stringify(receipt.result)).digest('hex').slice(0,16)}`);
-    saveCursor(command.sequence_id!);
-    if (receipt.state==='CONFLICT') break;
-  }
+  await processDriverCashBatch(db,incoming,source,{
+    current:()=>db===connection && getDeviceRole()==='writer',saveCursor,
+    verifyCompany:(company)=>{if(!normalBillingReadDatabase(db).prepare('SELECT 1 FROM companies WHERE supabase_company_id=?').get(company))
+      throw new Error('Compania nu este disponibilă în facturarea normală. Verifică asocierea încasării.');},
+    ack:(payload,key)=>client.request('driver.cash.ack',payload,key),
+  });
   if (incoming.length) await publishBilling();
 }
 export async function correctHubDriverCash(transactionId: number | string, amount: number, expectedRevision?: number) {
@@ -66,6 +50,7 @@ export async function correctHubDriverCash(transactionId: number | string, amoun
   const row = typeof transactionId === 'string' ? db.prepare('SELECT * FROM driver_cash_receipts WHERE root_id=?').get(transactionId) as any
     : db.prepare(`SELECT r.* FROM cash_transactions t JOIN driver_cash_receipts r ON r.root_id=t.driver_cash_root WHERE t.id=?`).get(transactionId) as any;
   if (!row) throw new Error('Încasarea nu există.');
+  if (!normalBillingReadDatabase(db).prepare('SELECT 1 FROM companies WHERE id=?').get(row.company_id)) throw new Error('Compania nu este disponibilă în facturarea normală.');
   if (row.revision!==expectedRevision) throw new Error('Încasarea s-a modificat. Reîncarcă pagina.');
   const previous = db.prepare('SELECT * FROM driver_cash_office_outbox WHERE root_id=?').get(row.root_id) as any;
   if (previous) {
@@ -82,7 +67,13 @@ export async function correctHubDriverCash(transactionId: number | string, amoun
   return true;
 }
 export function startDriverCashSync() {
-  const attempt = () => void syncDriverCash().then(()=>setSyncError(null)).catch(error=>setSyncError(error instanceof Error?error.message:'Sincronizare indisponibilă.'));
+  const attempt = () => {
+    if((db.prepare("SELECT value FROM app_settings WHERE key='driver_cash_sync_paused'").get() as any)?.value==='1') return;
+    void syncDriverCash().then(()=>setSyncError(null)).catch(error=>{
+      setSyncError(error instanceof Error?error.message:'Sincronizare indisponibilă.');
+      if((error as any)?.retryable===false) db.prepare("INSERT INTO app_settings(key,value) VALUES('driver_cash_sync_paused','1') ON CONFLICT(key) DO UPDATE SET value='1'").run();
+    });
+  };
   attempt();
   setInterval(attempt,30_000).unref();
 }
@@ -97,8 +88,8 @@ function setSyncError(error: string | null) {
 export function driverCashStatus() {
   return {error:(db.prepare("SELECT value FROM app_settings WHERE key='driver_cash_sync_error'").get() as any)?.value??null,
     conflicts:db.prepare("SELECT operation_id,root_id,result FROM driver_cash_operations WHERE state='CONFLICT'").all(),
-    receipts:db.prepare(`SELECT r.*,s.name AS store_name,d.name AS driver_name FROM driver_cash_receipts r
-      JOIN stores s ON s.id=r.store_id JOIN drivers d ON d.id=r.driver_id ORDER BY recorded_at_ms DESC LIMIT 100`).all(),
+    receipts:normalBillingReadDatabase(db).prepare(`SELECT r.*,s.name AS store_name,d.name AS driver_name,c.name AS company_name FROM driver_cash_receipts r
+      JOIN stores s ON s.id=r.store_id JOIN companies c ON c.id=r.company_id JOIN drivers d ON d.id=r.driver_id ORDER BY recorded_at_ms DESC LIMIT 100`).all(),
     invalidReports:db.prepare('SELECT d.date FROM driver_cash_report_invalidations i JOIN cash_days d ON d.id=i.cash_day_id').all(),
     officeRequests:db.prepare('SELECT root_id,state,last_error FROM driver_cash_office_outbox').all()};
 }
@@ -126,4 +117,9 @@ export function discardRejectedDriverCashOffice(rootId:string) {
     db.prepare("INSERT INTO billing_audit_events(event_type,details) VALUES('driver_cash_office_rejected',?)").run(JSON.stringify(row));
     db.prepare("DELETE FROM driver_cash_office_outbox WHERE root_id=? AND state='CONFLICT'").run(rootId);
   })();
+}
+
+export function resumeDriverCashSync() {
+  db.prepare("DELETE FROM app_settings WHERE key='driver_cash_sync_paused'").run();
+  return syncDriverCash();
 }
