@@ -10,14 +10,31 @@ import { generateCreditNotePdf } from '../reports/creditNotePdf';
 import { saveCreditNotePdf } from '../reports/creditNoteDelivery';
 import { withInvoiceDriveLock } from './invoiceDriveDocument';
 import { invoiceCopyCleanupError, retryInvoiceCopyCleanup } from '../database/invoiceDriveIdentity';
-import { normalBillingReadDatabase } from '../database/normalBillingVisibility';
+import { normalBillingReadDatabase, normalBillingVisibilityReady } from '../database/normalBillingVisibility';
+import type { DocumentSyncStatus } from '../../src/shared/documentSyncTypes';
 
 let running = false;
 let workerError: string | null = null;
 
-export function getDocumentSyncStatus() {
-  return { ...documentSyncStatus(normalBillingReadDatabase(db)), running, workerError:workerError||invoiceCopyCleanupError(normalBillingReadDatabase(db)),
-    canRetry: getDeviceRole() === 'writer', connected: Boolean(isDocumentDriveConnected()) };
+export function getDocumentSyncStatus(): DocumentSyncStatus {
+  const canRetry = getDeviceRole() === 'writer';
+  const connected = Boolean(isDocumentDriveConnected());
+  // Entity refreshes deliberately invalidate this projection. Until it is
+  // verified, neither counts nor document references may use the raw tables.
+  if (!normalBillingVisibilityReady(db)) return {
+    pending: null, blocked: null, items: [], running, workerError: null, canRetry, connected,
+    verificationPending: true,
+    statusMessage: !canRetry
+      ? 'Documentele așteaptă verificarea facturării pe Writer. Sincronizează baza actualizată de Writer.'
+      : !connected
+        ? 'Verificarea documentelor așteaptă conexiunea Drive. Reconectează contul din Setări pe Writer.'
+        : running
+          ? 'Se verifică facturarea înaintea sincronizării documentelor…'
+          : 'Documentele așteaptă verificarea facturării. Reîncercarea este automată; verifică legătura cu Drive pe Writer dacă mesajul persistă.',
+  };
+  const reader = normalBillingReadDatabase(db);
+  return { ...documentSyncStatus(reader), running, workerError: workerError || invoiceCopyCleanupError(reader),
+    canRetry, connected, verificationPending: false, statusMessage: null };
 }
 
 export async function syncCreditNoteDocument(id: number) {
@@ -76,8 +93,11 @@ export async function syncPendingDocuments() {
 
 export function retryPendingDocuments() {
   if (getDeviceRole() !== 'writer') throw new Error('Doar Writer poate relua încărcările.');
-  retryDocumentSync(db);
-  retryInvoiceCopyCleanup(db);
+  // An unverified snapshot must be refreshed before changing document jobs.
+  if (normalBillingVisibilityReady(db)) {
+    retryDocumentSync(db);
+    retryInvoiceCopyCleanup(db);
+  }
   workerError = null;
   void syncPendingDocuments();
   return getDocumentSyncStatus();

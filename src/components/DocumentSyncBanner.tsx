@@ -33,10 +33,10 @@ export function DocumentSyncBanner() {
     catch { setError('Reluarea nu a pornit. Verifică rolul Writer și conexiunea Drive.'); }
     finally { busy.current = false; setRetrying(false); }
   };
-  if (!error && !status?.pending && !status?.workerError) return null;
+  if (!error && !status?.pending && !status?.workerError && !status?.verificationPending) return null;
   return <aside className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-950">
     <div className="flex items-center justify-between gap-3">
-      <p role="status">{error || status?.workerError || `Salvat local — PDF-uri neconfirmate în Drive: ${status?.pending}.`}</p>
+      <p role="status">{error || status?.statusMessage || status?.workerError || `Salvat local — PDF-uri neconfirmate în Drive: ${status?.pending}.`}</p>
       {status?.canRetry ? <button type="button" onClick={retry} disabled={retrying || status.running}
         title="Reîncearcă documentele în Drive" aria-label="Reîncearcă documentele în Drive"
         className="rounded p-2 hover:bg-amber-100 disabled:opacity-50 focus-visible:outline-2">

@@ -6,6 +6,10 @@ import { runInNewContext } from 'node:vm';
 import { createRequire } from 'node:module';
 import ts from 'typescript';
 import * as queue from '../database/documentSyncQueue.ts';
+import * as visibility from '../database/normalBillingVisibility.ts';
+import { initialSchema } from '../database/schema.ts';
+import { ensureBillingIssuerSchema } from '../database/billingIssuers.ts';
+import { ensureCreditNoteSchema } from '../database/creditNotes.ts';
 import { withInvoiceDriveLock } from './invoiceDriveDocument.ts';
 import { withDriveFolderLock } from './driveFolderLock.ts';
 import { resolveCompanyInvoiceFolder } from './invoiceDriveFolder.ts';
@@ -14,17 +18,33 @@ const require=createRequire(import.meta.url);
 const compiled=ts.transpileModule(readFileSync(new URL('./documentSync.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText;
 function fixture() {
   const db=new Database(':memory:');
-  db.exec(`CREATE TABLE invoices(id INTEGER PRIMARY KEY,status TEXT,invoice_number TEXT,document_revision INTEGER,drive_file_id TEXT);
-    CREATE TABLE credit_notes(id INTEGER PRIMARY KEY,status TEXT,reference TEXT,cloud_status TEXT);
-    INSERT INTO invoices VALUES(1,'issued','FIX-1',1,NULL);INSERT INTO credit_notes VALUES(1,'issued','CN-1','pending');`);
+  db.exec(initialSchema);
+  ensureBillingIssuerSchema(db); ensureCreditNoteSchema(db);
+  db.exec(`ALTER TABLE invoices ADD COLUMN document_revision INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE invoices ADD COLUMN drive_file_id TEXT;
+    INSERT INTO clients(id,name) VALUES(1,'Normal owner'),(2,'Protected owner');
+    INSERT INTO companies(id,client_id,name) VALUES(1,1,'Normal'),(2,2,'Protected');
+    INSERT INTO stores(id,company_id,name) VALUES(1,1,'Normal store'),(2,2,'Protected store');
+    INSERT INTO invoices(id,store_id,invoice_number,invoice_date,status) VALUES(1,1,'FIX-1','2026-10-08','issued');
+    INSERT INTO credit_notes(id,company_id,issuer_id,reference,series,sequence_number,issue_date,reason,issuer_snapshot_json,customer_snapshot_json,net_amount,total_amount)
+    VALUES(1,1,1,'CN-1','CN',1,'2026-10-08','Fixture','{}','{}',10,10);`);
   queue.installDocumentSyncQueue(db);
+  visibility.installNormalBillingVisibility(db);
+  visibility.replaceNormalBillingVisibility(db,[2]);
   let role='writer';let connected=true;let beforeUpload=async()=>{};let result={success:true};
+  let verificationError=false;let verifications=0;let scopedReads=0;let cleanupRetries=0;
   const calls:string[]=[];
   const databaseModule={db,waitForDatabaseReady:async()=>{}};
   const mocks:any={
-    '../database/normalBillingVisibility': { normalBillingReadDatabase: (connection: unknown) => connection },
-    '../protectedRegistry/service': { ensureNormalBillingVisibility: async () => {} },
-    '../database/invoiceDriveIdentity':{invoiceCopyCleanupError:()=>null,retryInvoiceCopyCleanup:()=>{}},
+    '../database/normalBillingVisibility': { ...visibility, normalBillingReadDatabase: (connection: Database.Database) => {
+      scopedReads++; return visibility.normalBillingReadDatabase(connection);
+    } },
+    '../protectedRegistry/service': { ensureNormalBillingVisibility: async () => {
+      verifications++;
+      if(verificationError) throw Error('Drive verification unavailable');
+      visibility.replaceNormalBillingVisibility(db,[2]);
+    } },
+    '../database/invoiceDriveIdentity':{invoiceCopyCleanupError:()=>null,retryInvoiceCopyCleanup:()=>{cleanupRetries++}},
     electron:{app:{getPath:()=>'/synthetic',once:()=>{}}},'node:fs':{existsSync:()=>false},
     '../database/db':databaseModule,'../device/deviceRole':{getDeviceRole:()=>role},'../database/documentSyncQueue':queue,
     './invoiceDriveDocument':{withInvoiceDriveLock},
@@ -43,8 +63,61 @@ function fixture() {
   };
   const api:any={};
   runInNewContext(compiled,{exports:api,console,Buffer,setInterval,clearInterval,require:(id:string)=>Object.hasOwn(mocks,id)?mocks[id]:require(id)});
-  return {api,db,calls,setRole:(value:string)=>{role=value},disconnect:()=>{connected=false},fail:()=>{result={success:false}},before:(fn:()=>Promise<void>)=>{beforeUpload=fn},switchDb:()=>{databaseModule.db=new Database(':memory:')},close:()=>{db.close();if(databaseModule.db!==db)databaseModule.db.close()}};
+  return {api,db,calls,setRole:(value:string)=>{role=value},disconnect:()=>{connected=false},fail:()=>{result={success:false}},
+    failVerification:(value:boolean)=>{verificationError=value},counts:()=>({verifications,scopedReads,cleanupRetries}),
+    before:(fn:()=>Promise<void>)=>{beforeUpload=fn},switchDb:()=>{databaseModule.db=new Database(':memory:')},close:()=>{db.close();if(databaseModule.db!==db)databaseModule.db.close()}};
 }
+
+test('unverified document status withholds counts and references without querying the projection on Writer or Viewer',async()=>{
+  for(const role of ['writer','viewer']){const f=fixture();try{
+    f.setRole(role);visibility.invalidateNormalBillingVisibility(f.db);
+    const status=f.api.getDocumentSyncStatus();
+    assert.equal(status.verificationPending,true);assert.equal(status.pending,null);assert.equal(status.blocked,null);
+    assert.equal(status.items.length,0);assert.equal(status.workerError,null);
+    assert.equal(status.canRetry,role==='writer');assert.match(status.statusMessage,role==='writer'?/automată/:/Writer/);
+    assert.deepEqual(f.counts(),{verifications:0,scopedReads:0,cleanupRetries:0});
+    if(role==='viewer'){
+      await f.api.syncPendingDocuments();assert.throws(()=>f.api.retryPendingDocuments(),/Writer/);
+      assert.equal(f.counts().verifications,0);assert.equal(f.calls.length,0);
+    }
+  }finally{f.close()}}
+});
+
+test('offline or failed verification stays pending; retry does not reset jobs and a later successful run resumes',async()=>{
+  for(const mode of ['offline','verification']){const f=fixture();try{
+    visibility.invalidateNormalBillingVisibility(f.db);
+    const before=JSON.stringify(f.db.prepare('SELECT * FROM document_sync_queue').all());
+    if(mode==='offline')f.disconnect();else f.failVerification(true);
+    const status=f.api.retryPendingDocuments();
+    assert.equal(status.verificationPending,true);
+    // The retry starts the worker asynchronously; let its verification settle.
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(f.calls.length,0);assert.equal(f.counts().scopedReads,0);assert.equal(f.counts().cleanupRetries,0);
+    assert.equal(JSON.stringify(f.db.prepare('SELECT * FROM document_sync_queue').all()),before);
+    assert.equal(f.api.getDocumentSyncStatus().pending,null);
+    if(mode==='offline')assert.match(f.api.getDocumentSyncStatus().statusMessage,/Reconectează/);
+    else{
+      f.failVerification(false);await f.api.syncPendingDocuments();
+      const ready=f.api.getDocumentSyncStatus();assert.equal(ready.verificationPending,false);
+      assert.equal(ready.statusMessage,null);assert.equal(ready.pending,0);
+    }
+  }finally{f.close()}}
+});
+
+test('after an entity refresh the status resumes only with verified normal document counts and references',async()=>{
+  const f=fixture();try{
+    f.db.exec("INSERT INTO invoices(id,store_id,invoice_number,invoice_date,status) VALUES(2,2,'PROTECTED-2','2026-10-08','issued')");
+    visibility.invalidateNormalBillingVisibility(f.db);
+    assert.equal(f.api.getDocumentSyncStatus().items.length,0);
+    visibility.replaceNormalBillingVisibility(f.db,[2]);
+    const ready=f.api.getDocumentSyncStatus();
+    assert.equal(ready.verificationPending,false);assert.equal(ready.pending,2);
+    assert.equal(ready.items.some((item:any)=>item.reference==='PROTECTED-2'),false);
+    await f.api.syncPendingDocuments();assert.deepEqual(f.calls,['credit_note','invoice']);
+    assert.equal(f.api.getDocumentSyncStatus().pending,0);
+    assert.equal(queue.documentSyncStatus(f.db).pending,1,'protected job remains untouched');
+  }finally{f.close()}
+});
 
 test('background worker drains verified documents, coalesces concurrent runs and does not reupload ready rows',async()=>{
   const f=fixture();try{

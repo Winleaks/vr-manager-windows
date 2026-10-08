@@ -1,3 +1,9 @@
+### VR - Hub Management v0.1.128
+
+- Panoul documentelor afișează verificarea facturării în curs ca stare de așteptare, fără eroarea tehnică `system:documentSyncStatus` la pornire sau după sincronizarea asocierilor.
+- Numărul și lista documentelor se afișează numai după verificarea vizibilității. Writer reîncearcă automat; Viewer așteaptă baza verificată de Writer. Registrul separat rămâne protejat.
+- Include toate modificările v0.1.127, fără migrare sau modificare a încasărilor, soldurilor și documentelor existente.
+
 ### VR - Hub Management v0.1.127
 
 - Încasările șoferilor sunt procesate în registrul corect, normal sau separat. Sincronizarea rulează pe Writer inclusiv când modulul separat este blocat; datele sale financiare rămân criptate.
