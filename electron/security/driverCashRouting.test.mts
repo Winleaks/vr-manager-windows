@@ -128,6 +128,7 @@ test('restored older SQLite and altered processing request stop before any repla
   await f.process(f.command);
   f.db.exec('DELETE FROM driver_cash_operations;DELETE FROM driver_cash_receipts;DELETE FROM cash_transactions;');
   await assert.rejects(f.process({...f.command,state:'PROCESSED'}),/restaurarea/);
+  await assert.rejects(f.process(f.command),/restaurarea/);
   assert.equal((f.db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,0);
  } finally {f.cleanup();}
 });

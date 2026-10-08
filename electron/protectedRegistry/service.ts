@@ -944,6 +944,9 @@ export async function applyRoutedDriverCash(input:unknown) {
         const latest=await loadVaultFromCloud(policy.key);current();
         if(latest.vault.revision!==policy.vaultRevision) throw Object.assign(Error('Rutarea s-a schimbat. Sincronizarea va fi reluată.'),{retryable:true});
         const root=latest.vault.driverCashReceipts?.find(row=>row.rootId===c.root_operation_id);
+        if(root?.operations.some(row=>row.operationId===c.operation_id) &&
+          (db.prepare('SELECT state FROM driver_cash_operations WHERE operation_id=?').get(c.operation_id) as any)?.state!=='PROCESSING')
+          throw Object.assign(Error('Jurnalul local al încasării lipsește. Verifică restaurarea înainte de continuare.'),{retryable:false});
         if(root && normalHistory) throw Object.assign(Error('Evidența încasării necesită reconciliere. Datele au fost păstrate.'),{retryable:false});
         const protectedTarget=Boolean(root || !normalHistory && policy.companyHashes.has(routingHash(policy.key,'company',`vrbaker:${c.company_id}`)));
         if(!protectedTarget) return;
