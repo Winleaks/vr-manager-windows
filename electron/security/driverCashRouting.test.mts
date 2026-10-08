@@ -69,6 +69,7 @@ test('locked module routes cash to encrypted ledger only, pays oldest invoices a
   await f.process(correction);assert.deepEqual(f.cloud().invoices.map(row=>row.paidAmount),[30,0]);
   const zero={...correction,operation_id:randomUUID(),previous_operation_id:correction.operation_id,revision:3,amount_pence:0,sequence_id:3};
   await f.process(zero);assert.deepEqual(f.cloud().invoices.map(row=>row.paidAmount),[0,0]);
+  assert.equal(f.cloud().creditEntries[0].originalAmount,25);assert.equal(f.cloud().creditEntries[0].availableAmount,0);
   assert.equal((f.db.prepare("SELECT sum(CASE WHEN type='IN' THEN amount ELSE -amount END) AS n FROM cash_transactions").get() as any).n,0);
   assert.equal(f.cloud().driverCashReceipts![0].operations.length,3);
  } finally {f.cleanup();}

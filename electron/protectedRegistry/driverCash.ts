@@ -46,7 +46,8 @@ export function applyProtectedDriverCash(vault:ProtectedRegistryVault,c:DriverCa
       }
       payment!.reversedAt=new Date().toISOString();payment!.reversalReason='Corectare încasare șofer';
     }
-    for (const credit of credits) {credit.originalAmount=0;credit.availableAmount=0;}
+    // Preserve the original credit amount for audit; the source payment records its reversal.
+    for (const credit of credits) credit.availableAmount=0;
     root.paymentIds=[];
     let remaining=c.amount_pence;
     const createdAt=new Date().toISOString(),paymentDate=companyPaymentDate(c.collected_at_ms??c.recorded_at_ms);
