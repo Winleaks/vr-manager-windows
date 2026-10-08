@@ -28,6 +28,7 @@ export function DriverCashStatus({writer,onChanged}:{writer:boolean;onChanged:()
       <span>{JSON.parse(c.result).driver_name} · {JSON.parse(c.result).store_name} · {JSON.parse(c.result).error||'Încasarea necesită verificare.'}</span>
       {writer&&<button disabled={busy} onClick={()=>void action(()=>api.dailyCash.retryDriverCashConflict(c.operation_id))} className="ml-3 underline">Reîncearcă după rezolvare</button>}
     </div>)}
+    {status.pending?.map((c:any)=><p key={c.operation_id} className="mt-2 text-sm text-amber-800">{JSON.parse(c.result).driver_name} · {JSON.parse(c.result).store_name} · Încasare păstrată, în așteptarea sincronizării.</p>)}
     {status.officeRequests.map((r:any)=><p key={r.root_id} className="mt-2 text-sm text-amber-800">{r.last_error||'Corectare de la birou în așteptarea sincronizării.'}{writer&&r.state==='CONFLICT'&&<button disabled={busy} onClick={()=>void action(()=>api.dailyCash.discardRejectedDriverCashOffice(r.root_id))} className="ml-2 underline">Renunță la corectarea respinsă</button>}</p>)}
     {status.invalidReports?.map((r:any)=><p key={r.date} className="mt-2 text-sm text-amber-800">Raportul Daily Cash pentru {r.date} trebuie regenerat după încasările din aplicație.</p>)}
     <details className="mt-3"><summary className="cursor-pointer text-sm">Ultimele declarații, inclusiv cele fără încasare</summary>

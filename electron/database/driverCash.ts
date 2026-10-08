@@ -8,6 +8,7 @@ export interface DriverCashCommand {
   operation_id: string; root_operation_id: string; previous_operation_id: string | null;
   collected_at_ms?: number; sequence_id?: number; state?: string; revision: number; recorded_at_ms: number; amount_pence: number;
   driver_id: string; driver_name: string; store_id: string; store_name: string; company_id: string | null;
+  hub_result?: { error?: string } | null;
 }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function validateDriverCashCommand(input: unknown): DriverCashCommand {
@@ -45,41 +46,75 @@ export function driverCashRequest(c: DriverCashCommand) {
   return JSON.stringify({operation_id:c.operation_id,root_operation_id:c.root_operation_id,previous_operation_id:c.previous_operation_id,
     revision:c.revision,collected_at_ms:c.collected_at_ms??c.recorded_at_ms,recorded_at_ms:c.recorded_at_ms,amount_pence:c.amount_pence,driver_id:c.driver_id,store_id:c.store_id,company_id:c.company_id});
 }
-function companyPaymentDate(ms: number) {
+export function upgradeDriverCashRouting(db: Database.Database) {
+  db.exec(`
+    ALTER TABLE driver_cash_receipts RENAME TO driver_cash_receipts_v26;
+    CREATE TABLE driver_cash_receipts(root_id TEXT PRIMARY KEY,latest_operation_id TEXT NOT NULL,revision INTEGER NOT NULL,
+      company_id INTEGER,store_id INTEGER,driver_id INTEGER NOT NULL,issuer_id INTEGER,
+      amount_pence INTEGER NOT NULL,recorded_at_ms INTEGER NOT NULL);
+    INSERT INTO driver_cash_receipts SELECT * FROM driver_cash_receipts_v26;
+    DROP TABLE driver_cash_receipts_v26;
+  `);
+}
+export function driverCashRequestMatches(stored: string, c: DriverCashCommand,unfundedRetry=false) {
+  if (stored === driverCashRequest(c)) return true;
+  // The platform may fill an explicitly missing association after a zero declaration.
+  const before = JSON.parse(stored);
+  return before.company_id === null && (before.amount_pence === 0 || unfundedRetry) && c.company_id !== null &&
+    JSON.stringify({...before, company_id:c.company_id}) === driverCashRequest(c);
+}
+export function companyPaymentDate(ms: number) {
   return new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(ms);
 }
-export function applyDriverCash(db: Database.Database, input: unknown, today = localIsoDate()) {
+export interface DriverCashIdentity { id:number|null; company_id:number|null; issuer_id:number|null }
+export function prepareDriverCash(db: Database.Database, c: DriverCashCommand) {
+  const old = db.prepare('SELECT * FROM driver_cash_receipts WHERE root_id=?').get(c.root_operation_id) as any;
+  if (old ? old.latest_operation_id !== c.previous_operation_id || c.revision !== old.revision + 1 : c.revision !== 1)
+    throw new Error('Încasarea a fost modificată sau lipsește operația anterioară.');
+  const stores = db.prepare(`SELECT s.id,s.company_id,c.issuer_id FROM stores s JOIN companies c ON c.id=s.company_id
+    WHERE s.supabase_store_id=? AND c.supabase_company_id=? AND c.is_active=1`).all(c.store_id,c.company_id) as DriverCashIdentity[];
+  const financial = c.amount_pence > 0 || old?.company_id != null && old?.issuer_id != null;
+  if (financial && (stores.length !== 1 || !stores[0].issuer_id))
+    throw new Error('Asocierea magazinului, companiei sau emitentului necesită verificare.');
+  // No guessed company/issuer for zero declarations. Keep their external identity in the operation.
+  const identity:DriverCashIdentity = stores.length === 1 ? stores[0] : {
+    id:(db.prepare('SELECT id FROM stores WHERE supabase_store_id=?').get(c.store_id) as any)?.id ?? null,
+    company_id:null,issuer_id:null,
+  };
+  if (old && (old.store_id != null && old.store_id !== identity.id || old.company_id != null && old.company_id !== identity.company_id))
+    throw new Error('Asocierea încasării s-a modificat.');
+  const cashHistory=db.prepare('SELECT 1 FROM cash_transactions WHERE driver_cash_root=? LIMIT 1').get(c.root_operation_id);
+  return {old,identity,issuerId:cashHistory ? old?.issuer_id ?? identity.issuer_id : identity.issuer_id};
+}
+export function applyDriverCash(db: Database.Database, input: unknown, today = localIsoDate(), options?: {cashOnly:boolean; identity:DriverCashIdentity; issuerId:number}) {
   const c = validateDriverCashCommand(input);
   const request = driverCashRequest(c);
   return db.transaction(() => withDriverCashMutation(db, () => {
     const prior = db.prepare('SELECT request,state,result FROM driver_cash_operations WHERE operation_id=?').get(c.operation_id) as any;
     if (prior) {
-      if (prior.request !== request) throw new Error('Operație retrimisă cu alte date.');
-      return {state:prior.state,result:JSON.parse(prior.result)};
+      if (!driverCashRequestMatches(prior.request,c,prior.state==='RETRY_READY')) throw new Error('Operație retrimisă cu alte date.');
+      if (prior.state === 'PROCESSED' || prior.state === 'CONFLICT') return {state:prior.state,result:JSON.parse(prior.result)};
+      if (!['PROCESSING','RETRY_READY'].includes(prior.state)) throw new Error('Încasarea așteaptă confirmarea reîncercării.');
     }
-    const old = db.prepare('SELECT * FROM driver_cash_receipts WHERE root_id=?').get(c.root_operation_id) as any;
-    if (old ? old.latest_operation_id !== c.previous_operation_id || c.revision !== old.revision + 1 : c.revision !== 1)
-      throw new Error('Încasarea a fost modificată sau lipsește operația anterioară.');
-    const store = db.prepare(`SELECT s.id,s.company_id,c.issuer_id FROM stores s JOIN companies c ON c.id=s.company_id
-      WHERE s.supabase_store_id=? AND c.supabase_company_id=? AND c.is_active=1`).all(c.store_id,c.company_id) as any[];
-    if (store.length !== 1 || !store[0].issuer_id) throw new Error('Asocierea magazinului, companiei sau emitentului necesită verificare.');
-    const identity = store[0];
-    if (old && (old.company_id !== identity.company_id || old.store_id !== identity.id)) throw new Error('Asocierea încasării s-a modificat.');
+    const {old,identity,issuerId:resolvedIssuer} = prepareDriverCash(db,c);
+    if (options && (JSON.stringify(options.identity) !== JSON.stringify(identity) || resolvedIssuer !== options.issuerId))
+      throw Object.assign(new Error('Asocierea s-a schimbat în timpul sincronizării. Încasarea este păstrată pentru reconciliere.'),{retryable:false});
     let driver = db.prepare('SELECT id FROM drivers WHERE supabase_driver_id=?').get(c.driver_id) as any;
     if (!driver) {
       const inserted = db.prepare('INSERT INTO drivers(name,supabase_driver_id) VALUES(?,?)').run(c.driver_name,c.driver_id);
       driver = {id:Number(inserted.lastInsertRowid)};
     }
-    const issuerId = old?.issuer_id ?? identity.issuer_id;
+    const issuerId = resolvedIssuer;
     const before = old?.amount_pence ?? 0;
-    if (old && before !== c.amount_pence) {
+    if (!options?.cashOnly && old && before !== c.amount_pence) {
       const allocations = db.prepare('SELECT payment_id,amount FROM driver_cash_allocations WHERE root_id=? AND reversed=0').all(c.root_operation_id) as any[];
       for (const allocation of allocations) {
         deletePaymentTransaction(db,{id:allocation.payment_id,reason:'Corectare încasare șofer',operationId:randomUUID(),expectedRevision:0,expectedAmount:allocation.amount});
       }
       db.prepare('UPDATE driver_cash_allocations SET reversed=1 WHERE root_id=?').run(c.root_operation_id);
     }
-    if (c.amount_pence > 0 && (!old || before !== c.amount_pence)) {
+    if (!options?.cashOnly && c.amount_pence > 0 && (!old || before !== c.amount_pence)) {
+      if(identity.company_id===null || issuerId===null) throw Error('Asocierea magazinului, companiei sau emitentului necesită verificare.');
       const maxId = (db.prepare('SELECT COALESCE(MAX(id),0) AS id FROM payments').get() as any).id;
       recordCompanyPaymentTransaction(db,{companyId:identity.company_id,issuerId,amount:c.amount_pence/100,paymentDate:companyPaymentDate(c.collected_at_ms??c.recorded_at_ms),
         method:'cash',notes:`Aplicație șofer · ${c.driver_name} · ${c.store_name} · ${c.root_operation_id}`});
@@ -103,10 +138,11 @@ export function applyDriverCash(db: Database.Database, input: unknown, today = l
       db.prepare('INSERT INTO driver_cash_report_invalidations(cash_day_id) VALUES(?) ON CONFLICT(cash_day_id) DO UPDATE SET invalidated_at=CURRENT_TIMESTAMP').run(day.currentDayId);
     }
     db.prepare(`INSERT INTO driver_cash_receipts VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(root_id) DO UPDATE SET
-      latest_operation_id=excluded.latest_operation_id,revision=excluded.revision,amount_pence=excluded.amount_pence,recorded_at_ms=excluded.recorded_at_ms`)
+      latest_operation_id=excluded.latest_operation_id,revision=excluded.revision,amount_pence=excluded.amount_pence,recorded_at_ms=excluded.recorded_at_ms,
+      store_id=excluded.store_id,company_id=excluded.company_id,issuer_id=excluded.issuer_id`)
       .run(c.root_operation_id,c.operation_id,c.revision,identity.company_id,identity.id,driver.id,issuerId,c.amount_pence,c.collected_at_ms??c.recorded_at_ms);
     const result = {root_operation_id:c.root_operation_id,revision:c.revision,amount_pence:c.amount_pence};
-    db.prepare("INSERT INTO driver_cash_operations(operation_id,root_id,request,state,result) VALUES(?,?,?,'PROCESSED',?)")
+    db.prepare("INSERT INTO driver_cash_operations(operation_id,root_id,request,state,result) VALUES(?,?,?,'PROCESSED',?) ON CONFLICT(operation_id) DO UPDATE SET state='PROCESSED',request=excluded.request,result=excluded.result")
       .run(c.operation_id,c.root_operation_id,request,JSON.stringify(result));
     db.prepare('DELETE FROM driver_cash_office_outbox WHERE operation_id=?').run(c.operation_id);
     return {state:'PROCESSED',result};
@@ -114,7 +150,7 @@ export function applyDriverCash(db: Database.Database, input: unknown, today = l
 }
 export function recordDriverCashConflict(db: Database.Database,c: DriverCashCommand,error: string) {
   const result = {error:error.slice(0,500),driver_name:c.driver_name,store_name:c.store_name,store_id:c.store_id,company_id:c.company_id};
-  db.prepare("INSERT OR IGNORE INTO driver_cash_operations(operation_id,root_id,request,state,result) VALUES(?,?,?,'CONFLICT',?)")
+  db.prepare("INSERT INTO driver_cash_operations(operation_id,root_id,request,state,result) VALUES(?,?,?,'CONFLICT',?) ON CONFLICT(operation_id) DO UPDATE SET state='CONFLICT',request=excluded.request,result=excluded.result WHERE driver_cash_operations.state='RETRY_READY'")
     .run(c.operation_id,c.root_operation_id,driverCashRequest(c),JSON.stringify(result));
   return {state:'CONFLICT',result};
 }

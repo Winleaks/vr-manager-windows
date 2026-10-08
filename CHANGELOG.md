@@ -1,3 +1,11 @@
+### VR - Hub Management v0.1.127
+
+- Încasările șoferilor sunt procesate în registrul corect, normal sau separat. Sincronizarea rulează pe Writer inclusiv când modulul separat este blocat; datele sale financiare rămân criptate.
+- Declarațiile de £0 se confirmă și pentru magazine fără companie asociată, fără plăți sau mișcări de numerar. O corectare la o sumă pozitivă necesită asocierea explicită a companiei și emitentului.
+- Declarațiile respinse cu mesajul despre facturarea normală sunt recuperate automat, cu audit. Reîncercările și întreruperile nu dublează plata sau numerarul; conflictele financiare reale rămân pentru verificare.
+- Corectările păstrează registrul și emitentul inițial. Încasările în așteptare sunt vizibile în Daily Cash, iar zilele istorice rămân intacte.
+- Migrarea 27 păstrează încasările existente și creează un backup verificat înaintea actualizării bazei. Include toate modificările v0.1.126.
+
 ### VR - Hub Management v0.1.126
 
 - Writer preia automat declarațiile de încasare din aplicația șoferilor, la pornire și la fiecare 30 de secunde. Hub-ul poate fi închis în timpul livrărilor; declarațiile rămân pe server până la import.

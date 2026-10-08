@@ -1,4 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import {applyDriverCash,prepareDriverCash,driverCashRequest,validateDriverCashCommand} from '../database/driverCash.ts';
+import {applyProtectedDriverCash} from './driverCash.ts';
 import { withPrivateCloudOperation } from '../integrations/privateCloudOperation.ts';
 import type { InvoiceIssuerChangeInput, InvoiceIssuerChangeOptions } from '../../src/shared/invoiceIssuerChange.ts';
 import { applyProtectedIssuerChange, protectedIssuerChangeBlock, protectedIssuerChangeReplay, validateProtectedIssuerChange } from './issuerChange.ts';
@@ -393,6 +395,9 @@ function parseVault(payload: Uint8Array): ProtectedRegistryVault {
   if (vault.version !== 1 || !Number.isSafeInteger(vault.revision) || vault.revision < 0) throw new Error('Versiunea seifului nu este acceptată.');
   vault.creditApplications ||= [];
   vault.creditEntries ||= [];
+  if (vault.driverCashReceipts !== undefined && (!Array.isArray(vault.driverCashReceipts) || vault.driverCashReceipts.some(row=>!row.rootId || !row.companyKey ||
+    !['goodness','vatra'].includes(row.issuerCode) || !Number.isSafeInteger(row.amountPence) || row.amountPence<0 ||
+    !Array.isArray(row.paymentIds) || !Array.isArray(row.operations) || !row.operations.length))) throw Error('Evidența încasărilor nu poate fi verificată.');
   for (const application of vault.creditApplications) application.allocations ||= [];
   for (const payment of vault.payments || []) payment.testEntry ??= vault.mode === 'test' && !vault.liveStartedAt;
   for (const application of vault.creditApplications || []) application.testEntry ??= vault.mode === 'test' && !vault.liveStartedAt;
@@ -912,6 +917,92 @@ export async function ensureNormalBillingVisibility() {
     if (connection !== db || getDeviceRole() !== 'writer') throw Error('Baza de date sau rolul s-a schimbat. Reia verificarea facturării.');
     const companies = db.prepare('SELECT id,supabase_company_id FROM companies').all() as Array<{ id: number; supabase_company_id: string | null }>;
     replaceNormalBillingVisibility(db, companies.filter(company => policy.key && policy.companyHashes.has(routingHash(policy.key, 'company', companyKey(company)))).map(company => company.id));
+  });
+}
+
+/** Internal Writer-only receiver. No IPC exposes routing, vault contents or an unlocked session. */
+export async function applyRoutedDriverCash(input:unknown) {
+  assertWriter();
+  const connection=db,c=validateDriverCashCommand(input);
+  const current=()=>{if(connection!==db || getDeviceRole()!=='writer') throw Object.assign(Error('Baza de date sau rolul s-a schimbat. Reia sincronizarea.'),{retryable:true});};
+  const prepared=prepareDriverCash(db,c);
+  const normalHistory=db.prepare('SELECT 1 FROM driver_cash_allocations WHERE root_id=? LIMIT 1').get(c.root_operation_id);
+  const cashHistory=db.prepare('SELECT 1 FROM cash_transactions WHERE driver_cash_root=? LIMIT 1').get(c.root_operation_id);
+  if (!c.amount_pence && !cashHistory && !normalHistory) return applyDriverCash(db,c);
+  return withRegistryRoutingLock(async()=>{
+    let protectedSave=false;
+    const identity=prepared.identity,issuerId=prepared.issuerId;
+    try {
+      // Drain the encrypted journal before reading the authoritative routing revision.
+      await protectedUploader.start();current();
+      if(protectedOutbox.hasPending()) throw Object.assign(Error('Sincronizarea încasării este în așteptare. Verifică conexiunea Drive pe Writer.'),{retryable:true});
+      await withPrivateCloudOperation(async()=>{
+        const policy=await loadProtectedRoutingPolicy();current();
+        const companies=db.prepare('SELECT id,supabase_company_id FROM companies').all() as Array<{id:number;supabase_company_id:string|null}>;
+        replaceNormalBillingVisibility(db,companies.filter(company=>policy.key && policy.companyHashes.has(routingHash(policy.key,'company',companyKey(company)))).map(company=>company.id));
+        if(!policy.enabled || !policy.key) return;
+        const latest=await loadVaultFromCloud(policy.key);current();
+        if(latest.vault.revision!==policy.vaultRevision) throw Object.assign(Error('Rutarea s-a schimbat. Sincronizarea va fi reluată.'),{retryable:true});
+        const root=latest.vault.driverCashReceipts?.find(row=>row.rootId===c.root_operation_id);
+        if(root && normalHistory) throw Object.assign(Error('Evidența încasării necesită reconciliere. Datele au fost păstrate.'),{retryable:false});
+        const protectedTarget=Boolean(root || !normalHistory && policy.companyHashes.has(routingHash(policy.key,'company',`vrbaker:${c.company_id}`)));
+        if(!protectedTarget) return;
+        if(cashHistory && !root && !normalHistory) throw Object.assign(Error('Evidența încasării necesită reconciliere. Datele au fost păstrate.'),{retryable:false});
+        let issuer:ReturnType<typeof readIssuer>;
+        try {issuer=readIssuer(issuerId!);} catch(error) {throw Object.assign(error as Error,{businessConflict:true});}
+        if(root && root.issuerCode!==issuer.code) throw Object.assign(Error('Emitentul încasării necesită reconciliere.'),{retryable:false});
+        const next=structuredClone(latest.vault);
+        // All financial/business checks precede durable acceptance.
+        try {applyProtectedDriverCash(next,c,issuer.code,!cashHistory && prepared.old?.amount_pence===0 ?
+          {operationId:prepared.old.latest_operation_id,revision:prepared.old.revision}:undefined);}
+        catch(error) {throw Object.assign(error as Error,{businessConflict:true});}
+        protectedSave=true;
+        db.prepare("INSERT INTO driver_cash_operations(operation_id,root_id,request,state,result) VALUES(?,?,?,'PROCESSING',?) ON CONFLICT(operation_id) DO UPDATE SET state='PROCESSING',request=excluded.request")
+          .run(c.operation_id,c.root_operation_id,driverCashRequest(c),JSON.stringify({driver_name:c.driver_name,store_name:c.store_name}));
+        if(!root?.operations.some(row=>row.operationId===c.operation_id)) {
+          if(!latest.vault.driverCashReceipts?.length) {
+            await writeVerifiedPrivateCloudFile({folderNames:['Duplicat','Backups'],filename:`registru-separat-before-driver-cash-${randomUUID()}.vault`,
+              mimeType:'application/octet-stream',buffer:encode(latest.envelope),expectedVersion:null,accountScope:latest.cloudScope});current();
+          }
+          next.revision++;next.updatedAt=new Date().toISOString();
+          addAudit(next,'driver_cash_received',c.operation_id,{rootId:c.root_operation_id,revision:c.revision,amountPence:c.amount_pence});
+          const envelope=encryptVaultWithExistingRecovery(encode(next),policy.key,next.revision,latest.envelope.recovery);
+          current();
+          try {
+            protectedOutbox.append({version:1,operationId:c.operation_id,scope:latest.cloudScope!,fileId:latest.driveFileId,
+              baseDigest:vaultDigest(latest.vault),vault:next,recovery:envelope.recovery,documents:next.invoices.filter(invoice=>
+                JSON.stringify(invoice)!==JSON.stringify(latest.vault.invoices.find(row=>row.id===invoice.id))).map(invoice=>({type:'invoice',id:invoice.id}))});
+          } catch(error) {
+            if(protectedOutbox.hasPending()) {
+              protectedUploader.blockAfterLocalFailure();
+              const tail=protectedOutbox.read().at(-1)?.value;
+              if(tail?.operationId===c.operation_id && vaultDigest(tail.vault)===vaultDigest(next)) {
+                for(const session of sessions.values()) if(session.role==='writer') {session.vault=next;session.envelope=envelope;}
+              }
+              void protectedUploader.start();
+            }
+            throw error;
+          }
+          // Refresh only sessions that are already unlocked; never extend their lifetime.
+          for(const session of sessions.values()) if(session.role==='writer') {session.vault=next;session.envelope=envelope;}
+        }
+        else for(const session of sessions.values()) if(session.role==='writer') {session.vault=latest.vault;session.envelope=latest.envelope;}
+      });
+      if(!protectedSave) {
+        current();
+        try {return applyDriverCash(db,c);} catch(error) {throw Object.assign(error as Error,{businessConflict:true});}
+      }
+      await protectedUploader.start();current();
+      if(protectedOutbox.hasPending() || protectedUploader.status().error) throw Object.assign(Error('Sincronizarea încasării este în așteptare. Datele sunt păstrate pe Writer.'),{retryable:true});
+      return applyDriverCash(db,c,undefined,{cashOnly:true,identity,issuerId:issuerId!});
+    } catch(error) {
+      // No permanent conflict may acknowledge a partially committed financial operation.
+      if((error as any)?.retryable!==undefined || (error as any)?.code?.startsWith('SQLITE_')) throw error;
+      if(protectedSave) throw Object.assign(Error('Sincronizarea încasării este în așteptare. Datele sunt păstrate pe Writer.'),{retryable:true});
+      if((error as any)?.businessConflict) throw error;
+      // Provider/key/routing failures must not be classified as rejected declarations.
+      throw Object.assign(Error('Sincronizarea încasării este în așteptare. Verifică asocierea și conexiunea pe Writer.'),{retryable:true});
+    }
   });
 }
 
@@ -1620,6 +1711,7 @@ export async function reverseProtectedPayment(webContentsId: number, paymentIdIn
     const payment = next.payments.find((row) => row.id === paymentId);
     if (!payment) throw new Error('Încasarea nu există.');
     if (payment.reversedAt) return;
+    if(next.driverCashReceipts?.some(row=>row.paymentIds.includes(payment.id))) throw Error('Corectează suma totală din declarațiile șoferilor.');
     const creditEntry = next.creditEntries.find((entry) => entry.sourceType === 'payment_overpayment' && entry.sourceId === payment.id);
     if (creditEntry && creditEntry.availableAmount < creditEntry.originalAmount - 0.005) throw new Error('Creditul provenit din această încasare a fost utilizat. Reversează mai întâi aplicările de credit.');
     if (payment.invoiceId) {

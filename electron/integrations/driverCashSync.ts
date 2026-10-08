@@ -3,7 +3,10 @@ import { db, waitForDatabaseReady } from '../database/db';
 import { getDeviceRole } from '../device/deviceRole';
 import { createVrBakerClient } from './vrBakerIntegration';
 import {processDriverCashBatch} from './driverCashProcessor';
-import {normalBillingReadDatabase} from '../database/normalBillingVisibility';
+import {recordDriverCashConflict,validateDriverCashCommand} from '../database/driverCash';
+import {legacyDriverCashRoutingError,recoverDriverCashRouting,retryCashRoot} from './driverCashRecovery';
+import * as billingRepo from '../database/repositories/billingRepo';
+import {invalidateNormalBillingVisibility} from '../database/normalBillingVisibility';
 import { publishBilling } from './billingPublisher';
 let running: Promise<void> | undefined;
 export function syncDriverCash() {
@@ -22,7 +25,10 @@ async function run() {
   const connection = db;
   const client = createVrBakerClient();
   const source = sourceId();
-  await (await import('../protectedRegistry/service')).ensureNormalBillingVisibility();
+  const current=()=>db===connection && getDeviceRole()==='writer';
+  const retry=(operationId:string)=>client.request('driver.cash.retry',{source_id:source,operation_id:operationId},`${operationId}:routing-retry-v127`);
+  await recoverDriverCashRouting(db,retry,current);
+  if(!current()) return;
   const outbox = db.prepare("SELECT payload,operation_id FROM driver_cash_office_outbox WHERE state='PENDING'").all() as any[];
   for (const row of outbox) {
     if (db!==connection || getDeviceRole()!=='writer') return;
@@ -34,15 +40,34 @@ async function run() {
     }
   }
   const cursor = Number((db.prepare("SELECT value FROM app_settings WHERE key='driver_cash_cursor'").get() as any)?.value || 0);
-  const incoming = await client.request<unknown>('driver.cash.pending',{source_id:source,after:cursor});
+  let incoming = await client.request<unknown>('driver.cash.pending',{source_id:source,after:cursor});
   if (!Array.isArray(incoming) || incoming.length>50) throw new Error('Lista încasărilor este invalidă.');
+  if(!current()) return;
+  let recovered=false;
+  for(const input of incoming) {
+    const c=validateDriverCashCommand(input);
+    if(c.state==='CONFLICT' && c.hub_result?.error===legacyDriverCashRoutingError) {
+      recordDriverCashConflict(db,c,legacyDriverCashRoutingError);recovered=true;
+    }
+  }
+  if(recovered) {
+    await recoverDriverCashRouting(db,retry,current);
+    if(!current()) return;
+    incoming=await client.request<unknown>('driver.cash.pending',{source_id:source,after:cursor});
+    if(!Array.isArray(incoming)||incoming.length>50) throw Error('Lista încasărilor este invalidă.');
+  }
+  if(incoming.some((c:any)=>c.state==='PENDING' && (db.prepare('SELECT state FROM driver_cash_operations WHERE operation_id=?').get(c.operation_id) as any)?.state!=='PROCESSED')) {
+    const snapshot=await client.fetchEntitySnapshot();
+    if(!current()) return;
+    billingRepo.syncEntitiesFromVrBaker(snapshot.companies,snapshot.stores,{complete:true});
+    invalidateNormalBillingVisibility(db);
+  }
   await processDriverCashBatch(db,incoming,source,{
-    current:()=>db===connection && getDeviceRole()==='writer',saveCursor,
-    verifyCompany:(company)=>{if(!normalBillingReadDatabase(db).prepare('SELECT 1 FROM companies WHERE supabase_company_id=?').get(company))
-      throw new Error('Compania nu este disponibilă în facturarea normală. Verifică asocierea încasării.');},
+    current,saveCursor,
+    apply:async command=>(await import('../protectedRegistry/service')).applyRoutedDriverCash(command),
     ack:(payload,key)=>client.request('driver.cash.ack',payload,key),
   });
-  if (incoming.length) await publishBilling();
+  if (incoming.length && current()) await publishBilling();
 }
 export async function correctHubDriverCash(transactionId: number | string, amount: number, expectedRevision?: number) {
   if (getDeviceRole()!=='writer') throw new Error('Numai Writer poate corecta încasările.');
@@ -50,7 +75,6 @@ export async function correctHubDriverCash(transactionId: number | string, amoun
   const row = typeof transactionId === 'string' ? db.prepare('SELECT * FROM driver_cash_receipts WHERE root_id=?').get(transactionId) as any
     : db.prepare(`SELECT r.* FROM cash_transactions t JOIN driver_cash_receipts r ON r.root_id=t.driver_cash_root WHERE t.id=?`).get(transactionId) as any;
   if (!row) throw new Error('Încasarea nu există.');
-  if (!normalBillingReadDatabase(db).prepare('SELECT 1 FROM companies WHERE id=?').get(row.company_id)) throw new Error('Compania nu este disponibilă în facturarea normală.');
   if (row.revision!==expectedRevision) throw new Error('Încasarea s-a modificat. Reîncarcă pagina.');
   const previous = db.prepare('SELECT * FROM driver_cash_office_outbox WHERE root_id=?').get(row.root_id) as any;
   if (previous) {
@@ -88,24 +112,20 @@ function setSyncError(error: string | null) {
 export function driverCashStatus() {
   return {error:(db.prepare("SELECT value FROM app_settings WHERE key='driver_cash_sync_error'").get() as any)?.value??null,
     conflicts:db.prepare("SELECT operation_id,root_id,result FROM driver_cash_operations WHERE state='CONFLICT'").all(),
-    receipts:normalBillingReadDatabase(db).prepare(`SELECT r.*,s.name AS store_name,d.name AS driver_name,c.name AS company_name FROM driver_cash_receipts r
-      JOIN stores s ON s.id=r.store_id JOIN companies c ON c.id=r.company_id JOIN drivers d ON d.id=r.driver_id ORDER BY recorded_at_ms DESC LIMIT 100`).all(),
+    pending:db.prepare("SELECT operation_id,result FROM driver_cash_operations WHERE state IN ('PROCESSING','RETRY_PENDING','RETRY_READY')").all(),
+    receipts:db.prepare(`SELECT r.*,COALESCE(s.name,'Magazin în așteptarea asocierii') AS store_name,d.name AS driver_name,COALESCE(c.name,'Companie neasociată') AS company_name FROM driver_cash_receipts r
+      LEFT JOIN stores s ON s.id=r.store_id LEFT JOIN companies c ON c.id=r.company_id JOIN drivers d ON d.id=r.driver_id ORDER BY recorded_at_ms DESC LIMIT 100`).all(),
     invalidReports:db.prepare('SELECT d.date FROM driver_cash_report_invalidations i JOIN cash_days d ON d.id=i.cash_day_id').all(),
     officeRequests:db.prepare('SELECT root_id,state,last_error FROM driver_cash_office_outbox').all()};
 }
 export async function retryDriverCashConflict(operationId: string) {
   if (getDeviceRole()!=='writer') throw new Error('Numai Writer poate rezolva conflictele.');
-  const row=db.prepare("SELECT request,result,root_id FROM driver_cash_operations WHERE operation_id=? AND state='CONFLICT'").get(operationId) as any;
+  const connection=db;
+  const row=db.prepare("SELECT request,result,root_id FROM driver_cash_operations WHERE operation_id=? AND state IN ('CONFLICT','RETRY_PENDING')").get(operationId) as any;
   if (!row) throw new Error('Conflictul nu mai este disponibil.');
   const client=createVrBakerClient();
-  await client.request('driver.cash.retry',{source_id:sourceId(),operation_id:operationId},randomUUID());
-  const failed=db.prepare("SELECT operation_id,request,result FROM driver_cash_operations WHERE root_id=? AND state='CONFLICT'").all(row.root_id) as any[];
-  db.transaction(()=>{
-    for (const item of failed) {
-      db.prepare("INSERT INTO billing_audit_events(event_type,details) VALUES('driver_cash_conflict_retry',?)").run(JSON.stringify(item));
-      db.prepare("DELETE FROM driver_cash_operations WHERE operation_id=? AND state='CONFLICT'").run(item.operation_id);
-    }
-  })();
+  const source=sourceId();
+  await retryCashRoot(db,operationId,()=>client.request('driver.cash.retry',{source_id:source,operation_id:operationId},`${operationId}:retry:${randomUUID()}`),()=>connection===db&&getDeviceRole()==='writer');
   await syncDriverCash();
 }
 

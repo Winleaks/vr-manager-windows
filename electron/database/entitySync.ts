@@ -32,9 +32,12 @@ export function assertEntitySnapshotIdentifiers(db: Database.Database, companies
 
 export function assertEntitySyncSafe(db: Database.Database, companies: VrBakerCompany[], stores: VrBakerStore[], complete = true) {
   assertEntitySnapshotIdentifiers(db, companies, stores, complete);
+  const cashGuard=db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='driver_cash_receipts'").get()
+    ? ' OR EXISTS(SELECT 1 FROM driver_cash_receipts r WHERE r.store_id=s.id AND r.company_id IS NOT NULL AND EXISTS(SELECT 1 FROM cash_transactions t WHERE t.driver_cash_root=r.root_id))' : '';
   for (const store of stores) {
     const local = db.prepare(`SELECT c.supabase_company_id AS company_external_id FROM stores s JOIN companies c ON c.id=s.company_id
-      WHERE s.supabase_store_id=? COLLATE NOCASE AND EXISTS(SELECT 1 FROM invoices i WHERE i.store_id=s.id)`).get(store.id) as {company_external_id:string|null}|undefined;
+      WHERE s.supabase_store_id=? COLLATE NOCASE AND (EXISTS(SELECT 1 FROM invoices i WHERE i.store_id=s.id)
+      ${cashGuard})`).get(store.id) as {company_external_id:string|null}|undefined;
     if (local && (local.company_external_id || '').toLowerCase() !== (store.company?.id || 'vrbaker-unassigned-company').toLowerCase()) {
       throw new EntityAssociationConflict(store.name);
     }

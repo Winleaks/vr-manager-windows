@@ -168,6 +168,12 @@ export interface ProtectedRegistryVault {
   creditEntries: ProtectedCreditEntry[];
   audit: ProtectedAuditEvent[];
   processedOperations: string[];
+  // Permanent receipt/revision identity; unlike processedOperations this is never pruned.
+  driverCashReceipts?: Array<{
+    rootId:string; companyKey:string; issuerCode:ProtectedIssuerCode; amountPence:number;
+    operations:Array<{operationId:string; request:string; revision:number; amountPence:number}>;
+    paymentIds:string[];
+  }>;
 }
 
 export interface ProtectedRoutingManifest {

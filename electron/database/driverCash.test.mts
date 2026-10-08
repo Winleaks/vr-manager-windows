@@ -7,10 +7,13 @@ import { initialSchema } from './schema.ts';
 import { ensureBillingIssuerSchema } from './billingIssuers.ts';
 import { ensureCreditNoteSchema } from './creditNotes.ts';
 import { installBillingPublication } from './billingPublication.ts';
-import { installDriverCash,applyDriverCash,type DriverCashCommand } from './driverCash.ts';
+import { installDriverCash,upgradeDriverCashRouting,applyDriverCash,type DriverCashCommand } from './driverCash.ts';
 import { updatePaymentTransaction } from './repositories/billingTransactions.ts';
-function fixture() {
+import {recoverDriverCashRouting,legacyDriverCashRoutingError} from '../integrations/driverCashRecovery.ts';
+import {recordDriverCashConflict,driverCashRequestMatches} from './driverCash.ts';
+function fixture(migrate=true) {
  const db=new Database(':memory:');db.exec(initialSchema);ensureBillingIssuerSchema(db);ensureCreditNoteSchema(db);installBillingPublication(db);installDriverCash(db);
+ if(migrate) upgradeDriverCashRouting(db);
  const issuer=(db.prepare('SELECT id FROM billing_issuers ORDER BY id LIMIT 1').get() as any).id;
  db.prepare('INSERT INTO clients(id,name) VALUES(1,?)').run('Client');
  const company=randomUUID(),store=randomUUID(),driver=randomUUID();
@@ -92,4 +95,45 @@ test('missing explicit company is retained as a conflict without assigning cash 
  assert.equal(acknowledged.state,'CONFLICT');assert.match(acknowledged.result.error,/Asocierea/);
  assert.equal((db.prepare('SELECT COUNT(*) AS value FROM payments').get() as any).value,0);
  assert.equal((db.prepare('SELECT COUNT(*) AS value FROM cash_transactions').get() as any).value,0);db.close();
+});
+
+test('zero without company is processed, later explicit association and positive correction are safe',()=>{
+ const {db,command}=fixture();
+ const zero={...command,company_id:null,amount_pence:0};applyDriverCash(db,zero,'2026-10-07');
+ assert.equal((db.prepare('SELECT company_id FROM driver_cash_receipts').get() as any).company_id,null);
+ assert.equal((db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,0);
+ assert.equal((db.prepare('SELECT count(*) AS n FROM payments').get() as any).n,0);
+ const stored=(db.prepare('SELECT request FROM driver_cash_operations').get() as any).request;
+ assert.equal(driverCashRequestMatches(stored,{...zero,company_id:command.company_id}),true);
+ assert.equal(driverCashRequestMatches(stored,{...zero,company_id:command.company_id,amount_pence:1}),false);
+ const correction={...command,operation_id:randomUUID(),previous_operation_id:command.operation_id,revision:2,amount_pence:1200};
+ applyDriverCash(db,correction,'2026-10-08');
+ assert.equal((db.prepare('SELECT amount_pence FROM driver_cash_receipts').get() as any).amount_pence,1200);
+ assert.equal((db.prepare('SELECT sum(amount) AS n FROM cash_transactions').get() as any).n,12);db.close();
+});
+
+test('retry intent survives lost response and preserves audit and unrelated financial conflicts',async()=>{
+ const {db,command}=fixture();recordDriverCashConflict(db,command,legacyDriverCashRoutingError);
+ const other={...command,operation_id:randomUUID(),root_operation_id:randomUUID()};other.root_operation_id=other.operation_id;
+ recordDriverCashConflict(db,other,'Credit utilizat');let calls=0;
+ await assert.rejects(recoverDriverCashRouting(db,async()=>{calls++;throw Error('lost response');},()=>true),/lost response/);
+ assert.equal((db.prepare('SELECT state FROM driver_cash_operations WHERE operation_id=?').get(command.operation_id) as any).state,'RETRY_PENDING');
+ await recoverDriverCashRouting(db,async()=>{calls++;},()=>true);
+ assert.equal(calls,2);assert.equal((db.prepare('SELECT count(*) AS n FROM billing_audit_events').get() as any).n,1);
+ applyDriverCash(db,command,'2026-10-08');applyDriverCash(db,command,'2026-10-08');
+ assert.equal((db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,1);
+ assert.equal((db.prepare('SELECT state FROM driver_cash_operations WHERE operation_id=?').get(other.operation_id) as any).state,'CONFLICT');db.close();
+});
+
+test('migration retains v26 money and is transactional on failure',()=>{
+ const {db,command}=fixture(false);applyDriverCash(db,command,'2026-10-07');
+ const before=db.prepare('SELECT * FROM driver_cash_receipts').all();
+ // Simulate the same nine-column legacy table and exercise preservation/rollback.
+ assert.throws(()=>db.transaction(()=>{upgradeDriverCashRouting(db);throw Error('interrupted migration');})(),/interrupted/);
+ assert.deepEqual(db.prepare('SELECT * FROM driver_cash_receipts').all(),before);
+ assert.equal((db.pragma('table_info(driver_cash_receipts)') as any[]).find(row=>row.name==='company_id').notnull,1);
+ db.transaction(()=>upgradeDriverCashRouting(db))();
+ assert.deepEqual(db.prepare('SELECT * FROM driver_cash_receipts').all(),before);
+ assert.equal((db.pragma('table_info(driver_cash_receipts)') as any[]).find(row=>row.name==='company_id').notnull,0);
+ assert.equal((db.prepare('SELECT sum(amount) AS n FROM payments').get() as any).n,125);db.close();
 });

@@ -1,4 +1,4 @@
-import {installDriverCash} from './driverCash';
+import {installDriverCash,upgradeDriverCashRouting} from './driverCash';
 import {installBillingPublication} from './billingPublication';
 import { installInvoicePaymentTerms, installSameDayInvoicePaymentTerms } from './invoicePaymentTerms';
 import { installDocumentSyncQueue } from './documentSyncQueue';
@@ -173,7 +173,7 @@ export function initDb() {
 
   // Preserve a verified copy before adding the persistent billing publication queue.
   // This also covers older Credit Notes migrations during a direct upgrade.
-  createPreMigrationSnapshotIfNeeded(26)
+  createPreMigrationSnapshotIfNeeded(27)
   
   // 2. Rularea migrărilor de schemă
   runMigrations()
@@ -400,6 +400,7 @@ function runMigrations() {
       ,{version:24,description:'Scadențe și publicare termene de plată',up:()=>installInvoicePaymentTerms(db)}
       ,{version:25,description:'Scadență în ziua emiterii pentru facturi punctuale',up:()=>installSameDayInvoicePaymentTerms(db)}
       ,{version:26,description:'Încasări șoferi cu alocări și corectări coordonate',up:()=>installDriverCash(db)}
+      ,{version:27,description:'Declarații fără încasare și sincronizare în ambele registre',up:()=>upgradeDriverCashRouting(db)}
     ];
 
     for (const migration of migrations) {
