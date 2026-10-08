@@ -35,7 +35,7 @@ import { assignEstimatedInvoiceReferences } from '../../src/utils/invoicePreview
 import { localInvoiceCatalog, priceInvoiceCatalog } from '../integrations/invoiceCatalogPricing';
 import { synchronizeWeeklySnapshot } from '../integrations/weeklyEntitySync';
 import { getDeviceRole } from '../device/deviceRole';
-import { scheduleBillingPublication } from '../integrations/billingPublisher';
+import { publishCompanyPaymentNow, scheduleBillingPublication } from '../integrations/billingPublisher';
 import type { InvoiceIssuerChangeInput } from '../../src/shared/invoiceIssuerChange.ts';
 
 const visibilityChannels = new Set(['getClients', 'getCompanies', 'getStores', 'getAllCompaniesAndStores', 'getManualInvoiceCompanies',
@@ -47,7 +47,7 @@ const dbForVisibility = () => db;
 const handleTrustedIpc: typeof registerTrustedIpc = (channel, handler) => registerTrustedIpc(channel, async (event, ...args) => {
   if (visibilityChannels.has(channel.replace('billing:', ''))) await ensureNormalBillingVisibility();
   const result = await handler(event, ...args);
-  if (new Set(['recordCompanyPayment','updatePayment','deletePayment','cancelInvoice','updateInvoice','createManualInvoice','createWeeklyInvoices','createWeeklyInvoicesByZone','createCreditNote','cancelCreditNote','applyCompanyCredit','reverseCreditApplication','changeInvoiceIssuer','reissueCancelledInvoice']).has(channel.replace('billing:', ''))) scheduleBillingPublication();
+  if (new Set(['updatePayment','deletePayment','cancelInvoice','updateInvoice','createManualInvoice','createWeeklyInvoices','createWeeklyInvoicesByZone','createCreditNote','cancelCreditNote','applyCompanyCredit','reverseCreditApplication','changeInvoiceIssuer','reissueCancelledInvoice']).has(channel.replace('billing:', ''))) scheduleBillingPublication();
   return result;
 });
 
@@ -162,7 +162,11 @@ export function registerBillingHandlers() {
   handleTrustedIpc('billing:getAllCompaniesAndStores', () => billingRepo.getAllCompaniesAndStores());
   handleTrustedIpc('billing:getManualInvoiceCompanies', () => getNormalManualInvoiceCompanies());
   handleTrustedIpc('billing:getCompanyProfile', (_, companyId) => billingRepo.getCompanyProfileDetails(companyId));
-  handleTrustedIpc('billing:recordCompanyPayment', (_, data) => billingRepo.recordCompanyPayment(data));
+  handleTrustedIpc('billing:recordCompanyPayment', (_, data) => {
+    const result = billingRepo.recordCompanyPayment(data);
+    publishCompanyPaymentNow(data.companyId);
+    return result;
+  });
   handleTrustedIpc('billing:updatePayment', (_, data) => billingRepo.updatePayment(data));
   handleTrustedIpc('billing:deletePayment', (_, data) => billingRepo.deletePayment(data));
   handleTrustedIpc('billing:getInvoices', (_, startDate, endDate, issuerId) => billingRepo.getInvoicesByDateRange(startDate, endDate, issuerId));

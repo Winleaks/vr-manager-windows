@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.129
+
+- Încasarea introdusă de operator din Facturi sau Clienți pornește direct trimiterea soldului către platformă, imediat după salvarea locală. Compania încasată are prioritate față de lotul de fundal și nu așteaptă reîncercarea programată.
+- Dacă există o publicare în curs, trimiterea încasării urmează imediat după confirmarea tranzacției curente. O livrare veche este confirmată înaintea versiunii noi; reîncercările nu dublează încasarea.
+- În registrul separat, publicarea pornește direct după confirmarea salvării criptate în Drive. Conexiunea indisponibilă păstrează datele și reîncercările automate; Viewer nu publică.
+- Include toate modificările v0.1.128. Fără migrare sau modificare a încasărilor existente.
+
 ### VR - Hub Management v0.1.128
 
 - Panoul documentelor afișează verificarea facturării în curs ca stare de așteptare, fără eroarea tehnică `system:documentSyncStatus` la pornire sau după sincronizarea asocierilor.

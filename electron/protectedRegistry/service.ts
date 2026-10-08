@@ -119,7 +119,7 @@ const sessionTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const recoveryRotations = new Set<number>();
 let routingOperationQueue: Promise<void> = Promise.resolve();
 const protectedOutbox = new ProtectedOutboxStore(path.join(app.getPath('userData'), 'protected-pending-v1'), keyBuffer);
-const protectedUploader = new ProtectedOutboxWorker(protectedOutbox, commitPendingProtectedSave, () => scheduleProtectedBillingPublication());
+const protectedUploader = new ProtectedOutboxWorker(protectedOutbox, commitPendingProtectedSave, () => scheduleProtectedBillingPublication(true));
 let protectedBillingPublishing = false;
 let protectedBillingQueued = false;
 let protectedFinancialGeneration = 0;
@@ -183,16 +183,24 @@ async function publishProtectedBilling() {
     protectedBillingPublishing = false;
     if (protectedBillingQueued) {
       protectedBillingQueued = false;
-      scheduleProtectedBillingPublication();
+      scheduleProtectedBillingPublication(true);
     }
   }
 }
 
-export function scheduleProtectedBillingPublication() {
+export function scheduleProtectedBillingPublication(immediate = false) {
   if (getDeviceRole() !== 'writer' || !isProtectedRegistryEnabled()) return;
   protectedFinancialGeneration++;
   db.prepare("INSERT INTO app_settings(key,value) VALUES('protected_financial_pending','1') ON CONFLICT(key) DO UPDATE SET value='1'").run();
   protectedBillingQueued = true;
+  if (immediate) {
+    if (protectedBillingDebounce) clearTimeout(protectedBillingDebounce);
+    protectedBillingDebounce = null;
+    if (protectedBillingPublishing) return;
+    protectedBillingQueued = false;
+    void publishProtectedBilling();
+    return;
+  }
   if (protectedBillingDebounce) return;
   protectedBillingDebounce = setTimeout(() => {
     protectedBillingDebounce = null;
