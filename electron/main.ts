@@ -1,7 +1,7 @@
-import {startDriverCashSync} from './integrations/driverCashSync';
+import {startDriverCashSync,wakeDriverCashSync} from './integrations/driverCashSync';
 import {startBillingPublisher} from './integrations/billingPublisher';
 import { startDocumentSync } from './integrations/documentSync';
-import { app, BrowserWindow, dialog, session } from 'electron'
+import { app, BrowserWindow, dialog, session, powerMonitor } from 'electron'
 import { execFileSync } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -164,8 +164,9 @@ app.whenReady().then(async () => {
     callback(false)
   })
   initDb()
-  startBillingPublisher()
   startDriverCashSync()
+  startBillingPublisher()
+  powerMonitor.on('resume',wakeDriverCashSync)
   startProtectedBillingPublisher()
   startDocumentSync()
   if (getDeviceRole() === 'writer') {

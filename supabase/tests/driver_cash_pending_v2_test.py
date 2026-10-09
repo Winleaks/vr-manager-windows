@@ -84,6 +84,34 @@ try:
  assert sql('select '+ack(blocked)+';').stdout.strip()=='t'
  unproven=receipt(600,state='CONFLICT',result=replay)
  assert unproven not in [x['operation_id'] for x in pending(after=10000)]
+ # v3 pages past pending old operations, includes restored processed history, and keeps zeros filtered.
+ sql((base/'migrations/20261009161426_driver_cash_queue_v3.sql').read_text())
+ for _ in range(121):receipt(77)
+ page_after=0;through=None;seen=[]
+ while True:
+  page=value(f"public.hub_driver_cash_pending_v3('{writer}',0,{page_after},{through if through is not None else 'null'})")
+  assert len(page['items'])<=50
+  seen.extend(x['operation_id'] for x in page['items'])
+  if through is None:
+   through=page['through'];arriving=receipt(88)
+  assert page['through']==through
+  page_after=page['next_page_after']
+  if not page['has_more']:break
+ assert len(seen)==len(set(seen)) and len(seen)>121 and arriving not in seen and zero not in seen
+ assert value(f"public.hub_driver_cash_queue_status('{writer}',{through})")['has_work']
+ assert value(f"public.hub_driver_cash_queue_status('{writer}',{through})")['latest_sequence']>through
+ assert sql(f"select public.hub_driver_cash_pending_v3('{writer}',0,-1);",False).returncode!=0
+ for role in ('anon','authenticated'):
+  assert sql(f"set role {role};select public.hub_driver_cash_pending_v3('{writer}');",False).returncode!=0
+  assert sql(f"set role {role};select public.hub_driver_cash_queue_status('{writer}');",False).returncode!=0
+ # Lost conflict ACK and lost retry response cannot duplicate or strand a review.
+ reviewed=receipt(42);body=json.dumps({'error':'Posibilă încasare introdusă manual. Verifică înainte de import.'})
+ reviewrpc=f"public.hub_retry_driver_cash_review('{writer}','{reviewed}','{body}'::jsonb)"
+ assert sql('select '+reviewrpc+';').stdout.strip()=='t'
+ assert sql('select '+reviewrpc+';').stdout.strip()=='t'
+ assert sql(f"select state from private.driver_cash_operations where operation_id='{reviewed}';").stdout.strip()=='PENDING'
+ assert sql('select '+ack(reviewed,result={'disposition':'recorded_manually'})+';').stdout.strip()=='t'
+ assert sql('select '+reviewrpc+';',False).returncode!=0
  # Server rejects wrong Writer and all direct client roles.
  assert sql('select '+ack(unpaid,writer_id=uid())+';',False).returncode!=0
  assert sql(f"select public.hub_driver_cash_pending_v2('{uid()}');",False).returncode!=0

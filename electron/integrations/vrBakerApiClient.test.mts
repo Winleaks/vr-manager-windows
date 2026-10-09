@@ -119,3 +119,10 @@ test('continues to reject malformed product identifiers', async () => {
     /ID produs nu este un UUID valid/,
   );
 });
+
+test('rate limits expose bounded retry-after without immediately flooding the API',async()=>{
+ let calls=0;
+ const client=new VrBakerApiClient(TOKEN,{fetchImpl:async()=>{calls++;return new Response(JSON.stringify({success:false,error:'Limit'}),{status:429,headers:{'Retry-After':'60'}});},wait:async()=>{throw Error('must defer to durable worker');}});
+ await assert.rejects(client.request('driver.cash.status'),(e:any)=>e.retryable===true&&e.retryAfterMs===60000);
+ assert.equal(calls,1);
+});

@@ -6,6 +6,7 @@ export function DriverCashStatus({writer,onChanged}:{writer:boolean;onChanged:()
   const [amount,setAmount]=useState('');
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
+  const [references,setReferences]=useState<Record<string,string>>({});
   useEffect(()=>{
     let active=true;
     const refresh=()=>api.dailyCash.getDriverCashStatus().then(value=>{if(active) setStatus(value);}).catch(()=>{if(active)setError('Declarațiile șoferilor nu au putut fi încărcate.');});
@@ -25,6 +26,18 @@ export function DriverCashStatus({writer,onChanged}:{writer:boolean;onChanged:()
     </div>
     {busy&&<p role="status" className="mt-2 text-sm text-blue-700">Sincronizarea este în curs. Încasările salvate se păstrează; rezultatul se actualizează automat.</p>}
     {(error||status.error)&&<p role="alert" className="mt-2 text-sm text-red-700">{error||status.error}</p>}
+    {status.reviews?.map((r:any)=><div key={r.operation_id} className="mt-2 rounded bg-amber-50 p-3 text-sm">
+      <p>{JSON.parse(r.result).driver_name} · {JSON.parse(r.result).store_name} · £{(JSON.parse(r.request).amount_pence/100).toFixed(2)} · {r.manualRoot?'Corectare a unei încasări înregistrate manual. Verifică înregistrarea manuală.':'Posibilă încasare introdusă manual. Importul este oprit pentru verificare.'}</p>
+      {writer&&r.decision==='pending'&&<div className="mt-2 flex flex-wrap gap-3">
+        {!r.manualRoot&&<button disabled={busy} className="underline" onClick={()=>void action(()=>api.dailyCash.resolveDriverCashReview(r.operation_id,'distinct'))}>Plată distinctă — importă</button>}
+        <select aria-label="Încasarea manuală existentă" value={references[r.operation_id]||''} onChange={e=>setReferences({...references,[r.operation_id]:e.target.value})} className="rounded border p-1">
+          <option value="">Selectează încasarea din Daily Cash</option>{r.candidates.map((c:any)=><option key={c.id} value={c.id}>#{c.id} · {c.date} · £{c.amount.toFixed(2)}</option>)}
+        </select>
+        <button disabled={busy||!references[r.operation_id]} className="underline disabled:opacity-50" onClick={()=>void action(()=>api.dailyCash.resolveDriverCashReview(r.operation_id,'manual',Number(references[r.operation_id])))}>Deja înregistrată manual</button>
+      </div>}
+      {writer&&r.decision!=='pending'&&<button disabled={busy} className="underline" onClick={()=>void action(()=>api.dailyCash.retryDriverCashConflict(r.operation_id))}>Reia transmiterea deciziei</button>}
+    </div>)}
+    {status.retrying?.map((r:any)=><p key={r.operation_id} className="mt-2 text-sm text-amber-800">{JSON.parse(r.result).driver_name} · {JSON.parse(r.result).store_name} · Încasare păstrată; reîncercare automată.</p>)}
     {status.conflicts.map((c:any)=><div key={c.operation_id} className="mt-2 rounded bg-red-50 p-3 text-sm">
       <span>{JSON.parse(c.result).driver_name} · {JSON.parse(c.result).store_name} · {JSON.parse(c.result).error||'Încasarea necesită verificare.'}</span>
       {writer&&<button disabled={busy} onClick={()=>void action(()=>api.dailyCash.retryDriverCashConflict(c.operation_id))} className="ml-3 underline">Reîncearcă după rezolvare</button>}

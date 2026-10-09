@@ -12,7 +12,7 @@ function actions(section:string,supabaseAdmin:any) {
   ensureDatabaseSuccess:(error:any)=>{if(error)throw error;},ensureCashDatabaseSuccess:(error:any)=>{if(error)throw error;}};
  return new Function(...Object.keys(bindings),code+';return actions;')(...Object.values(bindings));
 }
-test('actual external API keeps default v1 RPCs and opts pending/ack into bounded v2 only',async()=>{
+test('actual external API keeps default v1 RPCs and opts pending into paged v3 while keeping v1/v2 ACKs',async()=>{
  const calls:any[]=[];
  const api=actions(source.slice(source.indexOf('"driver.cash.pending":'),source.indexOf('"driver.cash.correct":')),
   {rpc:async(name:string,payload:any)=>{calls.push({name,payload});return {data:true,error:null};}});
@@ -21,8 +21,13 @@ test('actual external API keeps default v1 RPCs and opts pending/ack into bounde
   await api['driver.cash.pending'].handler(payload);await api['driver.cash.ack'].handler(payload);
  }
  assert.deepEqual(calls.map(x=>x.name),['hub_driver_cash_pending','hub_driver_cash_ack','hub_driver_cash_pending','hub_driver_cash_ack','hub_driver_cash_pending_v2','hub_driver_cash_ack_v2']);
- for(const v of [0,3,1.5,'garbage'])await assert.rejects(api['driver.cash.pending'].handler({source_id:id(1),protocol_version:v}));
+ for(const v of [0,4,1.5,'garbage'])await assert.rejects(api['driver.cash.pending'].handler({source_id:id(1),protocol_version:v}));
  assert.equal(calls.length,6);
+ await api['driver.cash.pending'].handler({source_id:id(1),protocol_version:3,after:7,page_after:50,through:100});
+ assert.deepEqual(calls.at(-1),{name:'hub_driver_cash_pending_v3',payload:{p_source:id(1),p_after:7,p_page_after:50,p_through:100}});
+ await api['driver.cash.status'].handler({source_id:id(1),after:7});
+ assert.equal(calls.at(-1).name,'hub_driver_cash_queue_status');
+ await assert.rejects(api['driver.cash.ack'].handler({source_id:id(1),protocol_version:3}));
 });
 test('scoped store export excludes an unrelated contradictory association while the full export fails closed',async()=>{
  const company={id:id(1),name:'Company'};const owner={id:id(2),client_company_id:company.id,client_company:company};

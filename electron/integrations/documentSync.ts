@@ -1,3 +1,4 @@
+import {driverCashHasPriority} from './driverCashQueue';
 import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -78,6 +79,7 @@ export async function syncPendingDocuments() {
     const connection = db;
     workerError = null;
     for (const item of dueDocuments(normalBillingReadDatabase(connection))) {
+      if(driverCashHasPriority()) return;
       if (getDeviceRole() !== 'writer' || connection !== db || !connection.open || !isDocumentDriveConnected()) return;
       // A manual upload may have completed since selection. Do not regenerate it.
       const pending = connection.prepare("SELECT 1 FROM document_sync_queue WHERE kind=? AND document_id=? AND generation=? AND state='pending'").get(item.kind,item.document_id,item.generation);

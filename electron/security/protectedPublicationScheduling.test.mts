@@ -17,7 +17,7 @@ function fixture(){
   let cloudGate=Promise.resolve();
   const timers=new Map<object,()=>void>();
   const store:any={hasPending:()=>pending,read:()=>pending?[{name:'encrypted-fixture',value:{}}]:[],acknowledge:()=>{pending=false;}};
-  const bindings:any={db,ProtectedOutboxWorker,protectedOutbox:store,
+  const bindings:any={driverCashHasPriority:()=>false,db,ProtectedOutboxWorker,protectedOutbox:store,
     protectedPublicationCompanyIds:()=>[],protectedBillingPriorities:new Set(),
     protectedCloudAccountScope:()=> 'fixture',
     commitPendingProtectedSave:async()=>{await cloudGate;commits++;},getDeviceRole:()=>role,isProtectedRegistryEnabled:()=>true,

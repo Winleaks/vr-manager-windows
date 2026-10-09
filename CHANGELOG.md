@@ -1,3 +1,11 @@
+### VR - Hub Management v0.1.132
+
+- Writer verifică încasările noi la 5 secunde și golește coada în loturi consecutive la deschidere, reconectare și revenire din repaus. Hub-ul închis păstrează încasările în coada serverului.
+- O indisponibilitate temporară se reîncearcă durabil pentru încasarea afectată; celelalte magazine pot continua. Publicarea soldurilor nu blochează preluarea următorului lot.
+- Posibilele încasări deja introduse manual cer verificare înainte de import. Operatorul poate confirma o plată distinctă sau indica încasarea existentă din Daily Cash, fără a crea numerar sau credit suplimentar. Corectările încasărilor rezolvate manual revin la verificare.
+- Actualizarea creează un backup SQLite verificat înaintea migrării. Registrul separat rămâne criptat, confirmările urmează salvările durabile, iar Viewer nu poate sincroniza sau decide încasări.
+- Contractul server v3 păstrează compatibilitatea v1/v2 și filtrarea declarațiilor inițiale „Nu”. Nu recalculează încasările deja procesate.
+
 ### VR - Hub Management v0.1.131
 
 - „Sincronizează acum” arată progresul în Daily Cash. După o reîncercare reușită, mesajul vechi de eroare se elimină imediat.

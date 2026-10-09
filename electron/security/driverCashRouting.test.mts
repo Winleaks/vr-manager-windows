@@ -1,3 +1,6 @@
+import * as reviews from '../database/driverCashReview.ts';
+import {companyPaymentDate} from '../database/driverCash.ts';
+import {installDriverCashQueue} from '../database/driverCashQueue.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,mkdtempSync,rmSync} from 'node:fs';
@@ -18,7 +21,7 @@ import {ProtectedOutboxStore,ProtectedOutboxWorker,vaultDigest} from '../protect
 import * as crypto from '../protectedRegistry/crypto.ts';
 
 function fixture() {
- const db=new Database(':memory:');db.exec(initialSchema);ensureBillingIssuerSchema(db);ensureCreditNoteSchema(db);installBillingPublication(db);installDriverCash(db);upgradeDriverCashRouting(db);
+ const db=new Database(':memory:');db.exec(initialSchema);ensureBillingIssuerSchema(db);ensureCreditNoteSchema(db);installBillingPublication(db);installDriverCash(db);upgradeDriverCashRouting(db);installDriverCashQueue(db);
  const issuer=db.prepare("SELECT id,code FROM billing_issuers WHERE code='goodness'").get() as any;
  const company=randomUUID(),store=randomUUID(),root=randomUUID();
  db.exec("INSERT INTO clients(id,name) VALUES(1,'Client')");
@@ -41,7 +44,7 @@ function fixture() {
  });
  const source=ts.createSourceFile('service.ts',readFileSync(new URL('../protectedRegistry/service.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
  const declaration=source.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='applyRoutedDriverCash')!.getText(source).replace('export ','');
- const bindings={db,getDeviceRole:()=>state.role,assertWriter:()=>{if(state.role!=='writer')throw Error('Writer only');},validateDriverCashCommand,prepareDriverCash,
+ const bindings={...reviews,companyPaymentDate,db,getDeviceRole:()=>state.role,assertWriter:()=>{if(state.role!=='writer')throw Error('Writer only');},validateDriverCashCommand,prepareDriverCash,
   applyDriverCash,driverCashRequest,applyProtectedDriverCash,withRegistryRoutingLock:async(fn:any)=>fn(),withPrivateCloudOperation:async(fn:any)=>fn(),
   protectedUploader:uploader,protectedOutbox:outbox,loadProtectedRoutingPolicy:async()=>({enabled:true,key,vaultRevision:cloud.vault.revision,
     companyHashes:new Set(state.assigned?[crypto.routingHash(key,'company',`vrbaker:${company}`)]:[])}),loadVaultFromCloud:async()=>structuredClone(cloud),
@@ -201,5 +204,17 @@ test('v2 first cash after No uses the locked encrypted register without zero cas
   assert.equal((f.db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,1);
   const zero={...c,zero_prefix:null,amount_pence:0,operation_id:randomUUID(),previous_operation_id:c.operation_id,revision:3,sequence_id:3};
   await f.process(zero);assert.deepEqual(f.cloud().invoices.map(row=>row.paidAmount),[0,0]);
+ }finally{f.cleanup();}
+});
+
+test('a manual protected payment holds only the receipt and exposes no protected payment identifiers',async()=>{
+ const f=fixture();try {
+  f.cloud().payments.push({id:'protected-manual-payment',operationId:'private-operation',companyKey:`vrbaker:${f.command.company_id}`,issuerCode:'goodness',invoiceId:'private-invoice-1',amount:125,paymentDate:'2026-10-08',method:'cash',notes:'confidential detail',createdAt:'2026-10-08T08:00:00Z',reversedAt:null,reversalReason:null,testEntry:false});
+  await f.process(f.command);
+  assert.equal((f.db.prepare('SELECT state FROM driver_cash_operations WHERE operation_id=?').get(f.command.operation_id) as any).state,'CONFLICT');
+  assert.equal(f.cloud().payments.length,1);assert.equal(f.state.commits,0);
+  assert.equal((f.db.prepare('SELECT count(*) n FROM cash_transactions').get() as any).n,0);
+  const rows=JSON.stringify(f.db.prepare('SELECT * FROM driver_cash_operations').all());
+  assert.doesNotMatch(rows,/protected-manual-payment|private-operation|private-invoice|confidential detail/);
  }finally{f.cleanup();}
 });

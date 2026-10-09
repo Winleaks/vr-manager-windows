@@ -1,3 +1,5 @@
+import {useEffect} from 'react';
+import {api} from './shared/api';
 import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Wheat, CakeSlice, Settings, ArrowRightLeft, History } from 'lucide-react';
 import RawMaterials from './pages/RawMaterials';
@@ -84,6 +86,7 @@ import { UpdateModal } from './components/UpdateModal';
 import { BillingLayout } from './pages/BillingLayout';
 
 export default function App() {
+  useEffect(()=>{const wake=()=>{void api.dailyCash.wakeDriverCashSync().catch(()=>{});};window.addEventListener('online',wake);return()=>window.removeEventListener('online',wake);},[]);
   return (
     <>
       <DocumentSyncBanner />

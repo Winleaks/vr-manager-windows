@@ -1,5 +1,5 @@
 import {db} from '../database/db';
-import {correctHubDriverCash,driverCashStatus,retryDriverCashConflict,resumeDriverCashSync,discardRejectedDriverCashOffice} from '../integrations/driverCashSync';
+import {correctHubDriverCash,driverCashStatus,retryDriverCashConflict,resumeDriverCashSync,discardRejectedDriverCashOffice,resolveDriverCashReview,wakeDriverCashSync} from '../integrations/driverCashSync';
 import { app, shell } from 'electron';
 import { driverRepo } from '../database/repositories/driverRepo';
 import { employeeRepo } from '../database/repositories/employeeRepo';
@@ -44,6 +44,8 @@ export function registerDailyCashHandlers() {
   handleTrustedIpc('driver-cash-correct', (_e, data) => correctHubDriverCash(data.rootId,data.amount,data.expectedRevision));
   handleTrustedIpc('driver-cash-retry', (_e, operationId) => retryDriverCashConflict(operationId));
   handleTrustedIpc('driver-cash-discard-rejected',(_e,rootId)=>discardRejectedDriverCashOffice(rootId));
+  handleTrustedIpc('driver-cash-wake',()=>wakeDriverCashSync());
+  handleTrustedIpc('driver-cash-review',(_e,operation,decision,cashId)=>resolveDriverCashReview(operation,decision,cashId));
   handleTrustedIpc('driver-cash-sync', () => resumeDriverCashSync());
 
   // Cash Transactions

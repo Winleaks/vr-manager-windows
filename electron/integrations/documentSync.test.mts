@@ -36,6 +36,7 @@ function fixture() {
   const calls:string[]=[];
   const databaseModule={db,waitForDatabaseReady:async()=>{}};
   const mocks:any={
+    './driverCashQueue':{driverCashHasPriority:()=>false},
     '../database/normalBillingVisibility': { ...visibility, normalBillingReadDatabase: (connection: Database.Database) => {
       scopedReads++; return visibility.normalBillingReadDatabase(connection);
     } },

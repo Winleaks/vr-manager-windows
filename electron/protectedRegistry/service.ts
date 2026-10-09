@@ -1,3 +1,6 @@
+import {driverCashHasPriority} from '../integrations/driverCashQueue';
+import {companyPaymentDate} from '../database/driverCash';
+import {holdManualReview,normalManualPaymentMatch,finishManualReview,manuallyResolvedRoot} from '../database/driverCashReview';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {applyDriverCash,prepareDriverCash,driverCashRequest,validateDriverCashCommand} from '../database/driverCash.ts';
 import {applyProtectedDriverCash} from './driverCash.ts';
@@ -153,6 +156,10 @@ async function publishProtectedBilling() {
   if (protectedBillingPublishing || getDeviceRole() !== 'writer' || !isProtectedRegistryEnabled()) {
     if (protectedBillingPublishing) protectedBillingQueued = true;
     return;
+  }
+  if(driverCashHasPriority()) {
+    if(!protectedBillingDebounce) protectedBillingDebounce=setTimeout(()=>{protectedBillingDebounce=null;void publishProtectedBilling();},5_000);
+    protectedBillingDebounce.unref();return;
   }
   protectedBillingPublishing = true;
   const generation=protectedFinancialGeneration;
@@ -948,6 +955,29 @@ export async function applyRoutedDriverCash(input:unknown) {
   assertWriter();
   const connection=db,c=validateDriverCashCommand(input);
   const current=()=>{if(connection!==db || getDeviceRole()!=='writer') throw Object.assign(Error('Baza de date sau rolul s-a schimbat. Reia sincronizarea.'),{retryable:true});};
+  if((db.prepare('SELECT decision FROM driver_cash_reviews WHERE operation_id=?').get(c.operation_id) as any)?.decision==='manual') {
+    return withRegistryRoutingLock(async()=>{
+      try {
+        await protectedUploader.start();current();
+        if(protectedOutbox.hasPending()) throw Error('Pending journal');
+        await withPrivateCloudOperation(async()=>{
+          const policy=await loadProtectedRoutingPolicy();current();
+          if(policy.enabled && !policy.key)throw Error('Routing key unavailable');
+          if(policy.enabled && policy.key) {
+            const latest=await loadVaultFromCloud(policy.key);current();
+            if(latest.vault.revision!==policy.vaultRevision || latest.vault.mode!=='live') throw Error('Routing unavailable');
+            if(latest.vault.driverCashReceipts?.some(r=>r.rootId===c.root_operation_id))
+              throw Object.assign(Error('Încasarea există deja în registru. Verifică reconcilierea înainte de rezolvarea manuală.'),{retryable:false});
+          }
+        });
+        current();return finishManualReview(db,c)!;
+      } catch(error) {
+        if((error as any)?.retryable===false || (error as any)?.code?.startsWith('SQLITE_'))throw error;
+        throw Object.assign(Error('Verificarea înregistrării manuale așteaptă conexiunea Drive.'),{retryable:true});
+      }
+    });
+  }
+  if(manuallyResolvedRoot(db,c.root_operation_id)) holdManualReview(db,c);
   const prepared=prepareDriverCash(db,c);
   const normalHistory=db.prepare('SELECT 1 FROM driver_cash_allocations WHERE root_id=? LIMIT 1').get(c.root_operation_id);
   const cashHistory=db.prepare('SELECT 1 FROM cash_transactions WHERE driver_cash_root=? LIMIT 1').get(c.root_operation_id);
@@ -977,6 +1007,11 @@ export async function applyRoutedDriverCash(input:unknown) {
         let issuer:ReturnType<typeof readIssuer>;
         try {issuer=readIssuer(issuerId!);} catch(error) {throw Object.assign(error as Error,{businessConflict:true});}
         if(root && root.issuerCode!==issuer.code) throw Object.assign(Error('Emitentul încasării necesită reconciliere.'),{retryable:false});
+        const appPaymentIds=new Set(latest.vault.driverCashReceipts?.flatMap(r=>r.paymentIds)??[]);
+        const groups=new Map<string,number>();
+        for(const p of latest.vault.payments) if(p.companyKey===`vrbaker:${c.company_id}` && p.issuerCode===issuer.code && !p.reversedAt && !p.testEntry &&
+          p.paymentDate===companyPaymentDate(c.collected_at_ms??c.recorded_at_ms) && !appPaymentIds.has(p.id)) groups.set(p.operationId,(groups.get(p.operationId)??0)+Math.round(p.amount*100));
+        holdManualReview(db,c,[...groups.values()].includes(c.amount_pence));
         const next=structuredClone(latest.vault);
         // All financial/business checks precede durable acceptance.
         try {applyProtectedDriverCash(next,c,issuer.code,!cashHistory && prepared.old?.amount_pence===0 ?
@@ -1016,7 +1051,7 @@ export async function applyRoutedDriverCash(input:unknown) {
       });
       if(!protectedSave) {
         current();
-        try {return applyDriverCash(db,c);} catch(error) {throw Object.assign(error as Error,{businessConflict:true});}
+        try {holdManualReview(db,c,normalManualPaymentMatch(db,c,identity.company_id!,issuerId!));return applyDriverCash(db,c);} catch(error) {throw Object.assign(error as Error,{businessConflict:true});}
       }
       await protectedUploader.start();current();
       if(protectedOutbox.hasPending() || protectedUploader.status().error) throw Object.assign(Error('Sincronizarea încasării este în așteptare. Datele sunt păstrate pe Writer.'),{retryable:true});

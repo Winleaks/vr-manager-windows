@@ -72,3 +72,7 @@ test('driver receipt status is readable on Viewer; every financial mutation stay
   assert.equal(isChannelAllowedForRole('viewer','driver-cash-status'),true);
   for(const channel of ['driver-cash-correct','driver-cash-retry','driver-cash-sync','driver-cash-discard-rejected']) assert.equal(isChannelAllowedForRole('viewer',channel),false);
 });
+
+test('Viewer cannot wake synchronization or decide manual driver receipts',()=>{
+ for(const channel of ['driver-cash-wake','driver-cash-review','driver-cash-sync','driver-cash-retry']) assert.equal(isChannelAllowedForRole('viewer',channel),false);
+});

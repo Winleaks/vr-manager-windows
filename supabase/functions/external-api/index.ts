@@ -218,9 +218,19 @@ const actions: Record<string, ActionDefinition> = {
   "driver.cash.pending": {
     methods: new Set(["POST"]), scope: "billing:write", mutates: false,
     handler: async (p) => {
-      const protocol=parseBoundedInteger(p.protocol_version,1,1,2,"protocol_version");
-      const {data,error}=await supabaseAdmin.rpc(protocol===2 ? "hub_driver_cash_pending_v2" : "hub_driver_cash_pending",{p_source:requireUuid(p.source_id,"source_id"),p_after:parseBoundedInteger(p.after,0,0,Number.MAX_SAFE_INTEGER,"after")});
+      const protocol=parseBoundedInteger(p.protocol_version,1,1,3,"protocol_version");
+      const args={p_source:requireUuid(p.source_id,"source_id"),p_after:parseBoundedInteger(p.after,0,0,Number.MAX_SAFE_INTEGER,"after")};
+      const {data,error}=await supabaseAdmin.rpc(protocol===3 ? "hub_driver_cash_pending_v3" : protocol===2 ? "hub_driver_cash_pending_v2" : "hub_driver_cash_pending",protocol===3 ? {...args,
+        p_page_after:parseBoundedInteger(p.page_after,0,0,Number.MAX_SAFE_INTEGER,"page_after"),
+        p_through:p.through==null ? null : parseBoundedInteger(p.through,0,0,Number.MAX_SAFE_INTEGER,"through")} : args);
       ensureCashDatabaseSuccess(error); return data;
+    },
+  },
+  "driver.cash.status": {
+    methods:new Set(["POST"]),scope:"billing:write",mutates:false,
+    handler:async(p)=>{
+      const {data,error}=await supabaseAdmin.rpc("hub_driver_cash_queue_status",{p_source:requireUuid(p.source_id,"source_id"),p_after:parseBoundedInteger(p.after,0,0,Number.MAX_SAFE_INTEGER,"after")});
+      ensureCashDatabaseSuccess(error);return data;
     },
   },
   "driver.cash.ack": {
@@ -239,6 +249,13 @@ const actions: Record<string, ActionDefinition> = {
     },
   },
 
+  "driver.cash.review.retry": {
+    methods:new Set(["POST"]),scope:"billing:write",mutates:true,
+    handler:async(p)=>{
+      const {data,error}=await supabaseAdmin.rpc("hub_retry_driver_cash_review",{p_source:requireUuid(p.source_id,"source_id"),p_operation_id:requireUuid(p.operation_id,"operation_id"),p_result:p.result});
+      ensureCashDatabaseSuccess(error);return data;
+    },
+  },
   "driver.cash.retry": {
     methods:new Set(["POST"]),scope:"billing:write",mutates:true,
     handler:async(p)=>{

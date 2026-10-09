@@ -295,14 +295,19 @@ export class VrBakerApiClient {
         try { body = JSON.parse(raw); } catch { throw new Error('VR Baker a returnat un răspuns invalid.'); }
         if (response.ok && body?.success === true) return body.data as T;
         lastError = new Error(typeof body?.error === 'string' ? body.error : 'Cererea VR Baker a eșuat.');
-        if (response.status !== 429 && response.status < 500) {
+        if(response.status===429) {
+          const header=response.headers.get('retry-after');
+          const seconds=header && /^\d+$/.test(header) ? Number(header)*1000 : header ? Date.parse(header)-Date.now() : 60_000;
+          throw Object.assign(lastError,{retryable:true,retryAfterMs:Math.max(5_000,Math.min(300_000,Number.isFinite(seconds)?seconds:60_000))});
+        }
+        if (response.status < 500) {
           throw Object.assign(lastError, { retryable: false });
         }
       } catch (error) {
         lastError = error instanceof Error && error.name === 'AbortError'
           ? new Error('Conexiunea cu VR Baker a expirat.')
           : error instanceof Error ? error : lastError;
-        if ((error as { retryable?: boolean })?.retryable === false || attempt >= this.maxAttempts) break;
+        if ((error as any)?.retryAfterMs || (error as { retryable?: boolean })?.retryable === false || attempt >= this.maxAttempts) break;
       } finally {
         clearTimeout(timeout);
       }

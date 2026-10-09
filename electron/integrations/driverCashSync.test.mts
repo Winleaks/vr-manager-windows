@@ -1,3 +1,6 @@
+import * as queue from './driverCashQueue.ts';
+import * as queueDb from '../database/driverCashQueue.ts';
+import * as review from '../database/driverCashReview.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -15,7 +18,7 @@ import * as processor from './driverCashProcessor.ts';
 import {EntityAssociationConflict} from '../database/entitySync.ts';
 const code=ts.transpileModule(readFileSync(new URL('./driverCashSync.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 function fixture() {
- const db=new Database(':memory:');db.exec(initialSchema);ensureBillingIssuerSchema(db);ensureCreditNoteSchema(db);installBillingPublication(db);cash.installDriverCash(db);cash.upgradeDriverCashRouting(db);
+ const db=new Database(':memory:');db.exec(initialSchema);ensureBillingIssuerSchema(db);ensureCreditNoteSchema(db);installBillingPublication(db);cash.installDriverCash(db);cash.upgradeDriverCashRouting(db);queueDb.installDriverCashQueue(db);
  const issuer=(db.prepare('SELECT id FROM billing_issuers LIMIT 1').get() as any).id;
  const company=randomUUID(),store=randomUUID(),root=randomUUID();
  db.exec("INSERT INTO clients(id,name) VALUES(1,'Client')");
@@ -26,25 +29,31 @@ function fixture() {
  const state={role:'writer',incoming:[] as any[],published:0,imports:0,requests:[] as any[],snapshots:[] as string[][]};
  const mockClient={request:async(action:string,payload:any)=>{
   state.requests.push({action,payload});
-  if(action==='driver.cash.pending')return structuredClone(state.incoming);
+  if(action==='driver.cash.pending') {
+   if(!Array.isArray(state.incoming))return null;
+   const through=payload.through??Math.max(0,...state.incoming.map(x=>x.sequence_id));
+   const all=state.incoming.filter(x=>x.sequence_id>payload.page_after && x.sequence_id<=through);
+   const items=structuredClone(all.slice(0,50));return {protocol_version:3,items,through,has_more:all.length>50,next_page_after:items.at(-1)?.sequence_id??payload.page_after};
+  }
   if(action==='driver.cash.retry'){for(const x of state.incoming)if(x.operation_id===payload.operation_id)x.state='PENDING';}
   return true;
  },fetchEntitySnapshot:async(ids:string[])=>{state.snapshots.push(ids);return {companies:[{id:company,name:'Company'}],stores:[{id:store,name:'Store',company:{id:company,name:'Company'}}]};}};
  const mocks:any={
+  './driverCashQueue':queue,'../database/driverCashQueue':queueDb,'../database/driverCashReview':review,
   'node:crypto':{randomUUID},'../database/db':{db,waitForDatabaseReady:async()=>{}},'../device/deviceRole':{getDeviceRole:()=>state.role},
   './vrBakerIntegration':{createVrBakerClient:()=>mockClient},'./driverCashProcessor':processor,'../database/driverCash':cash,
   './driverCashRecovery':recovery,'../database/repositories/billingRepo':{syncEntitiesFromVrBaker:()=>{state.imports++;}},
   '../database/entitySync':{EntityAssociationConflict},'../database/normalBillingVisibility':{invalidateNormalBillingVisibility:()=>{}},
   './billingPublisher':{publishBilling:async()=>{state.published++;}},'../protectedRegistry/service':{applyRoutedDriverCash:async(c:any)=>cash.applyDriverCash(db,c)},
  };
- const api:any={};runInNewContext(code,{exports:api,require:(id:string)=>{if(!(id in mocks))throw Error(id);return mocks[id];}});
+ const api:any={};runInNewContext(code,{Error,exports:api,require:(id:string)=>{if(!(id in mocks))throw Error(id);return mocks[id];}});
  return {db,c,state,api};
 }
 test('No-only v2 poll performs no entity import, individual acknowledgment or publication; Viewer makes no requests',async()=>{
  const f=fixture();try {
   cash.recordDriverCashConflict(f.db,{...f.c,company_id:null,amount_pence:0},recovery.legacyDriverCashRoutingError);
   await f.api.syncDriverCash();assert.equal(f.state.imports,0);assert.equal(f.state.published,0);
-  assert.deepEqual(f.state.requests.map(x=>x.action),['driver.cash.pending']);assert.equal(f.state.requests[0].payload.protocol_version,2);
+  assert.deepEqual(f.state.requests.map(x=>x.action),['driver.cash.pending']);assert.equal(f.state.requests[0].payload.protocol_version,3);
   f.state.role='viewer';f.state.incoming=[f.c];await f.api.syncDriverCash();assert.equal(f.state.requests.length,1);
  }finally{f.db.close();}
 });
@@ -76,5 +85,26 @@ test('manual synchronization clears an old error only after success and preserve
   f.state.incoming=null as any;
   await assert.rejects(f.api.resumeDriverCashSync(),/Lista încasărilor este invalidă/);
   assert.match(f.api.driverCashStatus().error,/Lista încasărilor este invalidă/);
+ }finally{f.db.close();}
+});
+
+test('startup drains 121 receipts in three pages with no interval between batches',async()=>{
+ const f=fixture();try {
+  f.state.incoming=Array.from({length:121},(_,i)=>{const id=randomUUID();return {...f.c,operation_id:id,root_operation_id:id,sequence_id:i+1};});
+  await f.api.syncDriverCash();
+  assert.equal(f.state.requests.filter(x=>x.action==='driver.cash.pending').length,3);
+  assert.equal(f.state.requests.filter(x=>x.action==='driver.cash.ack').length,121);
+  assert.equal((f.db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,121);
+  await f.api.syncDriverCash();assert.equal((f.db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,121);
+ }finally{f.db.close();}
+});
+
+test('requests arriving during a drain coalesce into a trailing scan without duplicate money',async()=>{
+ const f=fixture();try {
+  f.state.incoming=[f.c];
+  const first=f.api.syncDriverCash(),second=f.api.syncDriverCash(),third=f.api.syncDriverCash();
+  assert.equal(first,second);assert.equal(second,third);await first;
+  assert.equal(f.state.requests.filter(x=>x.action==='driver.cash.pending').length,2);
+  assert.equal((f.db.prepare('SELECT count(*) n FROM cash_transactions').get() as any).n,1);
  }finally{f.db.close();}
 });

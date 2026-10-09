@@ -98,6 +98,8 @@ export const desktopApi = {
   dailyCash: {
     getDriverCashStatus: () => ipcRenderer.invoke('driver-cash-status'),
     correctDriverReceipt: (data: {rootId:string;amount:number;expectedRevision:number}) => ipcRenderer.invoke('driver-cash-correct',data),
+    wakeDriverCashSync: () => ipcRenderer.invoke('driver-cash-wake'),
+    resolveDriverCashReview: (operation:string,decision:'distinct'|'manual',cashId?:number) => ipcRenderer.invoke('driver-cash-review',operation,decision,cashId),
     retryDriverCashConflict: (operationId:string) => ipcRenderer.invoke('driver-cash-retry',operationId),
     discardRejectedDriverCashOffice: (rootId:string) => ipcRenderer.invoke('driver-cash-discard-rejected',rootId),
     syncDriverCash: () => ipcRenderer.invoke('driver-cash-sync'),

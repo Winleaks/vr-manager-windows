@@ -1,3 +1,4 @@
+import {installDriverCashQueue} from './driverCashQueue.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,readFileSync,readdirSync,rmSync} from 'node:fs';
@@ -28,7 +29,7 @@ function fixture(rejectBackup=false) {
  const source=ts.createSourceFile('db.ts',readFileSync(new URL('./db.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
  const names=new Set(['initDb','createPreMigrationSnapshotIfNeeded','runMigrations']);
  const code=source.statements.filter(node=>ts.isFunctionDeclaration(node)&&names.has(node.name?.text||'')).map(node=>node.getText(source).replace('export ','')).join('\n');
- const bindings={db,fs,path,initialSchema,seedData:'',databaseExistedAtStartup:true,dbFolder:directory,upgradeDriverCashRouting,
+ const bindings={db,fs,path,initialSchema,seedData:'',databaseExistedAtStartup:true,dbFolder:directory,upgradeDriverCashRouting,installDriverCashQueue,
   verifyDatabaseFile:(file:string)=>{if(rejectBackup)throw Error('snapshot verification failed');return verifyDatabaseFile(file);},console:{log:()=>{},error:()=>{}}};
  const compiled=ts.transpileModule(code,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
  const init=new Function(...Object.keys(bindings),compiled+';return initDb;')(...Object.values(bindings));
@@ -45,7 +46,7 @@ test('real v26 file upgrades with verified WAL-inclusive pre-migration backup, r
    assert.equal((backup.prepare('SELECT amount_pence FROM driver_cash_receipts').get() as any).amount_pence,1234);
    assert.equal((backup.pragma('table_info(driver_cash_receipts)') as any[]).find(row=>row.name==='company_id').notnull,1);
   } finally {backup.close();}
-  assert.equal((f.db.prepare('SELECT max(version) AS v FROM schema_migrations').get() as any).v,27);
+  assert.equal((f.db.prepare('SELECT max(version) AS v FROM schema_migrations').get() as any).v,28);
   assert.equal((f.db.prepare('SELECT sum(amount) AS value FROM payments').get() as any).value,12.34);
   const root=randomUUID();applyDriverCash(f.db,{...f.command,operation_id:root,root_operation_id:root,amount_pence:0,company_id:null},'2026-10-08');
   assert.equal((f.db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,1);
