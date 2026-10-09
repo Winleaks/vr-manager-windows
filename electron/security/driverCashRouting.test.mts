@@ -168,3 +168,17 @@ test('altered request cannot replace an in-progress receipt or leak a second fin
   await f.process(f.command);assert.equal(f.cloud().payments.length,3);
  } finally {f.cleanup();}
 });
+
+test('v2 first cash after No uses the locked encrypted register without zero cash or acknowledgments',async()=>{
+ const f=fixture();try {
+  const c={...f.command,operation_id:randomUUID(),previous_operation_id:f.command.operation_id,revision:2,
+   collected_at_ms:f.command.recorded_at_ms,recorded_at_ms:f.command.recorded_at_ms+1000,sequence_id:2,
+   zero_prefix:[{operation_id:f.command.operation_id,previous_operation_id:null,revision:1,recorded_at_ms:f.command.recorded_at_ms,amount_pence:0}]};
+  let acks=0;await f.process(c,async()=>{acks++;});await f.process(c,async()=>{acks++;});
+  assert.equal(acks,2);assert.equal(f.sessions.size,0);assert.equal(f.cloud().payments.length,3);
+  assert.equal((f.db.prepare('SELECT count(*) AS n FROM payments').get() as any).n,0);
+  assert.equal((f.db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,1);
+  const zero={...c,zero_prefix:null,amount_pence:0,operation_id:randomUUID(),previous_operation_id:c.operation_id,revision:3,sequence_id:3};
+  await f.process(zero);assert.deepEqual(f.cloud().invoices.map(row=>row.paidAmount),[0,0]);
+ }finally{f.cleanup();}
+});

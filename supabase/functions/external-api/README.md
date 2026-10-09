@@ -63,3 +63,43 @@ and source-order IDs. Duplicate billed periods and payment/credit conflicts fail
 closed. A later source revision remains a manual review, never automatic rebilling.
 Older installed Writers retain their conflict/duplicate guards but cannot perform
 this repair. Do not replace a current Writer database with an old support backup.
+
+## Driver cash protocol v2
+
+Deploy `driver_cash_pending_v2` and `driver_cash_association_retry_continuity`
+before this API, then release the updated Hub.
+`driver.cash.pending` and `driver.cash.ack` accept optional `protocol_version: 2`;
+missing/1 preserves legacy behavior. The Writer guard and billing write scope
+remain required. The cash reader resolves direct and owner company foreign keys
+using the same rules as the entity export. Null receipt associations are filled
+from verified IDs with an `ASSOCIATED` event; financial revisions/states are not
+reset by the reader. Contradictory relations stay blocked.
+
+V2 omits zero-only initial history from the financial queue. The first positive
+revision includes a bounded, original-ID `zero_prefix`. Hub imports this metadata
+transactionally only alongside that positive revision, without payments, cash or
+individual server acknowledgments for the zeros. V2 acknowledgments can bypass
+only a verified complete zero-only predecessor chain. Zero cancellations after
+any positive revision remain queued. Delivery receipts, correction deadlines and
+standalone driver receipts are unchanged; no Android update is needed.
+
+Scoped `stores.list` exports accept up to 50 exact `store_ids`, including only
+merges targeting the selected stores. Cash imports these as partial snapshots,
+never inferring absence of unrelated companies/stores. A conflicting local
+historical association blocks that store without moving its invoices.
+
+Missing-company recovery requires both the server's audited eligibility and a
+fresh matching local store/company/issuer. Existing payments, cash allocations,
+processing journals or changed canonical requests prevent automatic retry.
+The durable retry intent also handles an interrupted or already accepted retry.
+Financial conflicts and server-processed receipts absent locally fail closed for
+reconciliation. The separate register's existing encrypted outbox and backup
+remain authoritative; no decrypted allocations enter normal SQLite/UI.
+
+Validation: run `python3 supabase/tests/driver_cash_pending_v2_test.py <port>
+--disposable` against a disposable local PostgreSQL instance, plus Hub tests,
+type checks and Windows release checks. Keep incident exports outside this public
+repository. Reconcile actual Writer cash, register allocations/credit and portal
+publication per root after installation; server acknowledgment alone is not proof
+of client balance publication. Retain the additive v2 functions on rollback; stop
+affected synchronization rather than restoring an old database over new cash.

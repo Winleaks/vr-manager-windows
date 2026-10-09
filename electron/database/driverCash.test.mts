@@ -9,7 +9,7 @@ import { ensureCreditNoteSchema } from './creditNotes.ts';
 import { installBillingPublication } from './billingPublication.ts';
 import { installDriverCash,upgradeDriverCashRouting,applyDriverCash,type DriverCashCommand } from './driverCash.ts';
 import { updatePaymentTransaction } from './repositories/billingTransactions.ts';
-import {recoverDriverCashRouting,legacyDriverCashRoutingError} from '../integrations/driverCashRecovery.ts';
+import {recoverDriverCashRouting,recoverDriverCashAssociation,legacyDriverCashRoutingError} from '../integrations/driverCashRecovery.ts';
 import {recordDriverCashConflict,driverCashRequestMatches} from './driverCash.ts';
 function fixture(migrate=true) {
  const db=new Database(':memory:');db.exec(initialSchema);ensureBillingIssuerSchema(db);ensureCreditNoteSchema(db);installBillingPublication(db);installDriverCash(db);
@@ -92,7 +92,7 @@ test('missing explicit company is retained as a conflict without assigning cash 
  await processDriverCashBatch(db,[{...command,company_id:null,sequence_id:1,state:'PENDING'}],'writer',{
   current:()=>true,verifyCompany:()=>{},saveCursor:()=>{},ack:async(payload)=>{acknowledged=payload;},
  });
- assert.equal(acknowledged.state,'CONFLICT');assert.match(acknowledged.result.error,/Asocierea/);
+ assert.equal(acknowledged.state,'CONFLICT');assert.match(acknowledged.result.error,/Compania magazinului lipsește/);
  assert.equal((db.prepare('SELECT COUNT(*) AS value FROM payments').get() as any).value,0);
  assert.equal((db.prepare('SELECT COUNT(*) AS value FROM cash_transactions').get() as any).value,0);db.close();
 });
@@ -136,4 +136,68 @@ test('migration retains v26 money and is transactional on failure',()=>{
  assert.deepEqual(db.prepare('SELECT * FROM driver_cash_receipts').all(),before);
  assert.equal((db.pragma('table_info(driver_cash_receipts)') as any[]).find(row=>row.name==='company_id').notnull,0);
  assert.equal((db.prepare('SELECT sum(amount) AS n FROM payments').get() as any).n,125);db.close();
+});
+
+function firstCashAfterNo(command:DriverCashCommand) {
+ return {...command,operation_id:randomUUID(),previous_operation_id:command.operation_id,revision:2,
+  collected_at_ms:command.recorded_at_ms,recorded_at_ms:command.recorded_at_ms+1000,sequence_id:2,state:'PENDING',
+  zero_prefix:[{operation_id:command.operation_id,previous_operation_id:null,revision:1,recorded_at_ms:command.recorded_at_ms,amount_pence:0}]};
+}
+test('v2 zero continuity sends one acknowledgment, survives an interruption and cancels once',async()=>{
+ const {db,command}=fixture();const positive=firstCashAfterNo(command);let acks=0;
+ const deps={current:()=>true,saveCursor:()=>{},ack:async()=>{acks++;if(acks===1)throw Error('lost ack');}};
+ await assert.rejects(processDriverCashBatch(db,[positive],'writer',deps),/lost ack/);
+ assert.equal((db.prepare('SELECT count(*) AS n FROM payments').get() as any).n,3);
+ assert.equal((db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,1);
+ await processDriverCashBatch(db,[positive],'writer',deps);assert.equal(acks,2);
+ const cancel={...positive,zero_prefix:null,amount_pence:0,operation_id:randomUUID(),previous_operation_id:positive.operation_id,revision:3,sequence_id:3};
+ await processDriverCashBatch(db,[cancel,cancel],'writer',deps);
+ assert.equal((db.prepare("SELECT sum(CASE WHEN type='IN' THEN amount ELSE -amount END) AS n FROM cash_transactions").get() as any).n,0);
+ assert.equal((db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,2);db.close();
+});
+test('v2 continuity commits metadata before finance and rejects malformed or positive predecessors',async()=>{
+ const {db,command}=fixture();const positive=firstCashAfterNo(command);let calls=0;
+ const deps={current:()=>true,saveCursor:()=>{},ack:async()=>{},apply:async(c:DriverCashCommand)=>{calls++;if(calls===1)throw Object.assign(Error('offline'),{retryable:true});return applyDriverCash(db,c);}};
+ await assert.rejects(processDriverCashBatch(db,[positive],'writer',deps),/offline/);
+ assert.equal((db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,0);
+ assert.equal((db.prepare('SELECT revision FROM driver_cash_receipts').get() as any).revision,1);
+ await processDriverCashBatch(db,[positive],'writer',deps);
+ assert.equal((db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,1);db.close();
+ for(const bad of [{amount_pence:1},{revision:2},{operation_id:randomUUID()},{recorded_at_ms:command.recorded_at_ms+2000}]) {
+  const f=fixture();const c=firstCashAfterNo(f.command);Object.assign(c.zero_prefix[0],bad);
+  await assert.rejects(processDriverCashBatch(f.db,[c],'writer',{current:()=>true,saveCursor:()=>{},ack:async()=>{}}));
+  assert.equal((f.db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,0);f.db.close();
+ }
+});
+test('missing association recovery is audited, requires the verified IDs and refuses prior money',async()=>{
+ const {db,command}=fixture();const error='Asocierea magazinului, companiei sau emitentului necesită verificare.';
+ recordDriverCashConflict(db,{...command,company_id:null},error);
+ const c={...command,state:'CONFLICT',recoverable_association:true,hub_result:{error}};let retries=0;
+ assert.equal(await recoverDriverCashAssociation(db,{...c,company_id:randomUUID()},async()=>{retries++;},()=>true),false);
+ assert.equal(await recoverDriverCashAssociation(db,c,async()=>{retries++;},()=>true),true);
+ assert.equal(retries,1);applyDriverCash(db,command);applyDriverCash(db,command);
+ assert.equal((db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,1);
+ assert.equal(await recoverDriverCashAssociation(db,c,async()=>{retries++;},()=>true),false);
+ assert.equal(retries,1);db.close();
+});
+test('a conflicting root does not prevent another store receipt, but its dependent revision waits',async()=>{
+ const {db,command}=fixture();const failed={...command,company_id:null,sequence_id:1,state:'PENDING'};
+ const otherId=randomUUID();const other={...command,operation_id:otherId,root_operation_id:otherId,sequence_id:3,state:'PENDING'};
+ const dependent={...failed,operation_id:randomUUID(),previous_operation_id:command.operation_id,revision:2,sequence_id:2};const acks:any[]=[];
+ await processDriverCashBatch(db,[failed,dependent,other],'writer',{current:()=>true,saveCursor:()=>{},ack:async p=>{acks.push(p);}});
+ assert.deepEqual(acks.map(p=>p.operation_id),[command.operation_id,otherId]);
+ assert.deepEqual(acks.map(p=>p.state),['CONFLICT','PROCESSED']);
+ assert.equal((db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,1);db.close();
+});
+
+test('restored conflict resumes a server-accepted retry and unprocessed zero metadata stays nonfinancial',async()=>{
+ const {db,command}=fixture();const error='Asocierea magazinului, companiei sau emitentului necesită verificare.';
+ recordDriverCashConflict(db,{...command,company_id:null},error);let retries=0;
+ assert.equal(await recoverDriverCashAssociation(db,{...command,state:'PENDING',recoverable_association:true},async()=>{retries++;},()=>true),true);
+ applyDriverCash(db,command);assert.equal(retries,1);
+ assert.equal((db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,1);db.close();
+ const f=fixture();recordDriverCashConflict(f.db,{...f.command,company_id:null,amount_pence:0},legacyDriverCashRoutingError);
+ await processDriverCashBatch(f.db,[firstCashAfterNo(f.command)],'writer',{current:()=>true,saveCursor:()=>{},ack:async()=>{}});
+ assert.equal((f.db.prepare('SELECT count(*) AS n FROM cash_transactions').get() as any).n,1);
+ assert.equal((f.db.prepare('SELECT count(*) AS n FROM payments').get() as any).n,3);f.db.close();
 });

@@ -62,3 +62,14 @@ test('complete export resolves missing joined company from explicit ID, includin
   const result=await client(undefined,envelope([{...store,name:company.name,client_company:null}])).fetchEntitySnapshot();
   assert.equal(result.stores[0].company?.id,company.id);
 });
+
+test('cash may request a bounded exact store subset without accepting missing or unrelated rows',async()=>{
+ let requested:any;
+ const c=new VrBakerApiClient('a'.repeat(48),{maxAttempts:1,fetchImpl:(async(_url:any,init:any)=>{
+  const body=JSON.parse(init.body);if(body.action==='stores.list')requested=body.store_ids;
+  return new Response(JSON.stringify({success:true,data:body.action==='companies.list'?envelope([company]):envelope([store])}));
+ }) as typeof fetch});
+ assert.equal((await c.fetchEntitySnapshot([store.id])).stores.length,1);assert.deepEqual(requested,[store.id]);
+ await assert.rejects(c.fetchEntitySnapshot(['33333333-3333-3333-3333-333333333333']),/solicitate/);
+ await assert.rejects(c.fetchEntitySnapshot([store.id,store.id]),/Selecție/);
+});

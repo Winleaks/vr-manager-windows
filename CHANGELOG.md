@@ -1,3 +1,11 @@
+### VR - Hub Management v0.1.130
+
+- Încasările șoferilor recunosc compania asociată prin contul clientului, la fel ca lista magazinelor. Nu se schimbă legăturile din platformă și nu se folosesc potriviri după nume.
+- Declarațiile inițiale „Nu” nu mai intră în coada financiară sau în lista operațională Hub. Posibilitatea de a adăuga încasarea în cele 30 de minute rămâne disponibilă; anulările unei încasări se procesează în continuare.
+- Încasările blocate din cauza unei companii necitite se reiau automat numai după verificarea ID-urilor și emitentului, cu audit și protecție împotriva dublării. Un magazin blocat nu oprește încasările celorlalte.
+- Corectările, reîncercările și reluarea după întrerupere păstrează registrul, emitentul, reviziile și zilele istorice. Registrul separat funcționează în fundal și rămâne criptat; Viewer nu publică.
+- Include toate modificările v0.1.129, inclusiv publicarea imediată a încasărilor operatorului. Contractul serverului rămâne compatibil cu versiunile anterioare; nu este necesară o actualizare Android.
+
 ### VR - Hub Management v0.1.129
 
 - Încasarea introdusă de operator din Facturi sau Clienți pornește direct trimiterea soldului către platformă, imediat după salvarea locală. Compania încasată are prioritate față de lotul de fundal și nu așteaptă reîncercarea programată.

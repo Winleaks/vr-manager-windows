@@ -1,11 +1,12 @@
 import type Database from 'better-sqlite3';
 import {createHash} from 'node:crypto';
-import {applyDriverCash,recordDriverCashConflict,validateDriverCashCommand,driverCashRequestMatches,type DriverCashCommand} from '../database/driverCash.ts';
+import {applyDriverCash,prepareDriverCashZeroPrefix,recordDriverCashConflict,validateDriverCashCommand,driverCashRequestMatches,type DriverCashCommand} from '../database/driverCash.ts';
 export async function processDriverCashBatch(db:Database.Database,incoming:unknown[],source:string,deps:{
   current:()=>boolean;verifyCompany?:(company:string|null)=>void;saveCursor:(sequence:number)=>void;
   apply?:(command:DriverCashCommand)=>Promise<{state:string;result:unknown}>;
   ack:(payload:Record<string,unknown>,key:string)=>Promise<unknown>;
 }) {
+  const blockedRoots=new Set<string>();
   for (const input of incoming) {
     if (!deps.current()) return;
     const command = validateDriverCashCommand(input);
@@ -16,9 +17,11 @@ export async function processDriverCashBatch(db:Database.Database,incoming:unkno
     if (command.state === 'CONFLICT') {
       if(known && ['PROCESSED','PROCESSING'].includes(known.state)) throw Object.assign(Error('Starea încasării diferă între Hub și server. Verifică reconcilierea înainte de continuare.'),{retryable:false});
       recordDriverCashConflict(db,command,command.hub_result?.error||'Încasarea necesită verificare la birou.');
+      blockedRoots.add(command.root_operation_id);
       deps.saveCursor(command.sequence_id!);continue;
     }
     if (command.state!=='PENDING' && command.state!=='PROCESSED') throw new Error('Stare încasare invalidă.');
+    if(blockedRoots.has(command.root_operation_id)) continue;
     if(known && ['PROCESSING','RETRY_READY'].includes(known.state) && !driverCashRequestMatches(known.request,command,known.state==='RETRY_READY'))
       throw Object.assign(Error('Operație retrimisă cu alte date. Încasarea necesită reconciliere.'),{retryable:false});
     let receipt;
@@ -28,6 +31,7 @@ export async function processDriverCashBatch(db:Database.Database,incoming:unkno
         receipt={state:known.state,result:JSON.parse(known.result)};
       } else {
         deps.verifyCompany?.(command.company_id);
+        prepareDriverCashZeroPrefix(db,command);
         receipt = deps.apply ? await deps.apply(command) : applyDriverCash(db,command);
       }
     }
@@ -42,6 +46,6 @@ export async function processDriverCashBatch(db:Database.Database,incoming:unkno
     if (command.state === 'PENDING') await deps.ack({source_id:source,operation_id:command.operation_id,...receipt},`${command.operation_id}:ack:${receipt.state}:${createHash('sha256').update(JSON.stringify(receipt.result)).digest('hex').slice(0,16)}`);
     if(!deps.current()) return;
     deps.saveCursor(command.sequence_id!);
-    if (receipt.state==='CONFLICT') break;
+    if (receipt.state==='CONFLICT') blockedRoots.add(command.root_operation_id);
   }
 }

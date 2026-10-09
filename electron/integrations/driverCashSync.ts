@@ -4,8 +4,9 @@ import { getDeviceRole } from '../device/deviceRole';
 import { createVrBakerClient } from './vrBakerIntegration';
 import {processDriverCashBatch} from './driverCashProcessor';
 import {recordDriverCashConflict,validateDriverCashCommand} from '../database/driverCash';
-import {legacyDriverCashRoutingError,recoverDriverCashRouting,retryCashRoot} from './driverCashRecovery';
+import {legacyDriverCashRoutingError,recoverDriverCashRouting,recoverDriverCashAssociation,retryCashRoot} from './driverCashRecovery';
 import * as billingRepo from '../database/repositories/billingRepo';
+import {EntityAssociationConflict} from '../database/entitySync';
 import {invalidateNormalBillingVisibility} from '../database/normalBillingVisibility';
 import { publishBilling } from './billingPublisher';
 let running: Promise<void> | undefined;
@@ -40,32 +41,43 @@ async function run() {
     }
   }
   const cursor = Number((db.prepare("SELECT value FROM app_settings WHERE key='driver_cash_cursor'").get() as any)?.value || 0);
-  let incoming = await client.request<unknown>('driver.cash.pending',{source_id:source,after:cursor});
+  let incoming = await client.request<unknown>('driver.cash.pending',{source_id:source,after:cursor,protocol_version:2});
   if (!Array.isArray(incoming) || incoming.length>50) throw new Error('Lista încasărilor este invalidă.');
   if(!current()) return;
+  const refresh=incoming.map(validateDriverCashCommand).filter(c=>!c.association_error && c.company_id &&
+    (c.state==='PENDING' || c.recoverable_association===true) &&
+    (db.prepare('SELECT state FROM driver_cash_operations WHERE operation_id=?').get(c.operation_id) as any)?.state!=='PROCESSED');
+  if(refresh.length) {
+    const snapshot=await client.fetchEntitySnapshot([...new Set(refresh.map(c=>c.store_id))]);
+    if(!current()) return;
+    for(const store of snapshot.stores) {
+      try {
+        billingRepo.syncEntitiesFromVrBaker(store.company ? [store.company] : [],[store],{complete:false});
+      }catch(error) {
+        if(!(error instanceof EntityAssociationConflict)) throw error;
+        for(const c of incoming as any[]) if(c.store_id===store.id) c.association_error=error.message;
+      }
+    }
+    invalidateNormalBillingVisibility(db);
+  }
   let recovered=false;
   for(const input of incoming) {
     const c=validateDriverCashCommand(input);
     if(c.state==='CONFLICT' && c.hub_result?.error===legacyDriverCashRoutingError) {
       recordDriverCashConflict(db,c,legacyDriverCashRoutingError);recovered=true;
-    }
+    } else if(await recoverDriverCashAssociation(db,c,retry,current)) recovered=true;
+    if(!current()) return;
   }
   if(recovered) {
     await recoverDriverCashRouting(db,retry,current);
     if(!current()) return;
-    incoming=await client.request<unknown>('driver.cash.pending',{source_id:source,after:cursor});
+    incoming=await client.request<unknown>('driver.cash.pending',{source_id:source,after:cursor,protocol_version:2});
     if(!Array.isArray(incoming)||incoming.length>50) throw Error('Lista încasărilor este invalidă.');
-  }
-  if(incoming.some((c:any)=>c.state==='PENDING' && (db.prepare('SELECT state FROM driver_cash_operations WHERE operation_id=?').get(c.operation_id) as any)?.state!=='PROCESSED')) {
-    const snapshot=await client.fetchEntitySnapshot();
-    if(!current()) return;
-    billingRepo.syncEntitiesFromVrBaker(snapshot.companies,snapshot.stores,{complete:true});
-    invalidateNormalBillingVisibility(db);
   }
   await processDriverCashBatch(db,incoming,source,{
     current,saveCursor,
     apply:async command=>(await import('../protectedRegistry/service')).applyRoutedDriverCash(command),
-    ack:(payload,key)=>client.request('driver.cash.ack',payload,key),
+    ack:(payload,key)=>client.request('driver.cash.ack',{...payload,protocol_version:2},key),
   });
   if (incoming.length && current()) await publishBilling();
 }
@@ -111,10 +123,10 @@ function setSyncError(error: string | null) {
 }
 export function driverCashStatus() {
   return {error:(db.prepare("SELECT value FROM app_settings WHERE key='driver_cash_sync_error'").get() as any)?.value??null,
-    conflicts:db.prepare("SELECT operation_id,root_id,result FROM driver_cash_operations WHERE state='CONFLICT'").all(),
-    pending:db.prepare("SELECT operation_id,result FROM driver_cash_operations WHERE state IN ('PROCESSING','RETRY_PENDING','RETRY_READY')").all(),
+    conflicts:db.prepare("SELECT operation_id,root_id,result FROM driver_cash_operations WHERE state='CONFLICT' AND EXISTS(SELECT 1 FROM driver_cash_operations history WHERE history.root_id=driver_cash_operations.root_id AND json_extract(history.request,'$.amount_pence')>0)").all(),
+    pending:db.prepare("SELECT operation_id,result FROM driver_cash_operations WHERE state IN ('PROCESSING','RETRY_PENDING','RETRY_READY') AND EXISTS(SELECT 1 FROM driver_cash_operations history WHERE history.root_id=driver_cash_operations.root_id AND json_extract(history.request,'$.amount_pence')>0)").all(),
     receipts:db.prepare(`SELECT r.*,COALESCE(s.name,'Magazin în așteptarea asocierii') AS store_name,d.name AS driver_name,COALESCE(c.name,'Companie neasociată') AS company_name FROM driver_cash_receipts r
-      LEFT JOIN stores s ON s.id=r.store_id LEFT JOIN companies c ON c.id=r.company_id JOIN drivers d ON d.id=r.driver_id ORDER BY recorded_at_ms DESC LIMIT 100`).all(),
+      LEFT JOIN stores s ON s.id=r.store_id LEFT JOIN companies c ON c.id=r.company_id JOIN drivers d ON d.id=r.driver_id WHERE EXISTS(SELECT 1 FROM driver_cash_operations history WHERE history.root_id=r.root_id AND json_extract(history.request,'$.amount_pence')>0) ORDER BY recorded_at_ms DESC LIMIT 100`).all(),
     invalidReports:db.prepare('SELECT d.date FROM driver_cash_report_invalidations i JOIN cash_days d ON d.id=i.cash_day_id').all(),
     officeRequests:db.prepare('SELECT root_id,state,last_error FROM driver_cash_office_outbox').all()};
 }

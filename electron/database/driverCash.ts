@@ -9,6 +9,8 @@ export interface DriverCashCommand {
   collected_at_ms?: number; sequence_id?: number; state?: string; revision: number; recorded_at_ms: number; amount_pence: number;
   driver_id: string; driver_name: string; store_id: string; store_name: string; company_id: string | null;
   hub_result?: { error?: string } | null;
+  association_error?: string | null; recoverable_association?: boolean;
+  zero_prefix?: Pick<DriverCashCommand,'operation_id'|'previous_operation_id'|'revision'|'recorded_at_ms'|'amount_pence'>[] | null;
 }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function validateDriverCashCommand(input: unknown): DriverCashCommand {
@@ -22,6 +24,8 @@ export function validateDriverCashCommand(input: unknown): DriverCashCommand {
       !Number.isSafeInteger(c.amount_pence) || c.amount_pence < 0 || c.amount_pence > 100000000000) throw new Error('Sumă sau versiune invalidă.');
   if(c.collected_at_ms !== undefined && (!Number.isSafeInteger(c.collected_at_ms) || c.collected_at_ms<946684800000 || c.collected_at_ms>c.recorded_at_ms)) throw new Error('Data încasării este invalidă.');
   for (const key of ['driver_name','store_name'] as const) if (typeof c[key] !== 'string' || c[key].length > 300) throw new Error('Denumire invalidă.');
+  if(c.association_error!=null && (typeof c.association_error!=='string' || c.association_error.length>500)) throw Error('Asociere invalidă.');
+  if(c.recoverable_association!==undefined && typeof c.recoverable_association!=='boolean') throw Error('Stare de recuperare invalidă.');
   if (c.revision === 1 && (c.operation_id !== c.root_operation_id || c.previous_operation_id !== null)) throw new Error('Confirmare inițială invalidă.');
   return c;
 }
@@ -66,6 +70,40 @@ export function driverCashRequestMatches(stored: string, c: DriverCashCommand,un
 export function companyPaymentDate(ms: number) {
   return new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(ms);
 }
+/** Import zero-only continuity with the first financial command, never as queued work. */
+export function prepareDriverCashZeroPrefix(db: Database.Database,c: DriverCashCommand) {
+  if(c.zero_prefix==null) return;
+  const fail=()=>{throw Object.assign(Error('Istoricul inițial al încasării necesită reconciliere.'),{retryable:false});};
+  if(!Array.isArray(c.zero_prefix) || c.amount_pence<=0 || c.revision<=1 || c.zero_prefix.length!==c.revision-1 || c.zero_prefix.length>1000) fail();
+  let previous:string|null=null,recorded=c.collected_at_ms??c.recorded_at_ms;
+  const zeros=c.zero_prefix!.map((z,index)=>{
+    if(!z || typeof z!=='object' || Array.isArray(z)) fail();
+    let zero:DriverCashCommand;
+    try {zero=validateDriverCashCommand({...c,operation_id:z.operation_id,previous_operation_id:z.previous_operation_id,
+      revision:z.revision,recorded_at_ms:z.recorded_at_ms,amount_pence:z.amount_pence,company_id:null,zero_prefix:null});} catch {return fail();}
+    if(z.amount_pence!==0 || z.revision!==index+1 || z.previous_operation_id!==previous || z.recorded_at_ms<recorded || z.recorded_at_ms>c.recorded_at_ms) fail();
+    previous=z.operation_id;recorded=z.recorded_at_ms;return zero;
+  });
+  if(previous!==c.previous_operation_id) fail();
+  db.transaction(()=>{
+    for(const zero of zeros) {
+      const known=db.prepare('SELECT request,state FROM driver_cash_operations WHERE operation_id=?').get(zero.operation_id) as any;
+      if(known) {
+        if(!driverCashRequestMatches(known.request,{...zero,company_id:c.company_id})) fail();
+        if(known.state==='PROCESSED') continue;
+        if(!['CONFLICT','RETRY_PENDING','RETRY_READY'].includes(known.state)) fail();
+      }
+      if(db.prepare('SELECT 1 FROM cash_transactions WHERE driver_cash_root=? LIMIT 1').get(c.root_operation_id) ||
+        db.prepare('SELECT 1 FROM driver_cash_allocations WHERE root_id=? LIMIT 1').get(c.root_operation_id)) fail();
+      if(known) db.prepare("UPDATE driver_cash_operations SET state='RETRY_READY' WHERE operation_id=?").run(zero.operation_id);
+      applyDriverCash(db,known ? {...zero,company_id:JSON.parse(known.request).company_id} : zero);
+      db.prepare("INSERT INTO billing_audit_events(event_type,details) VALUES('driver_cash_zero_continuity',?)")
+        .run(JSON.stringify({operation_id:zero.operation_id,root_id:c.root_operation_id,revision:zero.revision,previous:known??null}));
+    }
+    const baseline=db.prepare('SELECT latest_operation_id,revision,amount_pence FROM driver_cash_receipts WHERE root_id=?').get(c.root_operation_id) as any;
+    if(!baseline || baseline.latest_operation_id!==c.previous_operation_id || baseline.revision!==c.revision-1 || baseline.amount_pence!==0) fail();
+  })();
+}
 export interface DriverCashIdentity { id:number|null; company_id:number|null; issuer_id:number|null }
 export function prepareDriverCash(db: Database.Database, c: DriverCashCommand) {
   const old = db.prepare('SELECT * FROM driver_cash_receipts WHERE root_id=?').get(c.root_operation_id) as any;
@@ -74,8 +112,10 @@ export function prepareDriverCash(db: Database.Database, c: DriverCashCommand) {
   const stores = db.prepare(`SELECT s.id,s.company_id,c.issuer_id FROM stores s JOIN companies c ON c.id=s.company_id
     WHERE s.supabase_store_id=? AND c.supabase_company_id=? AND c.is_active=1`).all(c.store_id,c.company_id) as DriverCashIdentity[];
   const financial = c.amount_pence > 0 || old?.company_id != null && old?.issuer_id != null;
-  if (financial && (stores.length !== 1 || !stores[0].issuer_id))
-    throw new Error('Asocierea magazinului, companiei sau emitentului necesită verificare.');
+  if(financial && c.association_error) throw new Error(c.association_error);
+  if(financial && c.company_id===null) throw new Error('Compania magazinului lipsește din încasare. Verifică asocierea din platformă.');
+  if(financial && stores.length!==1) throw new Error('Asocierea magazinului și companiei nu corespunde datelor verificate din platformă.');
+  if(financial && !stores[0].issuer_id) throw new Error('Emitentul companiei nu este configurat. Verifică emitentul în Hub.');
   // No guessed company/issuer for zero declarations. Keep their external identity in the operation.
   const identity:DriverCashIdentity = stores.length === 1 ? stores[0] : {
     id:(db.prepare('SELECT id FROM stores WHERE supabase_store_id=?').get(c.store_id) as any)?.id ?? null,

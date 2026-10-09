@@ -218,14 +218,16 @@ const actions: Record<string, ActionDefinition> = {
   "driver.cash.pending": {
     methods: new Set(["POST"]), scope: "billing:write", mutates: false,
     handler: async (p) => {
-      const {data,error}=await supabaseAdmin.rpc("hub_driver_cash_pending",{p_source:requireUuid(p.source_id,"source_id"),p_after:parseBoundedInteger(p.after,0,0,Number.MAX_SAFE_INTEGER,"after")});
+      const protocol=parseBoundedInteger(p.protocol_version,1,1,2,"protocol_version");
+      const {data,error}=await supabaseAdmin.rpc(protocol===2 ? "hub_driver_cash_pending_v2" : "hub_driver_cash_pending",{p_source:requireUuid(p.source_id,"source_id"),p_after:parseBoundedInteger(p.after,0,0,Number.MAX_SAFE_INTEGER,"after")});
       ensureCashDatabaseSuccess(error); return data;
     },
   },
   "driver.cash.ack": {
     methods: new Set(["POST"]), scope: "billing:write", mutates: true,
     handler: async (p) => {
-      const {data,error}=await supabaseAdmin.rpc("hub_driver_cash_ack",{p_source:requireUuid(p.source_id,"source_id"),p_operation_id:requireUuid(p.operation_id,"operation_id"),p_state:p.state,p_result:p.result});
+      const protocol=parseBoundedInteger(p.protocol_version,1,1,2,"protocol_version");
+      const {data,error}=await supabaseAdmin.rpc(protocol===2 ? "hub_driver_cash_ack_v2" : "hub_driver_cash_ack",{p_source:requireUuid(p.source_id,"source_id"),p_operation_id:requireUuid(p.operation_id,"operation_id"),p_state:p.state,p_result:p.result});
       ensureCashDatabaseSuccess(error); return data;
     },
   },
@@ -343,7 +345,13 @@ const actions: Record<string, ActionDefinition> = {
     mutates: false,
     handler: async (payload) => {
       const limit = parseBoundedInteger(payload.limit, 1000, 1, 5000, "limit");
-      const { data, error, count } = await supabaseAdmin
+      let storeIds: string[] | undefined;
+      if(payload.store_ids!==undefined) {
+        if(!Array.isArray(payload.store_ids) || payload.store_ids.length<1 || payload.store_ids.length>50)
+          throw new ExternalApiRequestError(400,'invalid_stores','Invalid store selection');
+        storeIds=[...new Set(payload.store_ids.map(id=>requireUuid(id,'store_id').toLowerCase()))];
+      }
+      let query = supabaseAdmin
         .from("client_store")
         .select(
           `id, name, address, postcode, zone_id, route_order, phone, google_maps_url, active, ${storeCompanyColumns}`,
@@ -351,10 +359,14 @@ const actions: Record<string, ActionDefinition> = {
         )
         .order("route_order", { ascending: true })
         .limit(limit);
+      if(storeIds) query=query.in('id',storeIds);
+      const {data,error,count}=await query;
       ensureDatabaseSuccess(error);
       const rows = (data ?? []).map(resolveStoreCompany);
       if (payload.include_meta === true) {
-        const aliases = await supabaseAdmin.from('hub_store_merges').select('old_store_id, store_id', {count:'exact'}).order('old_store_id').limit(5000);
+        let aliasQuery=supabaseAdmin.from('hub_store_merges').select('old_store_id, store_id', {count:'exact'}).order('old_store_id').limit(5000);
+        if(storeIds) aliasQuery=aliasQuery.in('store_id',storeIds);
+        const aliases=await aliasQuery;
         ensureDatabaseSuccess(aliases.error);
         return { version: 1, rows, count, complete: count !== null && count === rows.length,
           merges: aliases.data ?? [], merges_complete: aliases.count !== null && aliases.count === aliases.data?.length };

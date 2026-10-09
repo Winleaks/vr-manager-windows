@@ -394,9 +394,11 @@ export class VrBakerApiClient {
     });
   }
 
-  async fetchEntitySnapshot() {
+  async fetchEntitySnapshot(storeIds?:string[]) {
+    const selection=storeIds?.map(id=>requireUuid(id,'Magazinul').toLowerCase());
+    if(selection && (!selection.length || selection.length>50 || new Set(selection).size!==selection.length)) throw Error('Selecție de magazine invalidă.');
     const results = await Promise.all(['companies.list', 'stores.list'].map(action =>
-      this.request<unknown>(action, { limit: 5000, include_meta: true })));
+      this.request<unknown>(action, { limit: 5000, include_meta: true,...(action==='stores.list' && selection ? {store_ids:selection} : {}) })));
     const rows = results.map(value => {
       const envelope = requireRecord(value, 'Exportul complet de entități (necesită API actualizat)');
       if (envelope.version !== 1 || envelope.complete !== true || !Array.isArray(envelope.rows) ||
@@ -419,6 +421,8 @@ export class VrBakerApiClient {
       }
       return store;
     });
+    if(selection && (stores.length!==selection.length || stores.some(s=>!selection.includes(s.id.toLowerCase()))))
+      throw Error('Exportul nu conține toate magazinele solicitate.');
     const companyIds = new Set(companies.map(row => row.id.toLowerCase()));
     if (companyIds.size !== companies.length || new Set(stores.map(row => row.id.toLowerCase())).size !== stores.length ||
         stores.some(row => row.company && !companyIds.has(row.company.id.toLowerCase()))) {

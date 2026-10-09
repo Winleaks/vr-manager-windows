@@ -31,7 +31,7 @@ export function DriverCashStatus({writer,onChanged}:{writer:boolean;onChanged:()
     {status.pending?.map((c:any)=><p key={c.operation_id} className="mt-2 text-sm text-amber-800">{JSON.parse(c.result).driver_name} · {JSON.parse(c.result).store_name} · Încasare păstrată, în așteptarea sincronizării.</p>)}
     {status.officeRequests.map((r:any)=><p key={r.root_id} className="mt-2 text-sm text-amber-800">{r.last_error||'Corectare de la birou în așteptarea sincronizării.'}{writer&&r.state==='CONFLICT'&&<button disabled={busy} onClick={()=>void action(()=>api.dailyCash.discardRejectedDriverCashOffice(r.root_id))} className="ml-2 underline">Renunță la corectarea respinsă</button>}</p>)}
     {status.invalidReports?.map((r:any)=><p key={r.date} className="mt-2 text-sm text-amber-800">Raportul Daily Cash pentru {r.date} trebuie regenerat după încasările din aplicație.</p>)}
-    <details className="mt-3"><summary className="cursor-pointer text-sm">Ultimele declarații, inclusiv cele fără încasare</summary>
+    <details className="mt-3"><summary className="cursor-pointer text-sm">Ultimele încasări și anulări</summary>
       <div className="mt-2 space-y-2">{status.receipts.map((r:any)=><div key={r.root_id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm">
         <span>{r.driver_name} · {r.store_name} · {r.company_name} · {new Date(r.recorded_at_ms).toLocaleString()} · {r.amount_pence?`£${(r.amount_pence/100).toFixed(2)}`:'Fără încasare'}</span>
         {writer&&<button disabled={busy} onClick={()=>{setEditing(r);setAmount((r.amount_pence/100).toFixed(2));}} className="text-blue-700">Corectează încasarea</button>}
