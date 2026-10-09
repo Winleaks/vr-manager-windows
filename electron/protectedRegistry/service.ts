@@ -171,6 +171,10 @@ async function publishProtectedBilling() {
     prepareProtectedBillingDeliveries(db, latest.vault);
     const outcome=await publishProtectedBillingVault(db, latest.vault, createVrBakerClient(), new Map(), {
       priorityCompanyIds: new Set(protectedBillingPriorities),
+      assertCurrent: () => {
+        assertWriter();
+        if (db!==connection || protectedCloudAccountScope()!==latest.cloudScope) throw Error('Destinația sincronizării s-a schimbat.');
+      },
       shouldContinue: () => generation===protectedFinancialGeneration && db===connection && getDeviceRole()==='writer'
         && protectedCloudAccountScope()===latest.cloudScope && !protectedOutbox.hasPending(),
       prepareDocuments: async companyId => {

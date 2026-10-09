@@ -199,3 +199,14 @@ test('publication priority follows encrypted receipt identities, including zero 
     invoice.companyKey='local:1';assert.deepEqual(protectedPublicationCompanyIds(pending),[]);
   }finally{db.close();}
 });
+
+test('losing Writer authorization or cloud scope during staging prevents the financial commit',async()=>{
+ const {db,vault}=fixture();let allowed=true;const calls:string[]=[];
+ try {
+  await assert.rejects(publishProtectedBillingVault(db,vault,{request:async(action:string)=>{
+   calls.push(action);if(action==='billing.stage')allowed=false;
+   return action==='billing.status'?{sync_enabled:true,protocol_version:2}:true;
+  }},new Map(),{assertCurrent:()=>{if(!allowed)throw Error('Writer scope changed');}}),/Writer scope changed/);
+  assert.deepEqual(calls,['billing.status','billing.stage']);
+ }finally{db.close();}
+});

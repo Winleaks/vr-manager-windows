@@ -57,6 +57,7 @@ export interface ProtectedPublicationOptions {
   prepareDocuments?: (companyId: string) => Promise<ReadonlyMap<string, string>>;
   shouldContinue?: () => boolean;
   onPublished?: (companyId: string) => void;
+  assertCurrent?: () => void;
 }
 
 function externalCompanyId(companyKey: string) {
@@ -182,6 +183,7 @@ export async function publishProtectedBillingVault(
 ) {
   const deliveries = prepareProtectedBillingDeliveries(db, vault, documentFileIds);
   if (!deliveries.length) return { published: 0, skipped: true };
+  options.assertCurrent?.();
   const control = await client.request<{ sync_enabled: boolean; protocol_version?: number }>('billing.status');
   if (!control.sync_enabled) return { published: 0, skipped: true };
   if (control.protocol_version !== 2) throw new Error('Platforma necesită actualizarea protocolului financiar.');
@@ -198,6 +200,7 @@ export async function publishProtectedBillingVault(
     if (options.shouldContinue && !options.shouldContinue()) return { published, skipped: true };
     const parts = Math.max(1, Math.ceil(Math.max(data.invoices.length, data.deleted.length) / 50));
     for (let part = 0; part < parts; part++) {
+      options.assertCurrent?.();
       await client.request('billing.stage', {
         ...data,
         invoices: data.invoices.slice(part * 50, (part + 1) * 50),
@@ -206,6 +209,7 @@ export async function publishProtectedBillingVault(
         parts,
       }, `${data.source_id}:protected:${data.company_id}:${data.revision}:part:${part}`);
     }
+    options.assertCurrent?.();
     await client.request('billing.commit', {
       source_id: data.source_id,
       company_id: data.company_id,
