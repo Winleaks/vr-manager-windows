@@ -6,6 +6,7 @@ import {
   protectedBillingInvoiceId,
   protectedBillingRevision,
   publishProtectedBillingVault,
+  protectedPublicationCompanyIds,
   queueNormalPublicationAfterProtected,
 } from '../protectedRegistry/billingPublication.ts';
 import { createEmptyProtectedVault, type ProtectedInvoice } from '../protectedRegistry/types.ts';
@@ -134,4 +135,67 @@ test('returning a company to normal billing tombstones protected rows and advanc
     assert.equal(queue.last_error, null);
     assert.equal(queue.retry_at, 0);
   } finally { db.close(); }
+});
+
+test('protected receipts publish their own verified PDFs and balance before unrelated documents', async () => {
+  const {db,vault,invoice}=fixture();
+  const other='66666666-6666-4666-8666-666666666666';
+  const calls:string[]=[];
+  const client={request:async(action:string,payload?:any)=>{
+    calls.push(`${action}:${payload?.company_id||''}`);
+    return action==='billing.status'?{sync_enabled:true,protocol_version:2}:true;
+  }};
+  try {
+    db.prepare('INSERT INTO companies VALUES(2,?)').run(other);
+    vault.assignments.push({companyKey:`vrbaker:${other}`,localCompanyId:2,companyName:'Other',assignedAt:vault.updatedAt});
+    await assert.rejects(publishProtectedBillingVault(db,vault,client,new Map(),{
+      priorityCompanyIds:new Set([other]),
+      prepareDocuments:async id=>{
+        calls.push(`pdf:${id}`);
+        if(id===company)throw Error('Unrelated PDF temporarily unavailable');
+        return new Map();
+      },
+    }),/Unrelated PDF/);
+    assert.deepEqual(calls,['billing.status:',`pdf:${other}`,`billing.stage:${other}`,`billing.commit:${other}`,`pdf:${company}`]);
+    calls.length=0;
+    await assert.rejects(publishProtectedBillingVault(db,vault,client,new Map(),{prepareDocuments:async()=>new Map()}),/PDF-ul/);
+    assert.deepEqual(calls,['billing.status:'],'no live invoice metadata is committed without its verified PDF');
+    assert.equal(invoice.paidAmount,20,'publication never changes financial records');
+  }finally{db.close();}
+});
+
+test('a newer financial snapshot interrupts publication only between complete company commits',async()=>{
+  const {db,vault,invoice}=fixture();let current=true;const calls:string[]=[];
+  const other='66666666-6666-4666-8666-666666666666';
+  try {
+    db.prepare('INSERT INTO companies VALUES(2,?)').run(other);
+    vault.assignments.push({companyKey:`vrbaker:${other}`,localCompanyId:2,companyName:'Other',assignedAt:vault.updatedAt});
+    for(let n=0;n<50;n++)vault.invoices.push({...invoice,id:`invoice_${n}`,sequenceNumber:3000+n,reference:`TGBL-${3000+n}`});
+    const client={request:async(action:string,payload?:any)=>{
+      calls.push(action);
+      if(action==='billing.stage'){assert.equal(payload.company_id,company);current=false;}
+      return action==='billing.status'?{sync_enabled:true,protocol_version:2}:true;
+    }};
+    const result=await publishProtectedBillingVault(db,vault,client,new Map(),{
+      shouldContinue:()=>current,
+      prepareDocuments:async()=>new Map(vault.invoices.filter(i=>!i.testDocument).map(i=>[i.id,'verified_portal_file_123'])),
+    });
+    assert.deepEqual(result,{published:1,skipped:true});
+    assert.deepEqual(calls,['billing.status','billing.stage','billing.stage','billing.commit']);
+  }finally{db.close();}
+});
+
+test('publication priority follows encrypted receipt identities, including zero cancellations and credit-only operator payments',()=>{
+  const {db,vault,invoice}=fixture();try {
+    const operation='receipt_operation';
+    vault.driverCashReceipts=[{rootId:'root',companyKey:invoice.companyKey,issuerCode:'goodness',amountPence:0,paymentIds:[],operations:[{operationId:operation,request:'{}',revision:2,amountPence:0}]}];
+    const pending:any={operationId:operation,vault,documents:[]};
+    assert.deepEqual(protectedPublicationCompanyIds(pending),[company]);
+    vault.driverCashReceipts=[];
+    vault.payments.push({id:'payment',operationId:operation,companyKey:invoice.companyKey,issuerCode:'goodness',invoiceId:null,amount:5,paymentDate:'2026-09-28',method:'cash',notes:null,createdAt:vault.updatedAt,reversedAt:null,reversalReason:null,testEntry:false});
+    assert.deepEqual(protectedPublicationCompanyIds(pending),[company]);
+    vault.payments=[];pending.documents=[{type:'invoice',id:invoice.id}];
+    assert.deepEqual(protectedPublicationCompanyIds(pending),[company]);
+    invoice.companyKey='local:1';assert.deepEqual(protectedPublicationCompanyIds(pending),[]);
+  }finally{db.close();}
 });

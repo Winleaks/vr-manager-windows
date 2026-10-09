@@ -151,7 +151,8 @@ export function discardRejectedDriverCashOffice(rootId:string) {
   })();
 }
 
-export function resumeDriverCashSync() {
+export async function resumeDriverCashSync() {
   db.prepare("DELETE FROM app_settings WHERE key='driver_cash_sync_paused'").run();
-  return syncDriverCash();
+  try { await syncDriverCash(); setSyncError(null); }
+  catch(error) { setSyncError(error instanceof Error?error.message:'Sincronizare indisponibilă.'); throw error; }
 }

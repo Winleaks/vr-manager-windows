@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.131
+
+- „Sincronizează acum” arată progresul în Daily Cash. După o reîncercare reușită, mesajul vechi de eroare se elimină imediat.
+- Publicarea soldului unei companii pregătește și verifică PDF-urile acelei companii înaintea confirmării, fără să aștepte documentele întregului registru. Încasările și corectările primesc prioritate după salvarea criptată în Drive.
+- O modificare financiară nouă întrerupe publicarea veche între companii, după confirmarea completă a companiei curente. Reîncercările păstrează reviziile și protecția împotriva dublării; Viewer nu publică.
+- Include toate modificările v0.1.130. Fără migrare sau recalculare automată a încasărilor existente.
+
 ### VR - Hub Management v0.1.130
 
 - Încasările șoferilor recunosc compania asociată prin contul clientului, la fel ca lista magazinelor. Nu se schimbă legăturile din platformă și nu se folosesc potriviri după nume.

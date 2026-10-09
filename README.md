@@ -1,4 +1,10 @@
-# React + TypeScript + Vite
+# VR - Hub Management
+
+Daily Cash sincronizează declarațiile șoferilor pe Writer și afișează progresul la reîncercarea manuală. Confirmarea încasării și publicarea soldului în platformă sunt etape distincte; notificarea financiară rămâne până la confirmarea soldului.
+
+În registrul separat, o salvare criptată confirmată dă prioritate companiilor afectate. Publicarea verifică PDF-urile și confirmă soldul pentru fiecare companie înainte de a pregăti documentele celorlalte. O versiune nouă preia publicarea între confirmări complete; operațiile financiare existente nu sunt reaplicate. Lista de priorități rămâne în memoria procesului principal, iar coada criptată și notificarea de sincronizare păstrează reluarea după repornire.
+
+## Development
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 

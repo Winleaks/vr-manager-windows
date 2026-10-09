@@ -75,6 +75,27 @@ test('locked module routes cash to encrypted ledger only, pays oldest invoices a
  } finally {f.cleanup();}
 });
 
+test('canceling a driver receipt preserves the operator payment and pre-existing credit',async()=>{
+ const f=fixture();try {
+  const v=f.cloud();
+  for(const invoice of v.invoices){invoice.paidAmount=invoice.totalAmount;invoice.status='paid';}
+  const operator={id:'operator-payment',operationId:'operator-operation',companyKey:v.assignments[0].companyKey,issuerCode:'goodness',invoiceId:null,amount:110,paymentDate:'2026-10-08',method:'cash',notes:'Office receipt',createdAt:'2026-10-08T11:00:00Z',reversedAt:null,reversalReason:null,testEntry:false} as const;
+  v.payments.push({...operator});
+  v.creditEntries.push({id:'operator-credit',companyKey:operator.companyKey,issuerCode:'goodness',sourceType:'payment_overpayment',sourceId:operator.id,originalAmount:10,availableAmount:10,createdAt:operator.createdAt,testEntry:false});
+  await f.process(f.command);
+  f.db.prepare("INSERT INTO cash_transactions(cash_day_id,type,category,amount,reference_id,notes) VALUES((SELECT id FROM cash_days LIMIT 1),'IN','driver_collection',125,NULL,'Office cash')").run();
+  assert.equal(f.cloud().creditEntries.reduce((sum,c)=>sum+c.availableAmount,0),135);
+  const correction={...f.command,operation_id:randomUUID(),previous_operation_id:f.command.operation_id,revision:2,amount_pence:0,sequence_id:2};
+  await f.process(correction);await f.process(correction);
+  assert.deepEqual(f.cloud().payments.find(p=>p.id===operator.id),operator);
+  assert.deepEqual(f.cloud().invoices.map(i=>i.paidAmount),[50,50]);
+  assert.equal(f.cloud().creditEntries.reduce((sum,c)=>sum+c.availableAmount,0),10);
+  const net=(f.db.prepare("SELECT SUM(CASE WHEN type='IN' THEN amount ELSE -amount END) amount FROM cash_transactions WHERE driver_cash_root=?").get(f.command.root_operation_id) as any).amount;
+  assert.equal(net,0);assert.equal(f.cloud().driverCashReceipts![0].operations.length,2);
+  assert.equal((f.db.prepare("SELECT SUM(CASE WHEN type='IN' THEN amount ELSE -amount END) amount FROM cash_transactions").get() as any).amount,125);
+ }finally{f.cleanup();}
+});
+
 test('pending encrypted commit and lost cloud acknowledgment resume without duplicate payments or cash',async()=>{
  const f=fixture();try {
   f.state.failAfterCommit=true;let acks=0;

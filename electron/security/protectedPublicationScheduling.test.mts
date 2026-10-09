@@ -18,11 +18,13 @@ function fixture(){
   const timers=new Map<object,()=>void>();
   const store:any={hasPending:()=>pending,read:()=>pending?[{name:'encrypted-fixture',value:{}}]:[],acknowledge:()=>{pending=false;}};
   const bindings:any={db,ProtectedOutboxWorker,protectedOutbox:store,
+    protectedPublicationCompanyIds:()=>[],protectedBillingPriorities:new Set(),
+    protectedCloudAccountScope:()=> 'fixture',
     commitPendingProtectedSave:async()=>{await cloudGate;commits++;},getDeviceRole:()=>role,isProtectedRegistryEnabled:()=>true,
     withRegistryRoutingLock:async(fn:Function)=>fn(),withPrivateCloudOperation:async(fn:Function)=>fn(),
     keyBuffer:()=>Buffer.alloc(32),reconcilePending:async()=>{},loadVaultFromCloud:async()=>{loads++;return {vault:{assignments:[],invoices:[]},cloudScope:'fixture'};},
     prepareProtectedBillingDeliveries:()=>[],createVrBakerClient:()=>({}),uploadProtectedClientInvoicePdf:async()=>{throw Error('Unexpected PDF');},
-    publishProtectedBillingVault:async()=>{publications++;if(fail)throw Error('Unavailable');return {skipped:false};},
+    publishProtectedBillingVault:async(_db:any,_vault:any,_client:any,_ids:any,options:any)=>{publications++;assert.equal(options.shouldContinue(),true);if(fail)throw Error('Unavailable');return {skipped:false};},
     setTimeout:(fn:()=>void)=>{const timer={unref(){}};timers.set(timer,fn);return timer;},clearTimeout:(timer:object)=>timers.delete(timer),
   };
   const api=new Function(...Object.keys(bindings),`let protectedBillingPublishing=false,protectedBillingQueued=false,protectedFinancialGeneration=0,protectedBillingDebounce=null;\n${code}\nreturn {scheduleProtectedBillingPublication,protectedUploader,busy:()=>protectedBillingPublishing};`)(...Object.values(bindings));

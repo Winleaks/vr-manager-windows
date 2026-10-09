@@ -8,7 +8,7 @@ import { applyProtectedInvoiceEdit, protectedInvoiceEditBlock, protectedInvoiceE
 import type { ProtectedInvoiceEditInput } from '../../src/shared/protectedInvoiceEdit.ts';
 import { protectedInvoiceOutstanding } from './invoiceOutstanding.ts';
 import { protectedPaymentDisplay } from './paymentDisplay.ts';
-import { prepareProtectedBillingDeliveries, publishProtectedBillingVault, queueNormalPublicationAfterProtected } from './billingPublication.ts';
+import { prepareProtectedBillingDeliveries, publishProtectedBillingVault, protectedPublicationCompanyIds, queueNormalPublicationAfterProtected } from './billingPublication.ts';
 import { invoicePaymentTerms } from '../../src/shared/invoicePaymentTerms.ts';
 import { protectedRegistryOverview } from './overview.ts';
 import { applyAutomaticProtectedCredit } from './automaticCredit.ts';
@@ -119,7 +119,11 @@ const sessionTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const recoveryRotations = new Set<number>();
 let routingOperationQueue: Promise<void> = Promise.resolve();
 const protectedOutbox = new ProtectedOutboxStore(path.join(app.getPath('userData'), 'protected-pending-v1'), keyBuffer);
-const protectedUploader = new ProtectedOutboxWorker(protectedOutbox, commitPendingProtectedSave, () => scheduleProtectedBillingPublication(true));
+const protectedBillingPriorities = new Set<string>();
+const protectedUploader = new ProtectedOutboxWorker(protectedOutbox, commitPendingProtectedSave, pending => {
+  for (const companyId of protectedPublicationCompanyIds(pending)) protectedBillingPriorities.add(companyId);
+  scheduleProtectedBillingPublication(true);
+});
 let protectedBillingPublishing = false;
 let protectedBillingQueued = false;
 let protectedFinancialGeneration = 0;
@@ -152,6 +156,7 @@ async function publishProtectedBilling() {
   }
   protectedBillingPublishing = true;
   const generation=protectedFinancialGeneration;
+  const connection=db;
   try {
     if (protectedOutbox.hasPending()) return;
     const latest = await withRegistryRoutingLock(() => withPrivateCloudOperation(async () => {
@@ -164,16 +169,22 @@ async function publishProtectedBilling() {
     // Validate every company/store association before creating client-facing
     // document copies. A broken mapping must never place a PDF in the portal.
     prepareProtectedBillingDeliveries(db, latest.vault);
-    const assigned = new Set(latest.vault.assignments
-      .map((entry) => entry.companyKey)
-      .filter((key) => key.startsWith('vrbaker:')));
-    const documentFileIds = new Map<string, string>();
-    for (const invoice of latest.vault.invoices) {
-      if (invoice.testDocument || invoice.status === 'cancelled' || !assigned.has(invoice.companyKey)) continue;
-      const fileId = await uploadProtectedClientInvoicePdf(invoice, latest.vault, latest.cloudScope);
-      documentFileIds.set(invoice.id, fileId);
-    }
-    const outcome=await publishProtectedBillingVault(db, latest.vault, createVrBakerClient(), documentFileIds);
+    const outcome=await publishProtectedBillingVault(db, latest.vault, createVrBakerClient(), new Map(), {
+      priorityCompanyIds: new Set(protectedBillingPriorities),
+      shouldContinue: () => generation===protectedFinancialGeneration && db===connection && getDeviceRole()==='writer'
+        && protectedCloudAccountScope()===latest.cloudScope && !protectedOutbox.hasPending(),
+      prepareDocuments: async companyId => {
+        const ids = new Map<string,string>();
+        for (const invoice of latest.vault.invoices) {
+          if (invoice.testDocument || invoice.status==='cancelled' || invoice.companyKey!==`vrbaker:${companyId}`) continue;
+          ids.set(invoice.id, await uploadProtectedClientInvoicePdf(invoice, latest.vault, latest.cloudScope));
+        }
+        return ids;
+      },
+      onPublished: companyId => {
+        if (generation===protectedFinancialGeneration) protectedBillingPriorities.delete(companyId);
+      },
+    });
     if(!outcome.skipped&&generation===protectedFinancialGeneration&&!protectedOutbox.hasPending()) db.prepare("INSERT INTO app_settings(key,value) VALUES('protected_financial_pending','0') ON CONFLICT(key) DO UPDATE SET value='0'").run();
   } catch {
     // The encrypted vault and PDF synchronization are authoritative and must

@@ -21,8 +21,9 @@ export function DriverCashStatus({writer,onChanged}:{writer:boolean;onChanged:()
   if(!status)return error?<p role="alert" className="text-red-700">{error}</p>:null;
   return <section className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
     <div className="flex items-center justify-between gap-3"><h2 className="font-semibold">Declarații din aplicația șoferilor</h2>
-      {writer&&<button disabled={busy} onClick={()=>void action(api.dailyCash.syncDriverCash)} className="text-sm text-blue-700">Sincronizează acum</button>}
+      {writer&&<button disabled={busy} aria-busy={busy} onClick={()=>void action(api.dailyCash.syncDriverCash)} className="text-sm text-blue-700 disabled:opacity-60">{busy?'Se sincronizează…':'Sincronizează acum'}</button>}
     </div>
+    {busy&&<p role="status" className="mt-2 text-sm text-blue-700">Sincronizarea este în curs. Încasările salvate se păstrează; rezultatul se actualizează automat.</p>}
     {(error||status.error)&&<p role="alert" className="mt-2 text-sm text-red-700">{error||status.error}</p>}
     {status.conflicts.map((c:any)=><div key={c.operation_id} className="mt-2 rounded bg-red-50 p-3 text-sm">
       <span>{JSON.parse(c.result).driver_name} · {JSON.parse(c.result).store_name} · {JSON.parse(c.result).error||'Încasarea necesită verificare.'}</span>

@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { invoicePaymentTerms, type InvoicePaymentTerms } from '../../src/shared/invoicePaymentTerms.ts';
 import { moneyInPence } from '../database/billingPublication.ts';
 import type { ProtectedInvoice, ProtectedRegistryVault } from './types.ts';
+import type { PendingProtectedSave } from './outbox.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DRIVE_FILE_ID = /^[A-Za-z0-9_-]{10,200}$/;
@@ -32,6 +33,30 @@ export interface ProtectedBillingDelivery {
 
 export interface BillingPublicationClient {
   request<T = unknown>(action: string, payload?: unknown, idempotencyKey?: string): Promise<T>;
+}
+
+// Kept only in main-process memory. The encrypted outbox remains the durable
+// source of accepted work; no protected company list is added to SQLite.
+export function protectedPublicationCompanyIds(pending: PendingProtectedSave) {
+  const keys = new Set<string>();
+  for (const row of pending.vault.driverCashReceipts || []) {
+    if (row.operations.some(operation => operation.operationId === pending.operationId)) keys.add(row.companyKey);
+  }
+  for (const row of [...pending.vault.payments, ...pending.vault.creditApplications, ...pending.vault.creditNotes]) {
+    if (row.operationId === pending.operationId) keys.add(row.companyKey);
+  }
+  for (const job of pending.documents) {
+    const row = (job.type === 'invoice' ? pending.vault.invoices : pending.vault.creditNotes).find(row => row.id === job.id);
+    if (row) keys.add(row.companyKey);
+  }
+  return [...keys].map(externalCompanyId).filter((id): id is string => id !== null);
+}
+
+export interface ProtectedPublicationOptions {
+  priorityCompanyIds?: ReadonlySet<string>;
+  prepareDocuments?: (companyId: string) => Promise<ReadonlyMap<string, string>>;
+  shouldContinue?: () => boolean;
+  onPublished?: (companyId: string) => void;
 }
 
 function externalCompanyId(companyKey: string) {
@@ -153,14 +178,24 @@ export async function publishProtectedBillingVault(
   vault: ProtectedRegistryVault,
   client: BillingPublicationClient,
   documentFileIds: ReadonlyMap<string, string> = new Map(),
+  options: ProtectedPublicationOptions = {},
 ) {
   const deliveries = prepareProtectedBillingDeliveries(db, vault, documentFileIds);
   if (!deliveries.length) return { published: 0, skipped: true };
   const control = await client.request<{ sync_enabled: boolean; protocol_version?: number }>('billing.status');
   if (!control.sync_enabled) return { published: 0, skipped: true };
   if (control.protocol_version !== 2) throw new Error('Platforma necesită actualizarea protocolului financiar.');
+  deliveries.sort((a,b) => Number(options.priorityCompanyIds?.has(b.company_id)) - Number(options.priorityCompanyIds?.has(a.company_id)));
   let published = 0;
-  for (const data of deliveries) {
+  for (let data of deliveries) {
+    // Finish a company's atomic commit before yielding to a newer vault.
+    if (options.shouldContinue && !options.shouldContinue()) return { published, skipped: true };
+    if (options.prepareDocuments) {
+      const ids = await options.prepareDocuments(data.company_id);
+      data = prepareProtectedBillingDeliveries(db, vault, ids).find(row => row.company_id === data.company_id)!;
+      if (data.invoices.some(row => !row.cancelled && !row.drive_file_id)) throw new Error('PDF-ul destinat portalului nu este confirmat.');
+    }
+    if (options.shouldContinue && !options.shouldContinue()) return { published, skipped: true };
     const parts = Math.max(1, Math.ceil(Math.max(data.invoices.length, data.deleted.length) / 50));
     for (let part = 0; part < parts; part++) {
       await client.request('billing.stage', {
@@ -176,6 +211,7 @@ export async function publishProtectedBillingVault(
       company_id: data.company_id,
       revision: data.revision,
     }, `${data.source_id}:protected:${data.company_id}:${data.revision}:commit`);
+    options.onPublished?.(data.company_id);
     published++;
   }
   return { published, skipped: false };

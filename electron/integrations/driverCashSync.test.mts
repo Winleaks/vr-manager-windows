@@ -68,3 +68,13 @@ test('operational status hides preserved zero declarations but keeps cancellatio
   const receipts=f.api.driverCashStatus().receipts;assert.equal(receipts.length,1);assert.equal(receipts[0].amount_pence,0);
  }finally{f.db.close();}
 });
+
+test('manual synchronization clears an old error only after success and preserves a failed retry',async()=>{
+ const f=fixture();try {
+  f.db.prepare("INSERT INTO app_settings(key,value) VALUES('driver_cash_sync_error','Old error')").run();
+  await f.api.resumeDriverCashSync();assert.equal(f.api.driverCashStatus().error,null);
+  f.state.incoming=null as any;
+  await assert.rejects(f.api.resumeDriverCashSync(),/Lista încasărilor este invalidă/);
+  assert.match(f.api.driverCashStatus().error,/Lista încasărilor este invalidă/);
+ }finally{f.db.close();}
+});
