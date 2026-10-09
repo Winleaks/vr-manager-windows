@@ -65,4 +65,3 @@ BEGIN
  ) q),'[]'::jsonb);
 END $$;
 REVOKE ALL ON FUNCTION private.hub_driver_cash_pending_contract(uuid,bigint,integer) FROM PUBLIC,anon,authenticated;
-
