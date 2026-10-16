@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.133
+
+- În Registrul Separat, Clienți și entități afișează întâi clienții atribuiți, în ordinea descrescătoare a restului de plată. La sold egal și pentru clienții neatribuiți, ordinea este alfabetică.
+- Fiecare client atribuit afișează restul de plată cumulat pentru magazinele și emitenții săi. Facturile anulate sunt excluse, iar creditele deja aplicate nu sunt scăzute din nou.
+- Lista se actualizează după schimbarea atribuirii și la revenirea din profil; căutarea este păstrată. Erorile de citire a soldurilor oferă reîncercare.
+- Aceeași ordonare este disponibilă în Viewer, cu acces doar pentru citire. Fără migrare sau modificare a datelor financiare existente.
+
 ### VR - Hub Management v0.1.132
 
 - Writer verifică încasările noi la 5 secunde și golește coada în loturi consecutive la deschidere, reconectare și revenire din repaus. Hub-ul închis păstrează încasările în coada serverului.

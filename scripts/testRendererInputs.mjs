@@ -8,11 +8,13 @@ import react from '@vitejs/plugin-react';
 import { testNavigationMemory } from './testNavigationMemory.mjs';
 import { testRecoveryKeySettings } from './testRecoveryKeySettings.mjs';
 import { testProtectedDashboard } from './testProtectedDashboard.mjs';
+import { testProtectedCompanyOrder } from './testProtectedCompanyOrder.mjs';
 
 const serveOnly = process.argv.includes('--serve');
 const externalUrl = process.argv.find((arg) => arg.startsWith('--url='))?.slice(6);
 const server = externalUrl ? null : await createServer({
   configFile: false,
+  cacheDir: process.env.VR_HUB_VITE_CACHE_DIR,
   plugins: [react(), {
     name: 'input-fixture',
     configureServer(vite) {
@@ -36,7 +38,7 @@ if (serveOnly) {
   try {
     const require = createRequire(import.meta.url);
     const { chromium } = require(process.env.VR_HUB_PLAYWRIGHT_MODULE || 'playwright');
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, executablePath: process.env.VR_HUB_BROWSER_EXECUTABLE });
     const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
@@ -58,10 +60,11 @@ if (serveOnly) {
       assert.equal(await field.evaluate((element) => document.activeElement === element), true);
     };
 
+    await testProtectedCompanyOrder(page, open);
     await open('clients', '&payment-edit=1');
     await page.getByText('Fixture Company', { exact: true }).click();
     await page.getByRole('button', { name: /Istoric Încasări/ }).click();
-    await page.getByTitle('Modifică suma sau metoda de plată').click();
+    await page.getByTitle('Modifică încasarea', { exact: true }).click();
     const paymentDialog = page.getByRole('dialog', { name: 'Modifică încasarea' });
     const paymentAmount = paymentDialog.getByLabel('Suma încasată (£)');
     await edit(paymentAmount, '820.75');
@@ -84,7 +87,7 @@ if (serveOnly) {
     await open('clients', '&payment-edit=1&role=viewer');
     await page.getByText('Fixture Company', { exact: true }).click();
     await page.getByRole('button', { name: /Istoric Încasări/ }).click();
-    assert.equal(await page.getByTitle('Modifică suma sau metoda de plată').count(), 0);
+    assert.equal(await page.getByTitle('Modifică încasarea', { exact: true }).count(), 0);
     console.log('PASS payment correction: decimal draft, keyboard save, pending lock, safe retry, refreshed allocations and Viewer read-only');
 
     await testProtectedDashboard(page, open);

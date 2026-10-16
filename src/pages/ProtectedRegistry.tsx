@@ -42,6 +42,7 @@ import { PinInput } from '../components/PinInput';
 import { BilingualProductName } from '../components/BilingualProductName';
 import { registerProtectedRegistryAccessClick } from '../utils/protectedRegistryAccess';
 import { matchesProtectedCompany } from '../utils/protectedCompanySearch';
+import { orderProtectedCompanies } from '../utils/protectedCompanyOrder';
 
 const protectedFeedback = createFeedbackController();
 const { notify, confirmAction } = protectedFeedback;
@@ -238,33 +239,57 @@ function ClientsPanel() {
   const [companies, setCompanies] = useState<any[]>([]);
   const [search, setSearch] = useNavigationState('search', '');
   const [busy, setBusy] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const request = useRef(0);
   const [selectedCompanyId, setSelectedCompanyId] = useNavigationState<number | null>('company', null);
   const selectedCompany = companies.find(company => company.id === selectedCompanyId);
   const scrollRef = useRememberedScroll('list', undefined, !selectedCompanyId);
-  const reload = useCallback(() => api.protectedRegistry.getCompanies().then(setCompanies), []);
-  useEffect(() => { void reload(); }, [reload]);
+  const reload = useCallback(async () => {
+    const version = ++request.current;
+    setLoading(true); setLoadError('');
+    try {
+      const [companies, invoices] = await Promise.all([api.protectedRegistry.getCompanies(), api.protectedRegistry.getInvoices()]);
+      const ordered = orderProtectedCompanies(companies, invoices);
+      if (version === request.current) setCompanies(ordered);
+    } catch (error) {
+      if (version === request.current) setLoadError(errorMessage(error));
+    } finally { if (version === request.current) setLoading(false); }
+  }, []);
+  useEffect(() => {
+    void reload();
+    return () => {
+      // Invalidate asynchronous reads; this ref is a counter, not a DOM node.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      request.current++;
+    };
+  }, [reload]);
   const toggle = async (company: any) => {
     setBusy(company.id);
     try { await run(() => api.protectedRegistry.setAssignment(company.id, !company.assigned, operationId())); await reload(); }
     catch (error) { notify(errorMessage(error)); } finally { setBusy(null); }
   };
   const filtered = companies.filter(company => matchesProtectedCompany(company, search));
-  if (selectedCompany) return <NavigationView name={`company-${selectedCompany.id}`} restore={false}><ClientProfile key={selectedCompany.id} company={selectedCompany} onBack={() => setSelectedCompanyId(null)} /></NavigationView>;
+  if (selectedCompany) return <NavigationView name={`company-${selectedCompany.id}`} restore={false}><ClientProfile key={selectedCompany.id} company={selectedCompany} onBack={() => { setSelectedCompanyId(null); void reload(); }} /></NavigationView>;
   return <div ref={scrollRef} className="space-y-5">
     <PanelHeading title="Clienți atribuiți" description="Atribuirea include toate magazinele companiei și exclude comenzile din facturarea normală." icon={Users} />
     <div className="rounded-2xl bg-white border border-slate-200 p-4">
       <label className="block text-xs font-semibold uppercase text-slate-500" htmlFor="protected-client-search">Caută companie sau magazin</label>
       <div className="relative mt-2"><Search size={18} aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /><input id="protected-client-search" type="search" value={search} onChange={event => setSearch(event.target.value)} autoComplete="off" placeholder="Numele companiei sau al magazinului..." className="w-full min-w-0 rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500" /></div>
     </div>
-    <div className="rounded-2xl bg-white border border-slate-200 divide-y divide-slate-100">
+    <p className="text-sm text-slate-500">Clienții din registru apar primii, de la cel mai mare rest de plată. Ceilalți clienți sunt ordonați alfabetic.</p>
+    {loading && <p role="status">Se actualizează clienții și soldurile…</p>}
+    {loadError && <p role="alert" className="rounded-xl bg-rose-50 p-4 text-rose-700">{loadError}<button type="button" onClick={() => void reload()} className="ml-3 underline">Reîncearcă</button></p>}
+    {!loadError && <div aria-busy={loading} className="rounded-2xl bg-white border border-slate-200 divide-y divide-slate-100">
       {filtered.map(company => <div key={company.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="min-w-0"><button type="button" onClick={() => setSelectedCompanyId(company.id)} className="font-bold break-words text-indigo-600 hover:underline" aria-label={`Deschide profilul ${company.name}`}>{company.name}</button><p className="text-sm text-slate-500">{company.issuerName || 'Emitent implicit'} · {company.stores.length} {company.stores.length === 1 ? 'magazin' : 'magazine'}</p>
           <ul aria-label={`Magazinele companiei ${company.name}`} className="mt-2 flex flex-wrap gap-2">{company.stores.map((store: { id: number; name: string }) => <li key={store.id} className="inline-flex items-start gap-1.5 min-w-0 max-w-full rounded-lg bg-slate-50 border border-slate-100 px-2.5 py-1 text-sm text-slate-600"><Store size={15} aria-hidden="true" className="shrink-0 mt-0.5 text-indigo-500" /><span className="break-words">{store.name || 'Magazin fără nume'}</span></li>)}</ul>
+          {company.assigned && <p className="mt-2 font-semibold text-slate-800">Rest de plată: {money(company.outstanding)}</p>}
         </div>
         <button disabled={busy === company.id} onClick={() => toggle(company)} className={`shrink-0 self-start sm:self-auto rounded-xl px-4 py-2 font-semibold ${company.assigned ? 'bg-red-50 text-red-700' : 'bg-indigo-600 text-white'}`}>{company.assigned ? 'Elimină din registru' : 'Adaugă în registru'}</button>
       </div>)}
-      {!filtered.length && <p role="status" className="p-8 text-center text-slate-500">{search.trim() ? 'Nu există companii sau magazine pentru această căutare.' : 'Nu există companii disponibile.'}</p>}
-    </div>
+      {!loading && !filtered.length && <p role="status" className="p-8 text-center text-slate-500">{search.trim() ? 'Nu există companii sau magazine pentru această căutare.' : 'Nu există companii disponibile.'}</p>}
+    </div>}
   </div>;
 }
 

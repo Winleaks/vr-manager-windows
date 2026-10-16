@@ -87,6 +87,30 @@ window.desktopApi = {
   },
 } as any;
 
+const clientOrder = { fail: false, high: 30 };
+if (new URLSearchParams(location.search).has('client-order')) {
+  const companies = ['Client Z', 'Client A', 'Client B', 'Client Zero', 'Client Other', 'Client Alpha']
+    .map((name, index) => ({ ...company, id: index + 1, companyKey: `client-${index + 1}`, name,
+      assigned: index < 4, stores: [{ id: index + 1, name: 'Magazin Nord' }] }));
+  Object.assign(window.desktopApi.protectedRegistry, {
+    getCompanies: async () => structuredClone(companies),
+    getInvoices: async () => {
+      await new Promise(resolve => setTimeout(resolve, 150));
+      if (clientOrder.fail) throw new Error('Solduri indisponibile (test sintetic).');
+      return [clientOrder.high, 50.1, 12.25, 0, 100, 600, 20.1, 900].map((outstanding, index) => {
+        const owner = companies[index === 6 ? 0 : index === 7 ? 3 : index];
+        return { ...protectedInvoice, id: `invoice-${index}`, companyId: owner.id, companyKey: owner.companyKey,
+          companyName: owner.name, outstanding, status: index === 7 ? 'cancelled' : 'partial',
+          issuerCode: index === 6 ? 'vatra' : 'goodness' };
+      });
+    },
+    setAssignment: async (id: number, assigned: boolean) => {
+      calls.push({ assignment: id, assigned });
+      companies.find(row => row.id === id)!.assigned = assigned;
+    },
+  });
+}
+
 if (new URLSearchParams(location.search).has('payment-edit')) {
   let saved = false;
   let attempt = 0;
@@ -168,5 +192,5 @@ export function Harness() {
               </div>}
   </>;
 }
-(window as any).__inputTest = { calls, overviewCalls, setProtectedSync:(value:unknown)=>Object.assign(protectedSync,value), setOverviewFailure:(value:boolean)=>{overviewFailure=value;}, notify, confirmAction, setDocumentStatus:(value:unknown)=>Object.assign(documentStatus,value), setRecoveryFailure:(value:boolean)=>{recoveryFailure=value;} };
+(window as any).__inputTest = { calls, overviewCalls, setClientOrder:(value:unknown)=>Object.assign(clientOrder,value), setProtectedSync:(value:unknown)=>Object.assign(protectedSync,value), setOverviewFailure:(value:boolean)=>{overviewFailure=value;}, notify, confirmAction, setDocumentStatus:(value:unknown)=>Object.assign(documentStatus,value), setRecoveryFailure:(value:boolean)=>{recoveryFailure=value;} };
 createRoot(document.getElementById('root')!).render(<StrictMode><Harness /></StrictMode>);
