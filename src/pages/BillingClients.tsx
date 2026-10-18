@@ -563,7 +563,7 @@ export function BillingClients() {
                               <td className="py-3.5 px-4 font-bold text-slate-900">#{inv.invoice_number}{inv.replaces_reference && <small className="block text-indigo-600">Înlocuiește {inv.replaces_reference}</small>}{inv.replacement_reference && <small className="block text-indigo-600">Înlocuită cu {inv.replacement_reference}</small>}</td>
                               <td className="py-3.5 px-4 text-slate-600">{inv.invoice_date}</td>
                               <td className="py-3.5 px-4 font-semibold text-slate-800">{inv.store_name}</td>
-                              <td className="py-3.5 px-4 font-medium">£{Number(inv.netAmount ?? inv.total_amount).toFixed(2)}</td>
+                              <td className="py-3.5 px-4 font-medium">£{Number(inv.netAmount ?? inv.total_amount).toFixed(2)}{Number(inv.creditedAmount || 0) > 0 && <div className="text-[10px] font-normal text-amber-700">creditat £{Number(inv.creditedAmount).toFixed(2)}</div>}</td>
                               <td className="py-3.5 px-4 text-emerald-600 font-semibold">£{Number(inv.cashPaid || 0).toFixed(2)} + £{Number(inv.appliedCredit || 0).toFixed(2)} credit</td>
                               <td className="py-3.5 px-4 font-bold text-rose-600">£{due.toFixed(2)}</td>
                               <td className="py-3.5 px-4 text-right">

@@ -1,3 +1,8 @@
+### VR - Hub Management v0.1.134
+
+- În profilul clientului, fila „Facturi Restante” afișează „creditat £…” sub valoarea facturii, la fel ca fila „Toate Facturile”, pentru toate societățile emitente.
+- Clarificare vizuală: calculele, soldurile, plățile și Credit Notes existente rămân neschimbate. Fără migrare sau schimbări de API.
+
 ### VR - Hub Management v0.1.133
 
 - În Registrul Separat, Clienți și entități afișează întâi clienții atribuiți, în ordinea descrescătoare a restului de plată. La sold egal și pentru clienții neatribuiți, ordinea este alfabetică.
