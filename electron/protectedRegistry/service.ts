@@ -10,6 +10,9 @@ import { applyProtectedIssuerChange, protectedIssuerChangeBlock, protectedIssuer
 import { applyProtectedInvoiceEdit, protectedInvoiceEditBlock, protectedInvoiceEditReplay, protectedInvoiceVersion, validateProtectedInvoiceEdit } from './invoiceEditing.ts';
 import type { ProtectedInvoiceEditInput } from '../../src/shared/protectedInvoiceEdit.ts';
 import { protectedInvoiceOutstanding } from './invoiceOutstanding.ts';
+import { protectedStatementReport, validateProtectedStatement } from './statement.ts';
+import { generateStatementPdf } from '../reports/statementPdf.ts';
+import type { ProtectedStatementInput } from '../../src/shared/protectedStatement.ts';
 import { protectedPaymentDisplay } from './paymentDisplay.ts';
 import { prepareProtectedBillingDeliveries, publishProtectedBillingVault, protectedPublicationCompanyIds, queueNormalPublicationAfterProtected } from './billingPublication.ts';
 import { invoicePaymentTerms } from '../../src/shared/invoicePaymentTerms.ts';
@@ -2176,6 +2179,27 @@ function storeTemporaryProtectedPdf(webContentsId: number, session: Session, buf
   fs.writeFileSync(tempPath, toValidatedPdfBuffer(buffer), { flag: 'wx', mode: 0o600 });
   const paths = temporaryFiles.get(webContentsId) || new Set<string>(); paths.add(tempPath); temporaryFiles.set(webContentsId, paths);
   return tempPath;
+}
+
+export async function protectedStatementDocument(webContentsId: number, input: ProtectedStatementInput) {
+  const scope = validateProtectedStatement(input);
+  const initial = await freshSession(webContentsId);
+  const { filePath, session } = await withRegistryRoutingLock(async () => {
+    if (getDeviceRole() === 'writer') assertProtectedCloudSettled();
+    if (getDeviceRole() === 'viewer') await refreshProtectedViewer(webContentsId);
+    const session = await freshSession(webContentsId);
+    if (session !== initial) throw Error('Sesiunea registrului s-a schimbat. Reîncearcă.');
+    const buffer = generateStatementPdf(protectedStatementReport(session.vault, scope));
+    return { filePath: storeTemporaryProtectedPdf(webContentsId, session, buffer), session };
+  });
+  // OS print/share dialogs can stay open; do not hold the registry operation lock.
+  if (sessions.get(webContentsId) !== session || session.role !== getDeviceRole() || Date.now() - session.lastActivity >= SESSION_MS) throw Error('Sesiunea registrului a expirat.');
+  if (scope.action === 'open') {
+    const error = await shell.openPath(filePath);
+    return { success: !error, error: error || undefined };
+  }
+  const result = await openWindowsDocument(scope.action, filePath);
+  return { success: result.success, cancelled: result.canceled, error: result.error };
 }
 
 export async function openProtectedDocument(webContentsId: number, type: 'invoice' | 'credit-note', idInput: unknown) {

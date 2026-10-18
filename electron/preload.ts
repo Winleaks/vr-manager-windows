@@ -187,6 +187,7 @@ export const desktopApi = {
     syncEntities: () => ipcRenderer.invoke('billing:syncEntities'),
   },
   protectedRegistry: {
+    statementDocument: (input: import('../src/shared/protectedStatement').ProtectedStatementInput): Promise<{ success: boolean; cancelled?: boolean; error?: string }> => ipcRenderer.invoke('protectedRegistry:statementDocument', input),
     syncStatus: (): Promise<import('./protectedRegistry/outbox').ProtectedSyncStatus> => ipcRenderer.invoke('protectedRegistry:syncStatus'),
     retrySync: (): Promise<import('./protectedRegistry/outbox').ProtectedSyncStatus> => ipcRenderer.invoke('protectedRegistry:retrySync'),
     activateViewer: (recoveryKey: string, pin: string, confirmation: string): Promise<unknown> => ipcRenderer.invoke('protectedRegistry:activateViewer', { recoveryKey, pin, confirmation }),

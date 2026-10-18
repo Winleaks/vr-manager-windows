@@ -1,3 +1,4 @@
+import { ProtectedStatementActions } from '../components/ProtectedStatementActions';
 import { createFeedbackController } from '../utils/feedback';
 import { FeedbackHost } from '../components/FeedbackHost';
 import { ProtectedInvoiceEditor } from '../components/ProtectedInvoiceEditor';
@@ -341,6 +342,7 @@ function ClientProfile({ company, onBack }: { company: any; onBack: () => void }
         ['Sold Credit / Avans', sum(balances, 'available'), ShieldCheck],
       ].map(([label, amount, Icon]: any) => <div key={label} className="rounded-2xl bg-white border border-slate-200 p-5 shadow-sm"><div className="flex items-center justify-between gap-3"><span className="text-sm text-slate-500">{label}</span><Icon size={20} className="text-indigo-600" /></div><p className="text-2xl font-bold mt-3">{money(amount)}</p></div>)}</section>
       <p className="text-sm text-slate-500">Credit Notes active: {money(sum(notes.filter(row => row.status !== 'cancelled'), 'totalAmount'))}. Soldurile sunt separate pe societate; creditul disponibil se aplică din Istoric încasări.</p>
+      <ProtectedStatementActions key={company.companyKey} companyKey={company.companyKey} invoices={data.invoices} />
       <nav aria-label="Secțiuni profil client" className="flex flex-wrap gap-x-6 border-b border-slate-200">{profileTabs.map(([id, label, Icon]) => <button key={id} type="button" aria-current={tab === id ? 'page' : undefined} onClick={() => { setTab(id); setPaymentInvoice(undefined); setCreditInvoiceId(undefined); }} className={`flex items-center gap-2 py-4 border-b-2 text-sm font-semibold ${tab === id ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500'}`}><Icon size={18} />{label}</button>)}</nav>
       {tab === 'invoices' && <InvoicesPanel key={issuer} companyId={company.id} issuer={issuer} onChanged={changed} onPayment={invoice => { setPaymentInvoice(invoice); setTab('payments'); }} onCreditNote={id => { setCreditInvoiceId(id); setTab('notes'); }} />}
       {tab === 'payments' && <PaymentsPanel key={issuer + (paymentInvoice?.id || '')} profileCompany={company} profileIssuer={issuer} initialInvoice={paymentInvoice} onChanged={changed} />}

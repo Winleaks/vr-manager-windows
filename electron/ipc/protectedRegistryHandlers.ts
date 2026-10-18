@@ -1,6 +1,7 @@
 import { handleTrustedIpc } from './trustedHandler.ts';
 import type { InvoiceIssuerChangeInput } from '../../src/shared/invoiceIssuerChange.ts';
 import {
+  protectedStatementDocument,
   activateProtectedViewer,
   refreshProtectedViewer,
   cancelProtectedInvoice,
@@ -53,6 +54,7 @@ import {
 } from '../protectedRegistry/service.ts';
 
 export function registerProtectedRegistryHandlers() {
+  handleTrustedIpc('protectedRegistry:statementDocument', (event, input) => protectedStatementDocument(event.sender.id, input));
   handleTrustedIpc('protectedRegistry:syncStatus', event => protectedRegistrySyncStatus(event.sender.id));
   handleTrustedIpc('protectedRegistry:retrySync', event => retryProtectedRegistrySync(event.sender.id));
   handleTrustedIpc('protectedRegistry:activateViewer', (event, data) => activateProtectedViewer(event.sender.id, data?.recoveryKey, data?.pin, data?.confirmation));

@@ -17,6 +17,7 @@ const VIEWER_ALLOWED_CHANNELS = new Set([
   'protectedRegistry:openDocument',
   'protectedRegistry:shareDocument',
   'protectedRegistry:printDocument',
+  'protectedRegistry:statementDocument',
   'system:getAppVersion',
   'save-file',
   'save-pdf-auto',

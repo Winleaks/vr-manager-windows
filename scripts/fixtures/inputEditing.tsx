@@ -9,6 +9,7 @@ import '../../src/index.css';
 
 const calls: unknown[] = [];
 let recoveryFailure = false;
+let statementFailure = false;
 const overviewCalls: { from?: string; to?: string }[] = [];
 let overviewFailure = false;
 async function dashboardOverview(from?: string, to?: string) {
@@ -59,6 +60,12 @@ window.desktopApi = {
   },
   drivers: { getAll: async () => [] }, employees: { getAll: async () => [] },
   protectedRegistry: {
+    statementDocument: async (input: unknown) => {
+      calls.push(input);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      if (statementFailure) throw Error('Statement indisponibil (test sintetic).');
+      return { success: true };
+    },
     syncStatus: async () => structuredClone(protectedSync),
     retrySync: async () => { calls.push('retry-protected-sync'); protectedSync.state = 'syncing'; protectedSync.error = null; return structuredClone(protectedSync); },
     rotateRecoveryKey: async (pin: string, confirmed: boolean) => {
@@ -86,6 +93,12 @@ window.desktopApi = {
     createCreditNote: async (payload: unknown) => { calls.push(payload); return { creditNote: { reference: 'TEST-PCN1' }, pdf: { success: true } }; },
   },
 } as any;
+
+if (new URLSearchParams(location.search).has('statement')) {
+  window.desktopApi.protectedRegistry.getInvoices = async () => [protectedInvoice,
+    { ...protectedInvoice, id: 'second-store', storeId: 2, storeName: 'Second Store' },
+    { ...protectedInvoice, id: 'vatra-store', issuerCode: 'vatra', storeId: 3, storeName: 'Vatra Store' }];
+}
 
 const clientOrder = { fail: false, high: 30 };
 if (new URLSearchParams(location.search).has('client-order')) {
@@ -192,5 +205,5 @@ export function Harness() {
               </div>}
   </>;
 }
-(window as any).__inputTest = { calls, overviewCalls, setClientOrder:(value:unknown)=>Object.assign(clientOrder,value), setProtectedSync:(value:unknown)=>Object.assign(protectedSync,value), setOverviewFailure:(value:boolean)=>{overviewFailure=value;}, notify, confirmAction, setDocumentStatus:(value:unknown)=>Object.assign(documentStatus,value), setRecoveryFailure:(value:boolean)=>{recoveryFailure=value;} };
+(window as any).__inputTest = { calls, overviewCalls, setStatementFailure:(value:boolean)=>{statementFailure=value;}, setClientOrder:(value:unknown)=>Object.assign(clientOrder,value), setProtectedSync:(value:unknown)=>Object.assign(protectedSync,value), setOverviewFailure:(value:boolean)=>{overviewFailure=value;}, notify, confirmAction, setDocumentStatus:(value:unknown)=>Object.assign(documentStatus,value), setRecoveryFailure:(value:boolean)=>{recoveryFailure=value;} };
 createRoot(document.getElementById('root')!).render(<StrictMode><Harness /></StrictMode>);

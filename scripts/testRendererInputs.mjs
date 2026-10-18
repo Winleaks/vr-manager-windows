@@ -1,3 +1,4 @@
+import { testProtectedStatement } from './testProtectedStatement.mjs';
 // Optional browser regression suite: npm install --no-save playwright, then
 // node scripts/testRendererInputs.mjs. VR_HUB_PLAYWRIGHT_MODULE may point to an
 // already provisioned Playwright installation instead. All data is synthetic.
@@ -60,6 +61,10 @@ if (serveOnly) {
       assert.equal(await field.evaluate((element) => document.activeElement === element), true);
     };
 
+    if (process.argv.includes('--statement-only')) {
+      await testProtectedStatement(page, open);
+      assert.deepEqual(errors, [], 'no renderer errors or native dialogs');
+    } else {
     await testProtectedCompanyOrder(page, open);
     await open('clients', '&payment-edit=1');
     await page.getByText('Fixture Company', { exact: true }).click();
@@ -300,12 +305,14 @@ if (serveOnly) {
     if (process.env.VR_PROFILE_SCREENSHOT_DIR) await page.screenshot({ path: process.env.VR_PROFILE_SCREENSHOT_DIR + '/viewer.png' });
     console.log('PASS Viewer activation, read-only navigation, no mutation controls, scoped documents and recipient history');
 
+    await testProtectedStatement(page, open);
     await open('settings');
     await edit(page.getByPlaceholder('Nume Șofer...'), 'Fixture Driver');
     await page.getByRole('button', { name: 'Notificare test' }).click();
     await edit(page.getByPlaceholder('Telefon...'), '0700000000');
     assert.deepEqual(errors, [], 'no renderer errors or native dialogs');
     console.log('PASS personnel fields; no renderer errors or native dialogs');
+    }
   } finally {
     await browser?.close();
     await server?.close();

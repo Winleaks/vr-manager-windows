@@ -1,3 +1,4 @@
+import { validateProtectedStatement } from '../protectedRegistry/statement.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -8,7 +9,7 @@ import { registerFailedPinAttempt } from '../protectedRegistry/policy.ts';
 import { isChannelAllowedForRole } from '../device/viewerPolicy.ts';
 
 test('Viewer allowlist admits only explicit read/document/activation operations from all protected handlers', () => {
-  const allowed = new Set(['status', 'activateViewer', 'refreshViewer', 'unlock', 'lock', 'touch', 'getOverview', 'getCompanies', 'getInvoices', 'getPayments', 'getCreditNotes', 'getCreditBalances', 'getCreditApplications', 'openDocument', 'shareDocument', 'printDocument']);
+  const allowed = new Set(['status', 'activateViewer', 'refreshViewer', 'unlock', 'lock', 'touch', 'getOverview', 'getCompanies', 'getInvoices', 'getPayments', 'getCreditNotes', 'getCreditBalances', 'getCreditApplications', 'openDocument', 'shareDocument', 'printDocument', 'statementDocument']);
   const handlers = readFileSync(new URL('../ipc/protectedRegistryHandlers.ts', import.meta.url), 'utf8');
   for (const match of handlers.matchAll(/handleTrustedIpc\('protectedRegistry:([^']+)'/g)) {
     assert.equal(isChannelAllowedForRole('viewer', `protectedRegistry:${match[1]}`), allowed.has(match[1]), match[1]);
@@ -18,7 +19,7 @@ test('Viewer allowlist admits only explicit read/document/activation operations 
 
 function fixture() {
   const source = ts.createSourceFile('service.ts', readFileSync(new URL('../protectedRegistry/service.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true);
-  const names = new Set(['registryCredential', 'keyBuffer', 'readAuthState', 'saveAuthState', 'freshSession', 'activateProtectedViewer', 'refreshProtectedViewer', 'unlockProtectedRegistry', 'protectedPdfToTemporaryFile', 'storeTemporaryProtectedPdf', 'openProtectedDocument', 'printProtectedDocument', 'shareProtectedDocument']);
+  const names = new Set(['registryCredential', 'keyBuffer', 'readAuthState', 'saveAuthState', 'freshSession', 'activateProtectedViewer', 'refreshProtectedViewer', 'unlockProtectedRegistry', 'protectedPdfToTemporaryFile', 'storeTemporaryProtectedPdf', 'openProtectedDocument', 'printProtectedDocument', 'shareProtectedDocument', 'protectedStatementDocument']);
   const code = source.statements.filter(node => ts.isFunctionDeclaration(node) && names.has(node.name?.text || '')).map(node => node.getText(source)).join('\n').replaceAll('export ', '');
   const vault = createEmptyProtectedVault();
   vault.invoices.push({ id: 'invoice', status: 'unpaid', reference: 'TEST-1', companyName: 'Synthetic', companyKey: 'a' } as any);
@@ -30,6 +31,7 @@ function fixture() {
   const sessions = new Map<number, any>(), sessionGenerations = new Map<number, number>();
   const forbidden = () => { state.writes++; throw Error('Unexpected Writer side effect'); };
   const bindings = {
+    validateProtectedStatement, protectedStatementReport: () => ({}), generateStatementPdf: () => Buffer.from('%PDF-synthetic'),
     Buffer, KEY_CREDENTIAL: 'key', AUTH_CREDENTIAL: 'auth', SESSION_MS: 60000, MAX_ATTEMPTS: 5, LOCKOUT_MS: 900000,
     getDeviceRole: () => state.role, getCredential: (id: string) => credentials.get(id), setCredential: (id: string, value: string) => credentials.set(id, value),
     isCredentialStorageAvailable: () => state.secure, createPinVerifier, verifyPin, recoverVaultKey, decryptVault, parseEnvelope, registerFailedPinAttempt,
@@ -50,7 +52,7 @@ function fixture() {
     openWindowsDocument: async () => { state.opened++; return { success: true }; },
   };
   const compiled = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
-  const api = new Function(...Object.keys(bindings), compiled + '\nreturn {activateProtectedViewer, unlockProtectedRegistry, refreshProtectedViewer, openProtectedDocument, printProtectedDocument, shareProtectedDocument};')(...Object.values(bindings));
+  const api = new Function(...Object.keys(bindings), compiled + '\nreturn {activateProtectedViewer, unlockProtectedRegistry, refreshProtectedViewer, openProtectedDocument, printProtectedDocument, shareProtectedDocument, protectedStatementDocument};')(...Object.values(bindings));
   return { api, state, credentials, sessions, recovery };
 }
 
@@ -97,4 +99,23 @@ test('PIN attempts, locked sessions, role change, stale cloud and late document 
   const h = fixture(); await h.api.activateProtectedViewer(1, h.recovery, '482719', '482719');
   h.state.role = 'writer';
   await assert.rejects(h.api.openProtectedDocument(1, 'invoice', 'invoice'), /expirat/);
+});
+
+const statementInput = { companyKey: 'a', issuerCode: 'goodness', storeInvoiceId: null, from: '2026-10-01', to: '2026-10-31', action: 'open' };
+test('statement actions use verified Viewer session and temporary PDFs without cloud writes', async () => {
+  const f = fixture(); await f.api.activateProtectedViewer(1, f.recovery, '482719', '482719');
+  for (const action of ['open', 'print', 'share']) await f.api.protectedStatementDocument(1, { ...statementInput, action });
+  assert.equal(f.state.files, 3); assert.equal(f.state.opened, 3); assert.equal(f.state.writes, 0);
+});
+test('statement rejects invalid requests, locked/expired/changed sessions and interrupted refresh without plaintext', async () => {
+  for (const scenario of ['invalid', 'locked', 'expired', 'role', 'interrupt', 'stale']) {
+    const f = fixture(); await f.api.activateProtectedViewer(1, f.recovery, '482719', '482719');
+    if (scenario === 'locked') f.sessions.clear();
+    if (scenario === 'expired') f.sessions.get(1).lastActivity = 0;
+    if (scenario === 'role') f.state.role = 'writer';
+    if (scenario === 'interrupt') f.state.interrupt = true;
+    if (scenario === 'stale') f.state.revision = -1;
+    await assert.rejects(f.api.protectedStatementDocument(1, { ...statementInput, action: scenario === 'invalid' ? 'delete' : 'open' }));
+    assert.equal(f.state.files, 0, scenario); assert.equal(f.state.opened, 0, scenario); assert.equal(f.state.writes, 0, scenario);
+  }
 });

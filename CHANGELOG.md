@@ -1,3 +1,11 @@
+### VR - Hub Management v0.1.135
+
+- Registrul Separat include Statement de cont în profilul fiecărui client, cu emitent, perioadă și alegerea tuturor magazinelor sau a unui magazin facturat.
+- PDF-ul include sold inițial, facturi, Credit Notes, încasări și sold final. Raportul pe magazin include creditele aplicate; avansurile nealocate rămân la nivelul companiei.
+- Deschidere, imprimare și pregătire pentru trimitere prin Windows Share, inclusiv în Viewer, cu documente temporare protejate de sesiunea registrului.
+- Titlurile, textele și sumele din coloanele Statement-urilor sunt centrate, atât în registrul normal, cât și în Registrul Separat.
+- Fără migrare de bază de date sau modificare a înregistrărilor financiare existente.
+
 ### VR - Hub Management v0.1.134
 
 - În profilul clientului, fila „Facturi Restante” afișează „creditat £…” sub valoarea facturii, la fel ca fila „Toate Facturile”, pentru toate societățile emitente.
