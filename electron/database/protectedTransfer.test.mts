@@ -152,17 +152,19 @@ test('two stores and two issuers retain independent counters and original values
  assert.throws(()=>beginTransfer(vault,{...request,invoiceId:duplicate.id},'2026-10-18'),/altei facturi/);
 });
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 test('prepared journal survives actual SQLite close/reopen and activation rollback is retryable', async t=>{
  const {db,vault,invoice,request}=fixture(t);beginTransfer(vault,request,'2026-10-18');const target=prepareInvoiceHandoff(db,vault,invoice);
- const directory=mkdtempSync(path.join(tmpdir(),'vr-transfer-restart-'));t.after(()=>rmSync(directory,{recursive:true,force:true}));
+ const directory=mkdtempSync(path.join(tmpdir(),'vr-transfer-restart-'));
+ let reopened: Database.Database | undefined;
+ t.after(()=>{if(reopened?.open) reopened.close();rmSync(directory,{recursive:true,force:true});});
  const filename=path.join(directory,'writer.db');await db.backup(filename);
- let reopened=new Database(filename);reopened.pragma('foreign_keys=ON');assert.deepEqual(prepareInvoiceHandoff(reopened,vault,invoice),target);reopened.close();
+ reopened=new Database(filename);reopened.pragma('foreign_keys=ON');assert.deepEqual(prepareInvoiceHandoff(reopened,vault,invoice),target);reopened.close();
  completeTransfer(vault,invoice.id,request.operationId,target);
- reopened=new Database(filename);t.after(()=>reopened.close());
+ reopened=new Database(filename);
  reopened.exec("CREATE TRIGGER fail_card BEFORE INSERT ON payments WHEN NEW.method='card' BEGIN SELECT RAISE(ABORT,'card storage failed'); END");
  assert.throws(()=>activateInvoiceHandoff(reopened,vault,invoice),/card storage failed/);
  assert.equal(reopened.prepare('SELECT * FROM payments').all().length,0);
@@ -192,8 +194,10 @@ test('rendered normal PDF and Statement contain the new number and no protected 
  const items:any=read.prepare('SELECT product_name AS productName,product_name_ro AS name_ro,unit,quantity,unit_price AS unitPrice,total_price AS totalPrice FROM invoice_items').all();
  const pdf=generateInvoicePDF(JSON.parse(row.issuer_snapshot_json),{invoiceNumber:row.invoice_number,invoiceDate:row.invoice_date,client:{name:'Company'},store:{name:'Shop'},items,totalAmount:row.total_amount});
  const statement=generateStatementPdf(statementReport(read,1,row.issuer_id,'2026-10-01','2026-10-18'));
- for(const document of [pdf,statement]) {
-  const result=spawnSync('pdftotext',['-','-'],{input:Buffer.from(document),encoding:'utf8'});assert.equal(result.status,0);
+ const directory=mkdtempSync(path.join(tmpdir(),'vr-transfer-pdf-'));t.after(()=>rmSync(directory,{recursive:true,force:true}));
+ for(const [index,document] of [pdf,statement].entries()) {
+  const filename=path.join(directory,`document-${index}.pdf`);writeFileSync(filename,Buffer.from(document));
+  const result=spawnSync('pdftotext',[filename,'-'],{encoding:'utf8'});assert.equal(result.status,0,result.stderr);
   assert.match(result.stdout,/TGB-10/);assert.doesNotMatch(result.stdout,/TGBL|Transferat|registru separat|original-order/i);
  }
 });
