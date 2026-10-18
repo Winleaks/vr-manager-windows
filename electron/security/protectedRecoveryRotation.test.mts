@@ -1,3 +1,4 @@
+import { assertTransfersUnchanged } from '../protectedRegistry/transfer.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -29,7 +30,7 @@ function fixture() {
   const session = () => sessions.set(1, { webContentsId: 1, role: 'writer', lastActivity: Date.now(), vault, envelope, driveVersion: '1' });
   session();
   const kind = (name: string) => name.includes('Backups') ? 'backup' : name.endsWith('.pending') ? 'pending' : name.endsWith('.manifest') ? 'manifest' : 'vault';
-  const bindings = {
+  const bindings = { assertTransfersUnchanged,
     deferredEvents: new Set(),
     assertProtectedCloudSettled: () => undefined,
     protectedCloudAccountScope: () => 'a'.repeat(64),

@@ -187,6 +187,8 @@ export const desktopApi = {
     syncEntities: () => ipcRenderer.invoke('billing:syncEntities'),
   },
   protectedRegistry: {
+    getTransferPreview: (id: string): Promise<{ invoice: import('./protectedRegistry/types').ProtectedInvoice; expectedVersion: string; blockedReason: string | null; payments: import('./protectedRegistry/types').ProtectedPayment[]; invoiceDate: string }> => ipcRenderer.invoke('protectedRegistry:getTransferPreview', id),
+    transferInvoice: (input: import('../src/shared/protectedTransfer').ProtectedTransferInput): Promise<import('../src/shared/protectedTransfer').ProtectedTransferResult> => ipcRenderer.invoke('protectedRegistry:transferInvoice', input),
     statementDocument: (input: import('../src/shared/protectedStatement').ProtectedStatementInput): Promise<{ success: boolean; cancelled?: boolean; error?: string }> => ipcRenderer.invoke('protectedRegistry:statementDocument', input),
     syncStatus: (): Promise<import('./protectedRegistry/outbox').ProtectedSyncStatus> => ipcRenderer.invoke('protectedRegistry:syncStatus'),
     retrySync: (): Promise<import('./protectedRegistry/outbox').ProtectedSyncStatus> => ipcRenderer.invoke('protectedRegistry:retrySync'),

@@ -1,3 +1,6 @@
+import { prepareInvoiceHandoff, activateInvoiceHandoff } from '../database/invoiceHandoffs.ts';
+import { beginTransfer, completeTransfer, transferBlock, transferFingerprint, validateTransfer, assertTransfersUnchanged } from './transfer.ts';
+import type { ProtectedTransferInput } from '../../src/shared/protectedTransfer.ts';
 import {driverCashHasPriority} from '../integrations/driverCashQueue';
 import {companyPaymentDate} from '../database/driverCash';
 import {holdManualReview,normalManualPaymentMatch,finishManualReview,manuallyResolvedRoot} from '../database/driverCashReview';
@@ -328,6 +331,7 @@ async function stageProtectedMutation(webContentsId: number, operationId: string
   if (latest.processedOperations.includes(operationId)) return latest;
   const next = structuredClone(latest);
   apply(next, operationId);
+  if (eventType !== 'protected_card_transfer_begin' && eventType !== 'protected_card_transfer_commit') assertTransfersUnchanged(session.vault, next);
   next.revision++;
   next.updatedAt = new Date().toISOString();
   next.processedOperations.push(operationId);
@@ -606,6 +610,7 @@ async function mutate(
     if (latest.vault.processedOperations.includes(operationId)) return restoreLatestSession();
     const next = structuredClone(latest.vault);
     apply(next, operationId);
+    if (eventType !== 'protected_card_transfer_begin' && eventType !== 'protected_card_transfer_commit') assertTransfersUnchanged(latest.vault, next);
     next.revision += 1;
     next.updatedAt = new Date().toISOString();
     next.processedOperations.push(operationId);
@@ -1627,6 +1632,77 @@ export async function changeProtectedInvoiceIssuer(webContentsId: number, input:
   return { success: true, invoice, pdf: { success: true, pending: protectedOutbox.hasPending() } };
 }
 
+export async function resumeProtectedTransfers(webContentsId: number) {
+  let completed = 0;
+  assertWriter();
+  const session = await freshSession(webContentsId);
+  for (const invoice of session.vault.invoices.filter(row => row.transfer)) {
+    const transfer = invoice.transfer!;
+    const local = db.prepare('SELECT state FROM invoice_handoffs WHERE operation_id=?').get(transfer.operationId) as {state:string}|undefined;
+    if (transfer.state === 'pending' || local?.state !== 'ready') {
+      try { await transferProtectedInvoice(webContentsId, transfer.request); completed++; }
+      catch { /* Persisted frozen request remains visible for operator retry. */ }
+    }
+  }
+  return completed;
+}
+
+export async function getProtectedTransferPreview(webContentsId: number, invoiceId: string) {
+  return withRegistryRoutingLock(() => withPrivateCloudOperation(async () => {
+    assertWriter();
+    assertProtectedCloudSettled();
+    const connection = db;
+    const session = await freshSession(webContentsId);
+    const key = keyBuffer();
+    // A lost write acknowledgement can leave memory older than the durable vault.
+    // Reconcile before offering a new request or deciding that no request exists.
+    await reconcilePending(key);
+    const latest = await loadVaultFromCloud(key);
+    assertWriter();
+    if (db !== connection || await freshSession(webContentsId) !== session) throw Error('Sesiunea s-a schimbat. Redeschide registrul.');
+    setSession({ ...session, ...latest });
+    const invoice = latest.vault.invoices.find(row => row.id === requireText(invoiceId, 'Factura', 100));
+    if (!invoice) throw Error('Factura nu există.');
+    return { invoice, expectedVersion: transferFingerprint(latest.vault, invoice), blockedReason: transferBlock(latest.vault, invoice),
+      payments: latest.vault.payments.filter(row => row.invoiceId === invoice.id && !row.reversedAt), invoiceDate: localTodayIso() };
+  }));
+}
+
+export async function transferProtectedInvoice(webContentsId: number, input: ProtectedTransferInput) {
+  const connection = db;
+  const scope = protectedCloudAccountScope();
+  const generation = sessionGenerations.get(webContentsId) || 0;
+  const assertConnection = () => {
+    if (db !== connection || !connection.open || protectedCloudAccountScope() !== scope || (sessionGenerations.get(webContentsId) || 0) !== generation) throw Error('Sesiunea sau baza de date s-a schimbat. Redeschide registrul și reia transferul.');
+  };
+  assertWriter();
+  assertProtectedCloudSettled();
+  await freshSession(webContentsId);
+  const request = validateTransfer(input, localTodayIso());
+  // Phase 1 is a cloud-confirmed freeze. All ordinary mutations honor it.
+  const prepared = await mutate(webContentsId, request.operationId, 'protected_card_transfer_begin',
+    next => { assertConnection(); beginTransfer(next, request, localTodayIso()); },
+    next => {
+      const transfer = next.invoices.find(row => row.id === request.invoiceId)?.transfer;
+      if (!transfer) return false;
+      if (JSON.stringify(transfer.request) !== JSON.stringify(request)) throw Error('Reia transferul existent cu datele confirmate inițial.');
+      return true;
+    }, undefined, undefined, false);
+  assertWriter(); await freshSession(webContentsId); assertConnection();
+  const source = prepared.invoices.find(row => row.id === request.invoiceId)!;
+  const target = prepareInvoiceHandoff(db, prepared, source);
+  // Phase 2 closes the old allocation in the encrypted vault. The target is
+  // still invisible; a crash is resumed using the same permanent operation ID.
+  const committed = await mutate(webContentsId, `${request.operationId}_commit`, 'protected_card_transfer_commit',
+    next => { assertConnection(); completeTransfer(next, request.invoiceId, request.operationId, target); },
+    next => next.invoices.find(row => row.id === request.invoiceId)?.transfer?.state === 'committed', undefined, undefined, false);
+  assertWriter(); await freshSession(webContentsId); assertConnection();
+  const final = committed.invoices.find(row => row.id === request.invoiceId)!;
+  const result = activateInvoiceHandoff(db, committed, final);
+  scheduleProtectedBillingPublication(true);
+  return { success: true as const, ...result };
+}
+
 export async function cancelProtectedInvoice(webContentsId: number, invoiceIdInput: unknown, reasonInput: unknown, operationId: unknown) {
   const invoiceId = requireText(invoiceIdInput, 'Factura', 100);
   const reason = requireText(reasonInput, 'Motivul anulării', 1000);
@@ -1648,6 +1724,7 @@ export async function reissueProtectedInvoice(webContentsId: number, invoiceIdIn
   const vault = await mutate(webContentsId, operationId, 'protected_invoice_reissued', (next, opId) => {
     const source = next.invoices.find((invoice) => invoice.id === invoiceId);
     if (!source) throw new Error('Factura anulată nu există.');
+    if (source.transfer) throw Error('Factura a fost transferată definitiv.');
     if (source.status !== 'cancelled') throw new Error('Numai o factură anulată poate fi reemisă.');
     if (source.replacedByInvoiceId) throw new Error('Factura a fost deja reemisă.');
     if (!source.storeId) throw new Error('Magazinul facturii istorice nu mai este mapat local.');

@@ -26,6 +26,7 @@ export interface ProtectedInvoiceItem {
 }
 
 export interface ProtectedInvoice {
+  transfer?: import('./transfer.ts').ProtectedTransfer;
   issuerChangeRequest?: import('../../src/shared/invoiceIssuerChange.ts').InvoiceIssuerChangeInput<string>;
   id: string;
   operationId: string;
@@ -63,6 +64,7 @@ export interface ProtectedInvoice {
 }
 
 export interface ProtectedPayment {
+  transferredAt?: string;
   id: string;
   operationId: string;
   companyKey: string;

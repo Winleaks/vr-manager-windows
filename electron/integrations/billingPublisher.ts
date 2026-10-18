@@ -67,6 +67,14 @@ export async function publishBilling() {
     queue.sort((a,b) => Number(priority.has(b.company_id)) - Number(priority.has(a.company_id)));
     const retired = retiredLegacyCompanyIds(db);
     for (const { company_id } of queue.filter(row=>!retired.has(row.company_id))) {
+      // Assigned companies with normal invoice exceptions still need one merged
+      // protected/normal portal snapshot, never two competing publishers.
+      if (db.prepare('SELECT 1 FROM normal_billing_visibility WHERE company_id=? AND hidden=1').get(company_id)) {
+        const { scheduleProtectedBillingPublication } = await import('../protectedRegistry/service');
+        scheduleProtectedBillingPublication();
+        continue;
+      }
+
       try {
         // A new operator receipt takes the next turn after the current
         // company's atomic commit, ahead of the remaining background backlog.

@@ -6,6 +6,7 @@ export function withDriverCashMutation<T>(db: Database.Database, action: () => T
   try { return action(); } finally { coordinated.delete(db); }
 }
 export function assertDriverCashPaymentMutable(db: Database.Database, paymentId: number) {
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='invoice_handoff_payments'").get() && db.prepare('SELECT 1 FROM invoice_handoff_payments WHERE payment_id=?').get(paymentId)) throw Error('Încasare deja reconciliată. Corectarea necesită verificarea evidenței originale.');
   if (coordinated.has(db) || !db.prepare("SELECT 1 FROM sqlite_master WHERE name='driver_cash_allocations'").get()) return;
   if (db.prepare('SELECT 1 FROM driver_cash_allocations WHERE payment_id=? AND reversed=0').get(paymentId))
     throw new Error('Încasarea provine din aplicația șoferului. Corectează suma întreagă din Daily Cash → Încasări șoferi.');

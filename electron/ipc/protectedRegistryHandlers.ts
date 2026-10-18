@@ -1,6 +1,8 @@
+import { backupDb } from '../database/db.ts';
 import { handleTrustedIpc } from './trustedHandler.ts';
 import type { InvoiceIssuerChangeInput } from '../../src/shared/invoiceIssuerChange.ts';
 import {
+  getProtectedTransferPreview, transferProtectedInvoice, resumeProtectedTransfers,
   protectedStatementDocument,
   activateProtectedViewer,
   refreshProtectedViewer,
@@ -54,6 +56,12 @@ import {
 } from '../protectedRegistry/service.ts';
 
 export function registerProtectedRegistryHandlers() {
+  handleTrustedIpc('protectedRegistry:getTransferPreview', (event, id) => getProtectedTransferPreview(event.sender.id, id));
+  handleTrustedIpc('protectedRegistry:transferInvoice', async (event, input) => {
+    const result = await transferProtectedInvoice(event.sender.id, input);
+    void backupDb();
+    return result;
+  });
   handleTrustedIpc('protectedRegistry:statementDocument', (event, input) => protectedStatementDocument(event.sender.id, input));
   handleTrustedIpc('protectedRegistry:syncStatus', event => protectedRegistrySyncStatus(event.sender.id));
   handleTrustedIpc('protectedRegistry:retrySync', event => retryProtectedRegistrySync(event.sender.id));
@@ -69,6 +77,7 @@ export function registerProtectedRegistryHandlers() {
   handleTrustedIpc('protectedRegistry:configure', (event, data) => configureProtectedRegistry(event.sender.id, data?.pin, data?.pinConfirmation));
   handleTrustedIpc('protectedRegistry:unlock', async (event, pin) => {
     const result = await unlockProtectedRegistry(event.sender.id, pin);
+    if (!result.readOnly && await resumeProtectedTransfers(event.sender.id)) void backupDb();
     scheduleProtectedBillingPublication();
     return result;
   });

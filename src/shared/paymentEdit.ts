@@ -1,7 +1,7 @@
 export interface UpdatePaymentInput {
   id: number;
   amount: number;
-  method: 'cash' | 'transfer';
+  method: 'cash' | 'transfer' | 'card';
   bankName?: string;
   paymentDate?: string;
   reason: string;

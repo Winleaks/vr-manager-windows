@@ -8,6 +8,7 @@ import { NumericInput } from '../../src/components/NumericInput';
 import '../../src/index.css';
 
 const calls: unknown[] = [];
+let transferRequest: any = null;
 let recoveryFailure = false;
 let statementFailure = false;
 const overviewCalls: { from?: string; to?: string }[] = [];
@@ -60,6 +61,8 @@ window.desktopApi = {
   },
   drivers: { getAll: async () => [] }, employees: { getAll: async () => [] },
   protectedRegistry: {
+    getTransferPreview: async () => ({ invoice: { id:'synthetic',reference:'TGBL-1',companyName:'Synthetic Company',storeName:'Synthetic Shop',issuerCode:'goodness',invoiceDate:'2026-10-01',totalAmount:100,paidAmount:30,transfer:transferRequest ? {request:transferRequest,state:'pending',invoiceDate:'2026-10-18'} : undefined },expectedVersion:'fixture-version',blockedReason:null,payments:[],invoiceDate:'2026-10-18' }),
+    transferInvoice: async (input:any) => { calls.push(input); transferRequest=input; await new Promise(resolve=>setTimeout(resolve,150)); if(calls.length===1) throw Error('Răspuns întrerupt (sintetic). Reia operațiunea.'); return {success:true,invoiceId:10,invoiceNumber:'TGB-10'}; },
     statementDocument: async (input: unknown) => {
       calls.push(input);
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -169,13 +172,14 @@ if (new URLSearchParams(location.search).has('navigation')) {
   if (new URLSearchParams(location.search).get('case') === 'navigation') location.hash = '/facturare/clienti';
 }
 
-const [{ BillingCreditNotes }, { ProtectedRegistry }, { BillingClients }, { InvoiceEditorModal }, { SettingsEntities }, { DocumentSyncBanner }, { BillingLayout }, { BillingManualInvoice }] = await Promise.all([
+const [{ BillingCreditNotes }, { ProtectedRegistry }, { BillingClients }, { InvoiceEditorModal }, { SettingsEntities }, { DocumentSyncBanner }, { BillingLayout }, { BillingManualInvoice }, { ProtectedTransferModal }] = await Promise.all([
   import('../../src/pages/BillingCreditNotes'), import('../../src/pages/ProtectedRegistry'),
   import('../../src/pages/BillingClients'), import('../../src/components/InvoiceEditorModal'),
   import('../../src/pages/SettingsEntities'),
   import('../../src/components/DocumentSyncBanner'),
   import('../../src/pages/BillingLayout'),
   import('../../src/pages/BillingManualInvoice'),
+  import('../../src/components/ProtectedTransferModal'),
 ]);
 
 export function Harness() {
@@ -183,6 +187,7 @@ export function Harness() {
   const [price, setPrice] = useState('2.50');
   const [confirmation, setConfirmation] = useState('none');
   const testCase = new URLSearchParams(location.search).get('case');
+  if (testCase === 'transfer') return <ProtectedTransferModal invoiceId="synthetic" onClose={()=>{}} onChanged={()=>{}} />;
   if (testCase === 'navigation') return <HashRouter><Routes><Route path="/facturare/*" element={<BillingLayout />} /></Routes></HashRouter>;
   return <>
     {testCase === 'sync' ? <DocumentSyncBanner /> : null}

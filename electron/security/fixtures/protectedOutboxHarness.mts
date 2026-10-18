@@ -1,3 +1,4 @@
+import { assertTransfersUnchanged } from '../../protectedRegistry/transfer.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -16,7 +17,7 @@ import { createEmptyProtectedVault } from '../../protectedRegistry/types.ts';
 const source = ts.createSourceFile('service.ts', fs.readFileSync(new URL('../../protectedRegistry/service.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true);
 const names = new Set(['assertWriter', 'encode', 'parseVault', 'parseManifest', 'buildManifest', 'addAudit', 'uploadManifest',
   'loadVaultFromCloud', 'reconcilePending', 'freshSession', 'withRegistryRoutingLock', 'mutate', 'stageProtectedMutation',
-  'getProtectedInvoiceForEdit', 'updateProtectedInvoice', 'changeProtectedInvoiceIssuer', 'assertProtectedCloudSettled', 'commitPendingProtectedSave', 'protectedRegistrySyncStatus', 'retryProtectedRegistrySync', 'unlockProtectedRegistry']);
+  'getProtectedInvoiceForEdit', 'updateProtectedInvoice', 'changeProtectedInvoiceIssuer', 'assertProtectedCloudSettled', 'commitPendingProtectedSave', 'protectedRegistrySyncStatus', 'retryProtectedRegistrySync', 'unlockProtectedRegistry', 'getProtectedTransferPreview', 'transferProtectedInvoice', 'resumeProtectedTransfers']);
 const code = source.statements.filter(node => ts.isFunctionDeclaration(node) && names.has(node.name?.text || '')).map(node => node.getText(source)).join('\n').replaceAll('export ', '');
 const compiled = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
 
@@ -33,7 +34,7 @@ export function protectedOutboxHarness(t: any, previous?: any, initialVault?: an
   const state = { role: 'writer', scope, offline: false, failAt: '', afterWrite: false, gate: null as Promise<void> | null, probes: 0, writes: [] as string[], documents: [] as string[], lockOnProbe: false };
   const store = new ProtectedOutboxStore(directory, () => key);
   let worker: ProtectedOutboxWorker;
-  const bindings = {
+  const bindings = { assertTransfersUnchanged,
     ...crypto, ...invoiceEditing, ...issuerChange, applyAutomaticProtectedCredit, activeCreditApplied: () => 0, Buffer, randomUUID, vaultDigest, sessions, sessionGenerations: new Map(), SESSION_MS: 600000,
     FOLDER: ['Duplicat'], VAULT_FILE: 'registru-separat.vault', MANIFEST_FILE: 'registru-separat.manifest', PENDING_FILE: 'registru-separat.pending',
     deferredEvents: new Set(['protected_manual_invoice_issued', 'protected_invoice_updated', 'protected_invoice_issuer_changed']),
@@ -60,7 +61,7 @@ export function protectedOutboxHarness(t: any, previous?: any, initialVault?: an
     writeVerifiedPrivateCloudFile: async (input: any) => {
       const name = input.filename;
       if (state.offline || (state.failAt === name && !state.afterWrite)) throw Error('synthetic upload failure');
-      assert.equal(input.accountScope, state.scope);
+      if (input.accountScope !== undefined) assert.equal(input.accountScope, state.scope);
       const existing = files.get(name);
       if (input.expectedFileId) assert.equal(existing?.fileId, input.expectedFileId);
       assert.equal(input.expectedVersion, existing?.version || null);
@@ -76,7 +77,7 @@ export function protectedOutboxHarness(t: any, previous?: any, initialVault?: an
     ...extraBindings,
   };
   const api = new Function(...Object.keys(bindings), 'let routingOperationQueue = Promise.resolve();\n' + compiled
-    + '\nreturn {getProtectedInvoiceForEdit, updateProtectedInvoice, changeProtectedInvoiceIssuer, mutate, commitPendingProtectedSave, assertProtectedCloudSettled, protectedRegistrySyncStatus, retryProtectedRegistrySync, unlockProtectedRegistry};')(...Object.values(bindings));
+    + '\nreturn {getProtectedTransferPreview, transferProtectedInvoice, resumeProtectedTransfers, getProtectedInvoiceForEdit, updateProtectedInvoice, changeProtectedInvoiceIssuer, mutate, commitPendingProtectedSave, assertProtectedCloudSettled, protectedRegistrySyncStatus, retryProtectedRegistrySync, unlockProtectedRegistry};')(...Object.values(bindings));
   worker = new ProtectedOutboxWorker(store, api.commitPendingProtectedSave);
   t.after(() => { worker.stop(); if (!previous) fs.rmSync(directory, { recursive: true, force: true }); });
   const issue = (operationId = randomUUID()) => api.mutate(1, operationId, 'protected_manual_invoice_issued', (next: any, op: string) => {

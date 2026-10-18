@@ -1,3 +1,4 @@
+import { normalBillingReadDatabase } from '../normalBillingVisibility.ts';
 import {assertDriverCashPaymentMutable} from '../driverCashGuard.ts';
 import type Database from 'better-sqlite3';
 import type { InvoiceIssuerChangeInput } from '../../../src/shared/invoiceIssuerChange.ts';
@@ -125,12 +126,13 @@ function recordIssuerPaymentTransaction(connection: SqliteDatabase, data: Compan
   const notes = optionalText(data.notes, 'Observațiile plății');
 
   return connection.transaction(() => {
+    const reader = connection.prepare("SELECT 1 FROM sqlite_master WHERE name='normal_billing_visibility'").get() ? normalBillingReadDatabase(connection) : connection;
     const hasCreditLedger = Boolean(connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'company_credit_entries'").get());
     const company = connection.prepare('SELECT client_id, issuer_id FROM companies WHERE id = ? AND is_active = 1').get(companyId) as { client_id: number; issuer_id: number | null } | undefined;
     if (!company) throw new Error('Compania nu există sau este inactivă.');
     let issuerId = data.issuerId === undefined ? undefined : requirePositiveInteger(data.issuerId, 'Emitentul');
     if (invoiceId) {
-      const identity = connection.prepare(`
+      const identity = reader.prepare(`
         SELECT ii.issuer_id FROM invoice_identities ii
         JOIN invoices i ON i.id = ii.invoice_id JOIN stores s ON s.id = i.store_id
         WHERE ii.invoice_id = ? AND s.company_id = ? AND i.status != 'cancelled'
@@ -169,7 +171,7 @@ function recordIssuerPaymentTransaction(connection: SqliteDatabase, data: Compan
     };
 
     if (invoiceId) {
-      const selected = connection.prepare(`
+      const selected = reader.prepare(`
         SELECT i.id, i.total_amount, i.paid_amount FROM invoices i
         JOIN stores s ON s.id = i.store_id JOIN invoice_identities ii ON ii.invoice_id = i.id
         WHERE i.id = ? AND s.company_id = ? AND ii.issuer_id = ? AND i.status != 'cancelled'
@@ -178,7 +180,7 @@ function recordIssuerPaymentTransaction(connection: SqliteDatabase, data: Compan
       allocateToInvoice(selected, notes);
     }
     if (remaining > 0.000001) {
-      const unpaid = connection.prepare(`
+      const unpaid = reader.prepare(`
         SELECT i.id, i.total_amount, i.paid_amount FROM invoices i
         JOIN stores s ON s.id = i.store_id JOIN invoice_identities ii ON ii.invoice_id = i.id
         WHERE s.company_id = ? AND ii.issuer_id = ? AND i.status != 'cancelled'
@@ -1054,7 +1056,7 @@ export function updatePaymentTransaction(connection: SqliteDatabase, input: Upda
   assertDriverCashPaymentMutable(connection,paymentId);
   const amount = requireMoneyPositive(input.amount, 'Suma încasată');
   const method = requireText(input.method, 'Metoda de plată', 20);
-  if (method !== 'cash' && method !== 'transfer') throw new Error('Metoda de plată trebuie să fie cash sau transfer bancar.');
+  if (method !== 'cash' && method !== 'transfer' && method !== 'card') throw new Error('Metoda de plată trebuie să fie cash, card sau transfer bancar.');
   const bankName = method === 'transfer' ? requireText(input.bankName, 'Banca', 100) : null;
   if (bankName && !['Barclays', 'Virgin', 'HSBC'].includes(bankName)) throw new Error('Banca trebuie să fie Barclays, Virgin sau HSBC.');
   const requestedDate = input.paymentDate === undefined ? undefined : requireIsoDate(input.paymentDate, 'Data plății');

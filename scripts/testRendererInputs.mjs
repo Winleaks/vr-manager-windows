@@ -61,7 +61,22 @@ if (serveOnly) {
       assert.equal(await field.evaluate((element) => document.activeElement === element), true);
     };
 
-    if (process.argv.includes('--statement-only')) {
+    if (process.argv.includes('--transfer-only')) {
+      await open('transfer');
+      const dialog = page.getByRole('dialog', {name:'Încasează cu cardul și transferă'});
+      await edit(dialog.getByLabel('Suma plătită cu cardul'), '50.00');
+      await edit(dialog.getByLabel('Referința tranzacției'), 'CARD-123');
+      await dialog.getByText('£20.00', {exact:true}).waitFor();
+      await dialog.getByRole('button', {name:'Confirmă încasarea și transferul'}).dblclick();
+      await dialog.getByRole('alert').waitFor();
+      assert.equal(await dialog.getByLabel('Suma plătită cu cardul').isDisabled(),true);
+      await dialog.getByRole('button', {name:'Reia / verifică transferul'}).click();
+      await dialog.getByRole('status').filter({hasText:'TGB-10'}).waitFor();
+      const calls=await page.evaluate(()=>window.__inputTest.calls);
+      assert.equal(calls.length,2);assert.deepEqual(calls[0],calls[1]);assert.equal(calls[0].amount,50);
+      assert.deepEqual(errors,[]);
+      console.log('PASS transfer form: editable decimal draft, remaining balance, double-click guard, persisted retry request, normal invoice result');
+    } else if (process.argv.includes('--statement-only')) {
       await testProtectedStatement(page, open);
       assert.deepEqual(errors, [], 'no renderer errors or native dialogs');
     } else {

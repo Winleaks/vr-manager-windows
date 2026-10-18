@@ -1,3 +1,5 @@
+import { getInvoiceFinancials } from '../database/creditNotes.ts';
+import { readInvoicePaymentTerms } from '../database/invoicePaymentTerms.ts';
 import type Database from 'better-sqlite3';
 import { invoicePaymentTerms, type InvoicePaymentTerms } from '../../src/shared/invoicePaymentTerms.ts';
 import { moneyInPence } from '../database/billingPublication.ts';
@@ -99,7 +101,21 @@ function appliedCredit(vault: ProtectedRegistryVault, invoiceId: string) {
     .reduce((total, entry) => total + entry.amount, 0);
 }
 
-function normalInvoiceTombstones(db: Database.Database, companyId: number) {
+function handoffInvoices(db: Database.Database, companyId: number): ProtectedBillingDelivery['invoices'] {
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='invoice_handoffs'").get()) return [];
+  const rows = db.prepare(`SELECT i.*,s.supabase_store_id FROM invoices i JOIN stores s ON s.id=i.store_id
+    JOIN invoice_handoffs h ON h.invoice_id=i.id AND h.state='ready' WHERE s.company_id=?`).all(companyId) as Array<{id:number;supabase_store_id:string;invoice_number:string;invoice_date:string;total_amount:number;paid_amount:number;status:string;drive_file_id:string|null}>;
+  return rows.map(row => {
+    if (!UUID.test(row.supabase_store_id || '')) throw Error('Magazinul facturii normale nu mai este asociat platformei.');
+    const financial = getInvoiceFinancials(db,row.id);
+    return { id:String(row.id), store_id:row.supabase_store_id,number:row.invoice_number,date:row.invoice_date,
+      ...readInvoicePaymentTerms(db,row.id,row.invoice_date), total:moneyInPence(row.total_amount),paid:moneyInPence(row.paid_amount),
+      credited:moneyInPence(financial.creditedAmount),applied_credit:moneyInPence(financial.appliedCredit),
+      outstanding:row.status==='cancelled'?0:moneyInPence(financial.outstanding),cancelled:row.status==='cancelled',drive_file_id:row.status==='cancelled'?null:row.drive_file_id };
+  });
+}
+
+function normalInvoiceTombstones(db: Database.Database, companyId: number, retained: Set<string>) {
   const ids = new Set<string>();
   for (const row of db.prepare(`
     SELECT CAST(i.id AS TEXT) AS id
@@ -107,7 +123,7 @@ function normalInvoiceTombstones(db: Database.Database, companyId: number) {
     WHERE s.company_id=?
   `).all(companyId) as Array<{ id: string }>) ids.add(row.id);
   for (const row of db.prepare('SELECT invoice_id AS id FROM billing_publication_deleted WHERE company_id=?').all(companyId) as Array<{ id: string }>) ids.add(row.id);
-  return [...ids].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+  return [...ids].filter(id => !retained.has(id)).sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
 }
 
 export function prepareProtectedBillingDeliveries(
@@ -128,7 +144,7 @@ export function prepareProtectedBillingDeliveries(
     if (companies.length !== 1) throw new Error('Compania registrului separat nu are o asociere VR Baker unică.');
     const localCompanyId = companies[0].id;
     const invoices = vault.invoices
-      .filter((invoice) => invoice.companyKey === assignment.companyKey && !invoice.testDocument)
+      .filter((invoice) => invoice.companyKey === assignment.companyKey && !invoice.testDocument && invoice.transfer?.state !== 'committed')
       .sort((a, b) => a.invoiceDate.localeCompare(b.invoiceDate) || a.reference.localeCompare(b.reference, 'en', { numeric: true }))
       .map((invoice) => {
         if (!invoice.storeExternalId || !UUID.test(invoice.storeExternalId)) throw new Error('O factură din registrul separat nu are magazin VR Baker valid.');
@@ -159,16 +175,29 @@ export function prepareProtectedBillingDeliveries(
           drive_file_id: documentFileId,
         };
       });
-    const credit = moneyInPence(vault.creditEntries
+    const normal = handoffInvoices(db,localCompanyId);
+    // Do not publish half of an operation while SQLite still holds a prepared target.
+    if (vault.invoices.some(row => row.companyKey === assignment.companyKey && row.transfer?.state === 'committed' && !normal.some(target => Number(target.id) === row.transfer!.target?.invoiceId))) throw Error('Transferul facturii așteaptă finalizarea locală.');
+    const localRevision = normal.length ? (db.prepare('SELECT revision FROM billing_publication_queue WHERE company_id=?').get(localCompanyId) as {revision:number}).revision : 0;
+    let mergedRevision = revision;
+    if (normal.length) {
+      const previous = db.prepare('SELECT * FROM billing_merged_revisions WHERE company_id=?').get(localCompanyId) as {vault_revision:number;normal_revision:number;revision:number}|undefined;
+      mergedRevision = previous?.vault_revision===revision && previous.normal_revision===localRevision ? previous.revision : Math.max(revision,localRevision,(previous?.revision || 0)+1);
+      if (!Number.isSafeInteger(mergedRevision)) throw Error('Versiunea publicării este invalidă.');
+      db.prepare('INSERT INTO billing_merged_revisions VALUES(?,?,?,?) ON CONFLICT(company_id) DO UPDATE SET vault_revision=excluded.vault_revision,normal_revision=excluded.normal_revision,revision=excluded.revision').run(localCompanyId,revision,localRevision,mergedRevision);
+    }
+    const normalCredit = normal.length ? Number((db.prepare('SELECT COALESCE(SUM(balance),0) AS amount FROM company_issuer_credits WHERE company_id=?').get(localCompanyId) as {amount:number}).amount) : 0;
+    const credit = moneyInPence(normalCredit + vault.creditEntries
       .filter((entry) => entry.companyKey === assignment.companyKey && !entry.testEntry)
       .reduce((total, entry) => total + entry.availableAmount, 0));
     deliveries.push({
       source_id: identity.source_id,
       company_id: companyExternalId,
-      revision,
+      revision: mergedRevision,
       credit,
-      invoices,
-      deleted: normalInvoiceTombstones(db, localCompanyId),
+      invoices: [...invoices, ...normal],
+      deleted: [...normalInvoiceTombstones(db, localCompanyId, new Set(normal.map(row => row.id))),
+        ...vault.invoices.filter(row => row.companyKey===assignment.companyKey && row.transfer?.state==='committed').map(protectedBillingInvoiceId)],
     });
   }
   return deliveries;
@@ -215,6 +244,17 @@ export async function publishProtectedBillingVault(
       company_id: data.company_id,
       revision: data.revision,
     }, `${data.source_id}:protected:${data.company_id}:${data.revision}:commit`);
+    options.assertCurrent?.();
+    // A merged acknowledgement also drains the corresponding normal revision.
+    // Later normal changes remain queued; never acknowledge a newer snapshot.
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='billing_merged_revisions'").get()) {
+      const merged = db.prepare(`SELECT m.company_id,m.normal_revision FROM billing_merged_revisions m
+        JOIN companies c ON c.id=m.company_id WHERE c.supabase_company_id=? COLLATE NOCASE AND m.revision=?`).get(data.company_id,data.revision) as {company_id:number;normal_revision:number}|undefined;
+      if (merged) db.transaction(() => {
+        db.prepare('UPDATE billing_publication_queue SET published_revision=MAX(published_revision,?),last_error=NULL,attempts=0,retry_at=0 WHERE company_id=?').run(merged.normal_revision,merged.company_id);
+        db.prepare('DELETE FROM billing_publication_delivery WHERE company_id=? AND revision<=?').run(merged.company_id,merged.normal_revision);
+      })();
+    }
     options.onPublished?.(data.company_id);
     published++;
   }
@@ -230,7 +270,9 @@ export function queueNormalPublicationAfterProtected(db: Database.Database, vaul
   for (const invoice of vault.invoices.filter((row) => row.companyKey === companyKey && !row.testDocument)) {
     insertDeleted.run(company.id, protectedBillingInvoiceId(invoice));
   }
-  const nextRevision = protectedBillingRevision(vault) + 1;
+  const merged = db.prepare("SELECT 1 FROM sqlite_master WHERE name='billing_merged_revisions'").get()
+    ? db.prepare('SELECT revision FROM billing_merged_revisions WHERE company_id=?').get(company.id) as {revision:number}|undefined : undefined;
+  const nextRevision = Math.max(protectedBillingRevision(vault),merged?.revision || 0) + 1;
   db.prepare(`
     UPDATE billing_publication_queue
     SET revision=MAX(revision,?), retry_at=0, last_error=NULL

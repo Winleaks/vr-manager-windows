@@ -79,7 +79,7 @@ export function BillingClients() {
   const [isAssigningIssuer, setIsAssigningIssuer] = useState(false);
   const [issuerAssignmentNotice, setIssuerAssignmentNotice] = useState('');
   const [editingPayment, setEditingPayment] = useState<any | null>(null);
-  const [paymentEditForm, setPaymentEditForm] = useState({ amount: '', method: 'cash' as 'cash' | 'transfer', bankName: 'Barclays' as 'Barclays' | 'Virgin' | 'HSBC', paymentDate: '', reason: '' });
+  const [paymentEditForm, setPaymentEditForm] = useState({ amount: '', method: 'cash' as 'cash' | 'transfer' | 'card', bankName: 'Barclays' as 'Barclays' | 'Virgin' | 'HSBC', paymentDate: '', reason: '' });
   const [isUpdatingPayment, setIsUpdatingPayment] = useState(false);
   const [pendingCreditReversal, setPendingCreditReversal] = useState<any | null>(null);
   const [pendingPaymentDeletion, setPendingPaymentDeletion] = useState<any | null>(null);
@@ -208,7 +208,7 @@ export function BillingClients() {
     setEditingPayment({ ...payment, operationId: crypto.randomUUID() });
     setPaymentEditForm({
       amount: Number(payment.amount).toFixed(2),
-      method: payment.method === 'transfer' ? 'transfer' : 'cash',
+      method: payment.method === 'card' ? 'card' : payment.method === 'transfer' ? 'transfer' : 'cash',
       bankName: payment.bank_name === 'HSBC' ? 'HSBC' : payment.bank_name === 'Virgin' ? 'Virgin' : 'Barclays',
       paymentDate: payment.payment_date,
       reason: '',
@@ -662,7 +662,7 @@ export function BillingClients() {
                                 p.method === 'cash' ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'
                               }`}>
                                 {p.method === 'cash' ? <Banknote size={12} /> : <CreditCard size={12} />}
-                                {p.method === 'cash' ? 'Cash' : 'Transfer Bancar'}
+                                {p.method === 'cash' ? 'Cash' : p.method === 'card' ? 'Card' : p.method === 'transfer' ? 'Transfer Bancar' : p.method}
                               </span>
                             </td>
                             <td className="py-3.5 px-4 font-semibold text-slate-800">
@@ -889,6 +889,7 @@ export function BillingClients() {
                 <fieldset disabled={isUpdatingPayment} className="space-y-4 p-6 disabled:opacity-70">
                 <label className="block text-xs font-semibold uppercase text-slate-600">Suma încasată (£)<NumericInput decimalScale={2} required value={paymentEditForm.amount} onValueChange={(amount) => setPaymentEditForm((current) => ({ ...current, amount }))} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 font-mono text-lg font-bold" /></label>
                 <div><div className="mb-1.5 text-xs font-semibold uppercase text-slate-600">Metodă plată</div><div className="grid grid-cols-2 gap-3"><button type="button" onClick={() => setPaymentEditForm((current) => ({ ...current, method: 'cash' }))} className={`rounded-xl border p-3 text-sm font-bold ${paymentEditForm.method === 'cash' ? 'border-amber-500 bg-amber-500 text-white' : 'border-slate-200 bg-slate-50 text-slate-700'}`}><Banknote size={17} className="mr-2 inline" />Cash</button><button type="button" onClick={() => setPaymentEditForm((current) => ({ ...current, method: 'transfer' }))} className={`rounded-xl border p-3 text-sm font-bold ${paymentEditForm.method === 'transfer' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-slate-50 text-slate-700'}`}><CreditCard size={17} className="mr-2 inline" />Transfer</button></div></div>
+                <button type="button" aria-pressed={paymentEditForm.method === 'card'} onClick={() => setPaymentEditForm(current => ({ ...current, method: 'card' }))} className="rounded-xl border p-3 text-sm font-bold">Card</button>
                 {paymentEditForm.method === 'transfer' && <label className="block text-xs font-semibold uppercase text-slate-600">Banca<select value={paymentEditForm.bankName} onChange={(event) => setPaymentEditForm((current) => ({ ...current, bankName: event.target.value as 'Barclays' | 'Virgin' | 'HSBC' }))} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><option value="Barclays">Barclays</option><option value="Virgin">Virgin</option><option value="HSBC">HSBC</option></select></label>}
                 <label className="block text-xs font-semibold text-slate-600">Data plății<input required type="date" value={paymentEditForm.paymentDate} onChange={(event) => setPaymentEditForm(current => ({ ...current, paymentDate: event.target.value }))} className="mt-1 block border rounded-xl px-3 py-2.5" /></label>
                 <label className="block text-xs font-semibold uppercase text-slate-600">Motivul modificării<input required maxLength={500} value={paymentEditForm.reason} onChange={(event) => setPaymentEditForm((current) => ({ ...current, reason: event.target.value }))} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm" placeholder="Ex.: sumă introdusă greșit" /></label>

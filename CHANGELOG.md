@@ -1,3 +1,11 @@
+### VR - Hub Management v0.1.136
+
+- Registrul Separat permite „Încasează cu cardul și transferă”: factura întreagă trece definitiv în registrul normal, inclusiv încasările anterioare, și primește următorul număr al aceluiași emitent.
+- Plata nouă poate fi parțială; încasările existente își păstrează data și metoda, fără dublarea numerarului în Daily Cash.
+- Confirmările repetate și întreruperile reiau aceeași operațiune. Facturile TEST, anulate sau cu Credit Notes/credite aplicate sunt blocate; Viewer nu poate transfera.
+- Factura normală, PDF-ul, Statement-ul și portalul păstrează prezentarea obișnuită. Sursa rămâne în istoricul protejat, fără sold activ.
+- Migrarea SQLite 29 creează jurnalul durabil după backup-ul verificat. După transferuri efectuate, revenirea la o versiune veche necesită reconcilierea bazei și a seifului; nu restaurați independent o copie veche.
+
 ### VR - Hub Management v0.1.135
 
 - Registrul Separat include Statement de cont în profilul fiecărui client, cu emitent, perioadă și alegerea tuturor magazinelor sau a unui magazin facturat.
