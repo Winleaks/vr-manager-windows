@@ -159,7 +159,7 @@ import path from 'node:path';
 test('prepared journal survives actual SQLite close/reopen and activation rollback is retryable', async t=>{
  const {db,vault,invoice,request}=fixture(t);beginTransfer(vault,request,'2026-10-18');const target=prepareInvoiceHandoff(db,vault,invoice);
  const directory=mkdtempSync(path.join(tmpdir(),'vr-transfer-restart-'));
- let reopened: Database.Database | undefined;
+ let reopened!: Database.Database;
  t.after(()=>{if(reopened?.open) reopened.close();rmSync(directory,{recursive:true,force:true});});
  const filename=path.join(directory,'writer.db');await db.backup(filename);
  reopened=new Database(filename);reopened.pragma('foreign_keys=ON');assert.deepEqual(prepareInvoiceHandoff(reopened,vault,invoice),target);reopened.close();
