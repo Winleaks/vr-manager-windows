@@ -115,6 +115,26 @@ function handoffInvoices(db: Database.Database, companyId: number): ProtectedBil
   });
 }
 
+/** Prepare normal destinations before atomically replacing protected portal rows. */
+export async function prepareTransferredPortalDocuments(
+  db: Database.Database, companyExternalId: string,
+  upload: (invoiceId: number) => Promise<{ success: boolean; error?: string }>,
+  assertCurrent: () => void,
+) {
+  const rows = db.prepare(`SELECT i.id FROM invoices i
+    JOIN stores s ON s.id=i.store_id JOIN companies c ON c.id=s.company_id
+    JOIN invoice_handoffs h ON h.invoice_id=i.id AND h.state='ready'
+    LEFT JOIN document_sync_queue q ON q.kind='invoice' AND q.document_id=i.id
+    WHERE c.supabase_company_id=? COLLATE NOCASE AND i.status!='cancelled'
+      AND (i.drive_file_id IS NULL OR q.state IS NULL OR q.state!='ready')`).all(companyExternalId) as Array<{id:number}>;
+  for (const row of rows) {
+    assertCurrent();
+    const result = await upload(row.id);
+    assertCurrent();
+    if (!result.success) throw Error(result.error || 'PDF-ul facturii normale nu a putut fi pregătit pentru portal.');
+  }
+}
+
 function normalInvoiceTombstones(db: Database.Database, companyId: number, retained: Set<string>) {
   const ids = new Set<string>();
   for (const row of db.prepare(`

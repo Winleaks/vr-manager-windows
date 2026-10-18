@@ -11,7 +11,7 @@ import { installNormalBillingVisibility, replaceNormalBillingVisibility, normalB
 import { prepareInvoiceHandoff, activateInvoiceHandoff } from './invoiceHandoffs.ts';
 import { beginTransfer, completeTransfer, transferFingerprint, transferBlock, validateTransfer, assertTransfersUnchanged } from '../protectedRegistry/transfer.ts';
 import { createEmptyProtectedVault } from '../protectedRegistry/types.ts';
-import { prepareProtectedBillingDeliveries, protectedBillingInvoiceId } from '../protectedRegistry/billingPublication.ts';
+import { prepareTransferredPortalDocuments, prepareProtectedBillingDeliveries, protectedBillingInvoiceId } from '../protectedRegistry/billingPublication.ts';
 import { isChannelAllowedForRole } from '../device/viewerPolicy.ts';
 
 function fixture(t: any) {
@@ -244,4 +244,25 @@ test('preview reconciles a lost cloud acknowledgement before the UI chooses its 
  f.state.failAt='';const preview=await f.api.getProtectedTransferPreview(1,invoice.id);
  assert.deepEqual(preview.invoice.transfer.request,request);
  const result=await f.api.transferProtectedInvoice(1,preview.invoice.transfer.request);assert.equal(result.invoiceNumber,'TGB-10');assert.equal(db.prepare('SELECT * FROM invoices').all().length,1);
+});
+
+
+test('portal prepares transferred PDF before replacing the old invoice and retries upload failure',async t=>{
+ const {db,vault,invoice,request}=fixture(t);beginTransfer(vault,request,'2026-10-18');
+ const target=prepareInvoiceHandoff(db,vault,invoice);completeTransfer(vault,invoice.id,request.operationId,target);activateInvoiceHandoff(db,vault,invoice);
+ const company=invoice.companyKey.slice('vrbaker:'.length);
+ let uploads=0;
+ await assert.rejects(()=>prepareTransferredPortalDocuments(db,company,async()=>{uploads++;return {success:false,error:'Drive unavailable'};},()=>{}),/Drive unavailable/);
+ const uploader=async(id:number)=>{uploads++;assert.equal(id,target.invoiceId);db.prepare("UPDATE invoices SET drive_file_id='normal-drive-file-12345' WHERE id=?").run(id);db.prepare("UPDATE document_sync_queue SET state='ready' WHERE kind='invoice' AND document_id=?").run(id);return {success:true};};
+ await prepareTransferredPortalDocuments(db,company,uploader,()=>{});
+ await prepareTransferredPortalDocuments(db,company,uploader,()=>{});
+ assert.equal(uploads,2);
+ const delivery=prepareProtectedBillingDeliveries(db,vault)[0];
+ assert.ok(delivery.deleted.includes(protectedBillingInvoiceId(invoice)));
+ const normal=delivery.invoices.find(row=>row.id===String(target.invoiceId))!;
+ assert.equal(normal.drive_file_id,'normal-drive-file-12345');assert.equal(normal.paid,8000);assert.equal(normal.outstanding,2000);
+ await prepareTransferredPortalDocuments(db,randomUUID(),async()=>{throw Error('Other company must not upload');},()=>{});
+ db.prepare("UPDATE document_sync_queue SET state='pending' WHERE document_id=?").run(target.invoiceId);
+ await assert.rejects(()=>prepareTransferredPortalDocuments(db,company,uploader,()=>{throw Error('Writer changed');}),/Writer changed/);
+ assert.equal(uploads,2);
 });

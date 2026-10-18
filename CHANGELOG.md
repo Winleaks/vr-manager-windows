@@ -1,3 +1,9 @@
+### VR - Hub Management v0.1.138
+
+- Sincronizarea portalului pregătește PDF-ul facturii transferate în registrul normal înainte de a publica factura nouă și plata și de a elimina factura veche din contul clientului.
+- Clientul pentru care s-a finalizat transferul primește prioritate la publicare. Erorile de încărcare păstrează operațiunea pentru reîncercare, fără repetarea încasării.
+- Fără migrare de schemă sau modificare a încasărilor existente.
+
 ### VR - Hub Management v0.1.137
 
 - În Registrul Separat, formularul „Încasează cu cardul și transferă” include alegerea obligatorie a băncii: Barclays, Virgin sau HSBC.

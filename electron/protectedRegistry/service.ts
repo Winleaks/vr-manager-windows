@@ -17,7 +17,7 @@ import { protectedStatementReport, validateProtectedStatement } from './statemen
 import { generateStatementPdf } from '../reports/statementPdf.ts';
 import type { ProtectedStatementInput } from '../../src/shared/protectedStatement.ts';
 import { protectedPaymentDisplay } from './paymentDisplay.ts';
-import { prepareProtectedBillingDeliveries, publishProtectedBillingVault, protectedPublicationCompanyIds, queueNormalPublicationAfterProtected } from './billingPublication.ts';
+import { prepareTransferredPortalDocuments, prepareProtectedBillingDeliveries, publishProtectedBillingVault, protectedPublicationCompanyIds, queueNormalPublicationAfterProtected } from './billingPublication.ts';
 import { invoicePaymentTerms } from '../../src/shared/invoicePaymentTerms.ts';
 import { protectedRegistryOverview } from './overview.ts';
 import { applyAutomaticProtectedCredit } from './automaticCredit.ts';
@@ -27,6 +27,7 @@ import path from 'node:path';
 import { app, shell } from 'electron';
 import ExcelJS from 'exceljs';
 import {
+  uploadInvoicePdf,
   deletePrivateCloudFile,
   getCloudStatus,
   readVerifiedPrivateCloudFile,
@@ -191,6 +192,10 @@ async function publishProtectedBilling() {
       shouldContinue: () => generation===protectedFinancialGeneration && db===connection && getDeviceRole()==='writer'
         && protectedCloudAccountScope()===latest.cloudScope && !protectedOutbox.hasPending(),
       prepareDocuments: async companyId => {
+        await prepareTransferredPortalDocuments(connection, companyId, uploadInvoicePdf, () => {
+          assertWriter();
+          if (db!==connection || protectedCloudAccountScope()!==latest.cloudScope) throw Error('Destinația sincronizării s-a schimbat.');
+        });
         const ids = new Map<string,string>();
         for (const invoice of latest.vault.invoices) {
           if (invoice.testDocument || invoice.status==='cancelled' || invoice.companyKey!==`vrbaker:${companyId}`) continue;
@@ -1699,6 +1704,7 @@ export async function transferProtectedInvoice(webContentsId: number, input: Pro
   assertWriter(); await freshSession(webContentsId); assertConnection();
   const final = committed.invoices.find(row => row.id === request.invoiceId)!;
   const result = activateInvoiceHandoff(db, committed, final);
+  if (final.companyKey.startsWith('vrbaker:')) protectedBillingPriorities.add(final.companyKey.slice('vrbaker:'.length));
   scheduleProtectedBillingPublication(true);
   return { success: true as const, ...result };
 }

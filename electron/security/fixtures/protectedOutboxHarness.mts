@@ -34,7 +34,7 @@ export function protectedOutboxHarness(t: any, previous?: any, initialVault?: an
   const state = { role: 'writer', scope, offline: false, failAt: '', afterWrite: false, gate: null as Promise<void> | null, probes: 0, writes: [] as string[], documents: [] as string[], lockOnProbe: false };
   const store = new ProtectedOutboxStore(directory, () => key);
   let worker: ProtectedOutboxWorker;
-  const bindings = { assertTransfersUnchanged,
+  const bindings = { assertTransfersUnchanged, protectedBillingPriorities: new Set<string>(),
     ...crypto, ...invoiceEditing, ...issuerChange, applyAutomaticProtectedCredit, activeCreditApplied: () => 0, Buffer, randomUUID, vaultDigest, sessions, sessionGenerations: new Map(), SESSION_MS: 600000,
     FOLDER: ['Duplicat'], VAULT_FILE: 'registru-separat.vault', MANIFEST_FILE: 'registru-separat.manifest', PENDING_FILE: 'registru-separat.pending',
     deferredEvents: new Set(['protected_manual_invoice_issued', 'protected_invoice_updated', 'protected_invoice_issuer_changed']),
