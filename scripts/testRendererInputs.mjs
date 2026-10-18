@@ -66,6 +66,8 @@ if (serveOnly) {
       const dialog = page.getByRole('dialog', {name:'Încasează cu cardul și transferă'});
       await edit(dialog.getByLabel('Suma plătită cu cardul'), '50.00');
       await edit(dialog.getByLabel('Referința tranzacției'), 'CARD-123');
+      assert.equal(await dialog.getByRole('button', {name:'Confirmă încasarea și transferul'}).isDisabled(),true);
+      await dialog.getByLabel('Banca', {exact:true}).selectOption('HSBC');
       await dialog.getByText('£20.00', {exact:true}).waitFor();
       await dialog.getByRole('button', {name:'Confirmă încasarea și transferul'}).dblclick();
       await dialog.getByRole('alert').waitFor();
@@ -73,7 +75,7 @@ if (serveOnly) {
       await dialog.getByRole('button', {name:'Reia / verifică transferul'}).click();
       await dialog.getByRole('status').filter({hasText:'TGB-10'}).waitFor();
       const calls=await page.evaluate(()=>window.__inputTest.calls);
-      assert.equal(calls.length,2);assert.deepEqual(calls[0],calls[1]);assert.equal(calls[0].amount,50);
+      assert.equal(calls.length,2);assert.deepEqual(calls[0],calls[1]);assert.equal(calls[0].amount,50);assert.equal(calls[0].bankName,'HSBC');
       assert.deepEqual(errors,[]);
       console.log('PASS transfer form: editable decimal draft, remaining balance, double-click guard, persisted retry request, normal invoice result');
     } else if (process.argv.includes('--statement-only')) {

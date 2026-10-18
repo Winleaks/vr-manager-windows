@@ -40,7 +40,9 @@ export function validateTransfer(input: ProtectedTransferInput, today: string) {
   const amount = requireMoneyPositive(input?.amount, 'Suma card');
   const paymentDate = requireIsoDate(input?.paymentDate, 'Data încasării');
   if (paymentDate > today) throw Error('Data încasării nu poate fi în viitor.');
-  return { invoiceId, expectedVersion, operationId, amount, paymentDate, cardReference: requireText(input?.cardReference, 'Referința tranzacției card', 200) };
+  const bankName = input?.bankName;
+  if (bankName !== undefined && !['Barclays', 'Virgin', 'HSBC'].includes(bankName)) throw Error('Banca trebuie să fie Barclays, Virgin sau HSBC.');
+  return { invoiceId, expectedVersion, operationId, amount, paymentDate, cardReference: requireText(input?.cardReference, 'Referința tranzacției card', 200), ...(bankName === undefined ? {} : { bankName }) };
 }
 export function beginTransfer(vault: ProtectedRegistryVault, request: ProtectedTransferInput, today: string) {
   if (vault.invoices.some(row => row.id !== request.invoiceId && row.transfer?.operationId === request.operationId)) throw Error('Identificatorul transferului aparține altei facturi.');
@@ -50,6 +52,7 @@ export function beginTransfer(vault: ProtectedRegistryVault, request: ProtectedT
     if (JSON.stringify(invoice.transfer.request) !== JSON.stringify(request)) throw Error('Factura are deja o altă operațiune de transfer. Reîncarcă și reia operațiunea existentă.');
     return invoice;
   }
+  if (!request.bankName || !['Barclays', 'Virgin', 'HSBC'].includes(request.bankName)) throw Error('Selectează banca încasării cu cardul.');
   const blocked = transferBlock(vault, invoice);
   if (blocked) throw Error(blocked);
   if (transferFingerprint(vault, invoice) !== request.expectedVersion) throw Error('Factura sau încasările s-au modificat. Reîncarcă rezumatul.');

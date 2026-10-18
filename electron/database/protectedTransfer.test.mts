@@ -26,7 +26,7 @@ function fixture(t: any) {
  vault.assignments.push({companyKey:`vrbaker:${company}`} as any);
  const invoice:any={replacesInvoiceId:null,replacedByInvoiceId:null,id:randomUUID(),reference:'TGBL-99',series:'TGBL',sequenceNumber:99,companyId:1,companyKey:`vrbaker:${company}`,storeId:1,storeExternalId:store,issuerCode:'goodness',invoiceDate:'2026-10-01',totalAmount:100,paidAmount:30,creditedAmount:0,status:'partial',testDocument:false,sourceOrderIds:['original-order'],items:[{productName:'Bread',productNameRo:'Pâine',unit:'buc',quantity:10,unitPrice:10,totalPrice:100,externalProductId:null,productOrder:1}]};
  vault.invoices.push(invoice); vault.payments.push({id:randomUUID(),invoiceId:invoice.id,companyKey:invoice.companyKey,issuerCode:'goodness',amount:30,paymentDate:'2026-10-02',method:'cash',testEntry:false} as any);
- const request=validateTransfer({invoiceId:invoice.id,expectedVersion:transferFingerprint(vault,invoice),amount:50,paymentDate:'2026-10-18',cardReference:'terminal-123',operationId:randomUUID()},'2026-10-18');
+ const request=validateTransfer({invoiceId:invoice.id,expectedVersion:transferFingerprint(vault,invoice),amount:50,paymentDate:'2026-10-18',cardReference:'terminal-123',bankName:'HSBC',operationId:randomUUID()},'2026-10-18');
  return {db,vault,invoice,request};
 }
 
@@ -69,11 +69,33 @@ test('full payment, duplicate confirmation, stale preview and invalid eligibilit
  vault.creditNotes.push({status:'issued',sourceInvoiceIds:[invoice.id]} as any);assert.match(transferBlock(vault,invoice)!,/Credit Notes/);vault.creditNotes=[];
  assert.throws(()=>beginTransfer(vault,{...request,amount:71},'2026-10-18'),/depășește/);
  assert.throws(()=>beginTransfer(vault,{...request,expectedVersion:'stale'},'2026-10-18'),/modificat/);
- for(const change of [{amount:0},{amount:-1},{amount:Infinity},{paymentDate:'2026-10-19'},{cardReference:''}]) assert.throws(()=>validateTransfer({...request,...change},'2026-10-18'));
+ for(const change of [{amount:0},{amount:-1},{amount:Infinity},{paymentDate:'2026-10-19'},{cardReference:''},{bankName:''},{bankName:'Unknown'}]) assert.throws(()=>validateTransfer({...request,...change},'2026-10-18'));
  const full={...request,amount:70};beginTransfer(vault,full,'2026-10-18');beginTransfer(vault,full,'2026-10-19');assert.throws(()=>beginTransfer(vault,request,'2026-10-18'),/altă operațiune/);
  const target=prepareInvoiceHandoff(db,vault,invoice);completeTransfer(vault,invoice.id,full.operationId,target);activateInvoiceHandoff(db,vault,invoice);
  assert.equal((db.prepare('SELECT status FROM invoices').get() as any).status,'paid');
  db.prepare('DELETE FROM invoice_handoffs').run();assert.throws(()=>prepareInvoiceHandoff(db,vault,invoice),/Jurnalul local/);
+});
+
+test('bank selection persists once and legacy pending transfers resume without inventing a bank',t=>{
+ for(const bankName of ['Barclays','Virgin','HSBC'] as const) {
+  const {db,vault,invoice,request}=fixture(t);
+  assert.throws(()=>beginTransfer(vault,{...request,bankName:undefined},'2026-10-18'),/banca/);
+  beginTransfer(vault,{...request,bankName},'2026-10-18');
+  const target=prepareInvoiceHandoff(db,vault,invoice);
+  assert.throws(()=>beginTransfer(vault,{...request,bankName:bankName==='HSBC'?'Virgin':'HSBC'},'2026-10-18'),/altă operațiune/);
+  completeTransfer(vault,invoice.id,request.operationId,target);
+  activateInvoiceHandoff(db,vault,invoice);activateInvoiceHandoff(db,vault,invoice);
+  assert.deepEqual(db.prepare('SELECT method,bank_name FROM payments ORDER BY id').all(),[{method:'cash',bank_name:null},{method:'card',bank_name:bankName}]);
+ }
+ const {db,vault,invoice,request}=fixture(t);
+ beginTransfer(vault,request,'2026-10-18');
+ delete invoice.transfer.request.bankName; // Persisted v0.1.136 request shape.
+ const legacy=validateTransfer(invoice.transfer.request,'2026-10-18');
+ const target=prepareInvoiceHandoff(db,vault,invoice);
+ beginTransfer(vault,legacy,'2026-10-18');
+ assert.deepEqual(prepareInvoiceHandoff(db,vault,invoice),target);
+ completeTransfer(vault,invoice.id,request.operationId,target);activateInvoiceHandoff(db,vault,invoice);
+ assert.equal((db.prepare("SELECT bank_name FROM payments WHERE method='card'").get() as any).bank_name,null);
 });
 
 test('failed SQLite preparation rolls back numbering and invoice; identity mismatch fails closed',t=>{

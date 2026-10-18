@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.137
+
+- În Registrul Separat, formularul „Încasează cu cardul și transferă” include alegerea obligatorie a băncii: Barclays, Virgin sau HSBC.
+- Banca se salvează pe încasarea cu cardul din registrul normal și poate fi păstrată sau schimbată la editarea încasării.
+- Transferurile deja începute în versiunea anterioară se reiau cu datele originale, fără atribuirea automată a unei bănci.
+- Fără migrare de schemă sau modificare automată a încasărilor existente.
+
 ### VR - Hub Management v0.1.136
 
 - Registrul Separat permite „Încasează cu cardul și transferă”: factura întreagă trece definitiv în registrul normal, inclusiv încasările anterioare, și primește următorul număr al aceluiași emitent.

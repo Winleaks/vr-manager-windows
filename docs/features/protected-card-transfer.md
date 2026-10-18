@@ -4,7 +4,7 @@ Implementare locală, fără publicare. Schema SQLite 29; versiunea aplicației 
 
 ## Operator
 
-În Registru separat → Facturi sau profilul clientului, folosește acțiunea „Încasează cu cardul și transferă”. Introdu suma pozitivă, data și referința tranzacției. Rezumatul arată încasările existente și restul după plata nouă. O singură confirmare transferă întreaga factură, inclusiv când plata este parțială.
+În Registru separat → Facturi sau profilul clientului, folosește acțiunea „Încasează cu cardul și transferă”. Introdu suma pozitivă, data, banca (Barclays, Virgin sau HSBC) și referința tranzacției. Banca este obligatorie pentru transferurile noi și se păstrează pe încasarea cu cardul în registrul normal. Transferurile începute înaintea introducerii selectorului se reiau cu cererea originală, fără atribuirea unei bănci fictive. Rezumatul arată încasările existente și restul după plata nouă. O singură confirmare transferă întreaga factură, inclusiv când plata este parțială.
 
 Factura normală primește următorul număr al emitentului original și data confirmării transferului. Se păstrează pozițiile și valorile originale. Încasările vechi își păstrează datele și metodele; nu se creează numerar nou în Daily Cash. În registrul normal, PDF și Statement nu apare proveniența documentului. Clientul rămâne atribuit registrului separat pentru facturile viitoare.
 

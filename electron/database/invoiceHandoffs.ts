@@ -31,7 +31,7 @@ function payload(vault: ProtectedRegistryVault, source: ProtectedInvoice) {
   return { companyId: source.companyId, storeId: source.storeId, storeExternalId: source.storeExternalId, issuerCode: source.issuerCode,
     invoiceDate: transfer.invoiceDate, total: source.totalAmount, items: source.items.map(item => ({ name: item.productName, nameRo: item.productNameRo, unit: item.unit,
       quantity: item.quantity, price: item.unitPrice, total: item.totalPrice, externalId: item.externalProductId, productOrder: item.productOrder })),
-    payments, cardReference: transfer.request.cardReference };
+    payments, cardReference: transfer.request.cardReference, ...(transfer.request.bankName === undefined ? {} : { bankName: transfer.request.bankName }) };
 }
 export function prepareInvoiceHandoff(db: Database.Database, vault: ProtectedRegistryVault, source: ProtectedInvoice) {
   const data = payload(vault, source);
@@ -74,8 +74,8 @@ export function activateInvoiceHandoff(db: Database.Database, vault: ProtectedRe
     const identity = db.prepare('SELECT issuer_id FROM invoice_identities WHERE invoice_id=?').get(target.invoiceId) as {issuer_id:number};
     const company = db.prepare('SELECT client_id FROM companies WHERE id=?').get(data.companyId) as {client_id:number};
     for (const row of data.payments) {
-      const id = Number(db.prepare('INSERT INTO payments(client_id,company_id,invoice_id,issuer_id,amount,payment_date,method,notes) VALUES(?,?,?,?,?,?,?,?)')
-        .run(company.client_id,data.companyId,target.invoiceId,identity.issuer_id,row.amount,row.date,row.method,row.old ? null : data.cardReference).lastInsertRowid);
+      const id = Number(db.prepare('INSERT INTO payments(client_id,company_id,invoice_id,issuer_id,amount,payment_date,method,notes,bank_name) VALUES(?,?,?,?,?,?,?,?,?)')
+        .run(company.client_id,data.companyId,target.invoiceId,identity.issuer_id,row.amount,row.date,row.method,row.old ? null : data.cardReference,row.old ? null : data.bankName ?? null).lastInsertRowid);
       // Previously reconciled cash allocations must not be edited as new cash.
       if (row.old) db.prepare('INSERT INTO invoice_handoff_payments(payment_id) VALUES(?)').run(id);
     }

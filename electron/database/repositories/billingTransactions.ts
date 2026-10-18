@@ -1057,7 +1057,7 @@ export function updatePaymentTransaction(connection: SqliteDatabase, input: Upda
   const amount = requireMoneyPositive(input.amount, 'Suma încasată');
   const method = requireText(input.method, 'Metoda de plată', 20);
   if (method !== 'cash' && method !== 'transfer' && method !== 'card') throw new Error('Metoda de plată trebuie să fie cash, card sau transfer bancar.');
-  const bankName = method === 'transfer' ? requireText(input.bankName, 'Banca', 100) : null;
+  const bankName = method === 'transfer' || (method === 'card' && input.bankName !== undefined) ? requireText(input.bankName, 'Banca', 100) : null;
   if (bankName && !['Barclays', 'Virgin', 'HSBC'].includes(bankName)) throw new Error('Banca trebuie să fie Barclays, Virgin sau HSBC.');
   const requestedDate = input.paymentDate === undefined ? undefined : requireIsoDate(input.paymentDate, 'Data plății');
   const reason = requireText(input.reason, 'Motivul modificării', 500);

@@ -11,6 +11,7 @@ export function ProtectedTransferModal({ invoiceId, onClose, onChanged }: { invo
   const amount = Number(amountDraft);
   const [date, setDate] = useState('');
   const [reference, setReference] = useState('');
+  const [bankName, setBankName] = useState<NonNullable<ProtectedTransferInput['bankName']> | ''>('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ProtectedTransferResult>();
@@ -27,13 +28,14 @@ export function ProtectedTransferModal({ invoiceId, onClose, onChanged }: { invo
       setAmountDraft(String(request.current?.amount || Math.round((value.invoice.totalAmount - value.invoice.paidAmount) * 100) / 100));
       setDate(request.current?.paymentDate || value.invoiceDate);
       setReference(request.current?.cardReference || '');
+      setBankName(request.current?.bankName || '');
     }).catch(cause => { if (active) setError(String(cause.message || cause)); });
     return () => { active = false; };
   }, [invoiceId]);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!preview || pending.current) return;
-    request.current ||= { invoiceId, expectedVersion: preview.expectedVersion, amount, paymentDate: date, cardReference: reference.trim(), operationId: crypto.randomUUID() };
+    if (!preview || pending.current || (!request.current && !bankName)) return;
+    request.current ||= { invoiceId, expectedVersion: preview.expectedVersion, amount, paymentDate: date, cardReference: reference.trim(), bankName: bankName || undefined, operationId: crypto.randomUUID() };
     pending.current = true; setBusy(true); setError('');
     try {
       const value = await api.protectedRegistry.transferInvoice(request.current);
@@ -63,11 +65,12 @@ export function ProtectedTransferModal({ invoiceId, onClose, onChanged }: { invo
       <fieldset disabled={busy || !!request.current} className="grid gap-3">
         <label>Suma plătită cu cardul<NumericInput aria-label="Suma plătită cu cardul" value={amountDraft} onValueChange={setAmountDraft} min={0.01} className="block w-full rounded-lg border border-slate-300 px-3 py-2" /></label>
         <label>Data încasării<input aria-label="Data încasării" type="date" value={date} max={preview.invoiceDate} min={preview.invoice.invoiceDate} onChange={event => setDate(event.target.value)} required className="block w-full rounded-lg border border-slate-300 px-3 py-2" /></label>
+        <label>Banca<select aria-label="Banca" value={bankName} onChange={event => setBankName(event.target.value as typeof bankName)} required className="block w-full rounded-lg border border-slate-300 px-3 py-2"><option value="">Selectează banca</option><option value="Barclays">Barclays</option><option value="Virgin">Virgin</option><option value="HSBC">HSBC</option></select></label>
         <label>Referința tranzacției<input aria-label="Referința tranzacției" value={reference} maxLength={200} onChange={event => setReference(event.target.value)} required className="block w-full rounded-lg border border-slate-300 px-3 py-2" /></label>
       </fieldset>
       <p>Rest după încasare: <b>{money(remaining)}</b></p>
       <p className="text-sm text-slate-600">Se transferă întreaga factură, cu următorul număr disponibil. Încasările existente se păstrează fără a dubla numerarul. Factura nu poate fi transferată înapoi.</p>
-      <div className="flex gap-3"><button type="button" disabled={busy} onClick={onClose}>Închide</button><button disabled={busy || (!preview.invoice.transfer && (!!preview.blockedReason || amount <= 0 || remaining < 0 || !reference.trim() || !date))} className="bg-indigo-600 disabled:opacity-50 text-white rounded-lg px-4 py-2">{busy ? 'Se finalizează transferul…' : preview.invoice.transfer ? 'Reia / verifică transferul' : 'Confirmă încasarea și transferul'}</button></div>
+      <div className="flex gap-3"><button type="button" disabled={busy} onClick={onClose}>Închide</button><button disabled={busy || (!preview.invoice.transfer && (!!preview.blockedReason || amount <= 0 || remaining < 0 || !reference.trim() || !date || !bankName))} className="bg-indigo-600 disabled:opacity-50 text-white rounded-lg px-4 py-2">{busy ? 'Se finalizează transferul…' : preview.invoice.transfer ? 'Reia / verifică transferul' : 'Confirmă încasarea și transferul'}</button></div>
     </form> : !error && <p role="status">Se încarcă rezumatul…</p>}
     {!preview && <button onClick={onClose}>Închide</button>}
   </dialog>;
