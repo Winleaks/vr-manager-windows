@@ -15,22 +15,23 @@ function fixture(){
   const db=new Database(':memory:');db.exec('CREATE TABLE app_settings(key TEXT PRIMARY KEY,value TEXT)');
   let role='writer',pending=true,commits=0,publications=0,loads=0,fail=false;
   let cloudGate=Promise.resolve();
+  let duringPublish: ((options:any)=>Promise<void>) | undefined;
   const timers=new Map<object,()=>void>();
   const store:any={hasPending:()=>pending,read:()=>pending?[{name:'encrypted-fixture',value:{}}]:[],acknowledge:()=>{pending=false;}};
   const bindings:any={driverCashHasPriority:()=>false,db,ProtectedOutboxWorker,protectedOutbox:store,
-    protectedPublicationCompanyIds:()=>[],protectedBillingPriorities:new Set(),
+    protectedPublicationCompanyIds:()=>[],protectedBillingPriorities:new Set(),protectedBillingLastPublished:new Map(),
     protectedCloudAccountScope:()=> 'fixture',
     commitPendingProtectedSave:async()=>{await cloudGate;commits++;},getDeviceRole:()=>role,isProtectedRegistryEnabled:()=>true,
     withRegistryRoutingLock:async(fn:Function)=>fn(),withPrivateCloudOperation:async(fn:Function)=>fn(),
     keyBuffer:()=>Buffer.alloc(32),reconcilePending:async()=>{},loadVaultFromCloud:async()=>{loads++;return {vault:{assignments:[],invoices:[]},cloudScope:'fixture'};},
     prepareProtectedBillingDeliveries:()=>[],createVrBakerClient:()=>({}),uploadProtectedClientInvoicePdf:async()=>{throw Error('Unexpected PDF');},
-    publishProtectedBillingVault:async(_db:any,_vault:any,_client:any,_ids:any,options:any)=>{publications++;assert.equal(options.shouldContinue(),true);if(fail)throw Error('Unavailable');return {skipped:false};},
+    publishProtectedBillingVault:async(_db:any,_vault:any,_client:any,_ids:any,options:any)=>{publications++;assert.equal(options.shouldContinue(),true);if(fail)throw Error('Unavailable');if(duringPublish) {const callback=duringPublish;duringPublish=undefined;await callback(options);}return {skipped:false};},
     setTimeout:(fn:()=>void)=>{const timer={unref(){}};timers.set(timer,fn);return timer;},clearTimeout:(timer:object)=>timers.delete(timer),
   };
   const api=new Function(...Object.keys(bindings),`let protectedBillingPublishing=false,protectedBillingQueued=false,protectedFinancialGeneration=0,protectedBillingDebounce=null;\n${code}\nreturn {scheduleProtectedBillingPublication,protectedUploader,busy:()=>protectedBillingPublishing};`)(...Object.values(bindings));
   const settle=async()=>{for(let n=0;n<100&&api.busy();n++)await new Promise(resolve=>setImmediate(resolve));assert.equal(api.busy(),false);};
   return {api,db,timers,settle,stats:()=>({commits,publications,loads}),setRole:(value:string)=>{role=value;},
-    fail:()=>{fail=true;},gate:(value:Promise<void>)=>{cloudGate=value;},close:()=>{api.protectedUploader.stop();db.close();}};
+    duringPublish:(callback:(options:any)=>Promise<void>)=>{duringPublish=callback;},fail:()=>{fail=true;},gate:(value:Promise<void>)=>{cloudGate=value;},close:()=>{api.protectedUploader.stop();db.close();}};
 }
 
 test('protected delivery starts directly after the encrypted Writer save is acknowledged, even with the interface locked',async()=>{
@@ -56,4 +57,18 @@ test('protected publication waits for Drive, never runs on Viewer and retains a 
     assert.equal(f.timers.size,0);
     if(mode==='failed')assert.equal((f.db.prepare("SELECT value FROM app_settings WHERE key='protected_financial_pending'").get() as any).value,'1');
   }finally{f.close()}}
+});
+
+
+test('periodic checks do not abort a slow publication; real financial changes still do',async()=>{
+ for(const financialChange of [false,true]) {
+  const f=fixture();try {
+   f.duringPublish(async options=>{
+    f.api.scheduleProtectedBillingPublication(financialChange);
+    assert.equal(options.shouldContinue(),!financialChange);
+   });
+   await f.api.protectedUploader.start();await f.settle();
+   assert.ok(f.stats().publications>=1);
+  }finally{f.close();}
+ }
 });

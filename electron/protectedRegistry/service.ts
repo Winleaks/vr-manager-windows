@@ -130,6 +130,7 @@ const recoveryRotations = new Set<number>();
 let routingOperationQueue: Promise<void> = Promise.resolve();
 const protectedOutbox = new ProtectedOutboxStore(path.join(app.getPath('userData'), 'protected-pending-v1'), keyBuffer);
 const protectedBillingPriorities = new Set<string>();
+const protectedBillingLastPublished = new Map<string, number>();
 const protectedUploader = new ProtectedOutboxWorker(protectedOutbox, commitPendingProtectedSave, pending => {
   for (const companyId of protectedPublicationCompanyIds(pending)) protectedBillingPriorities.add(companyId);
   scheduleProtectedBillingPublication(true);
@@ -184,7 +185,11 @@ async function publishProtectedBilling() {
     // document copies. A broken mapping must never place a PDF in the portal.
     prepareProtectedBillingDeliveries(db, latest.vault);
     const outcome=await publishProtectedBillingVault(db, latest.vault, createVrBakerClient(), new Map(), {
-      priorityCompanyIds: new Set(protectedBillingPriorities),
+      priorityCompanyIds: new Set([...protectedBillingPriorities, ...latest.vault.invoices
+        .filter(invoice => invoice.transfer?.state === 'committed' && invoice.companyKey.startsWith('vrbaker:') &&
+          connection.prepare('SELECT 1 FROM billing_publication_queue WHERE company_id=? AND revision>published_revision').get(invoice.companyId))
+        .map(invoice => invoice.companyKey.slice('vrbaker:'.length))]),
+      lastPublished: protectedBillingLastPublished,
       assertCurrent: () => {
         assertWriter();
         if (db!==connection || protectedCloudAccountScope()!==latest.cloudScope) throw Error('Destinația sincronizării s-a schimbat.');
@@ -204,6 +209,7 @@ async function publishProtectedBilling() {
         return ids;
       },
       onPublished: companyId => {
+        protectedBillingLastPublished.set(companyId, Date.now());
         if (generation===protectedFinancialGeneration) protectedBillingPriorities.delete(companyId);
       },
     });
@@ -216,14 +222,15 @@ async function publishProtectedBilling() {
     protectedBillingPublishing = false;
     if (protectedBillingQueued) {
       protectedBillingQueued = false;
-      scheduleProtectedBillingPublication(true);
+      scheduleProtectedBillingPublication(true, false);
     }
   }
 }
 
-export function scheduleProtectedBillingPublication(immediate = false) {
+export function scheduleProtectedBillingPublication(immediate = false, financialChange = immediate) {
   if (getDeviceRole() !== 'writer' || !isProtectedRegistryEnabled()) return;
-  protectedFinancialGeneration++;
+  // Periodic checks queue work without invalidating the in-flight snapshot.
+  if (financialChange) protectedFinancialGeneration++;
   db.prepare("INSERT INTO app_settings(key,value) VALUES('protected_financial_pending','1') ON CONFLICT(key) DO UPDATE SET value='1'").run();
   protectedBillingQueued = true;
   if (immediate) {
@@ -246,7 +253,7 @@ export function scheduleProtectedBillingPublication(immediate = false) {
 export function startProtectedBillingPublisher() {
   if (getDeviceRole() !== 'writer' || protectedBillingTimer) return;
   scheduleProtectedBillingPublication();
-  protectedBillingTimer = setInterval(scheduleProtectedBillingPublication, 300000);
+  protectedBillingTimer = setInterval(() => scheduleProtectedBillingPublication(false, false), 300000);
   protectedBillingTimer.unref();
 }
 

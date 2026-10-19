@@ -56,6 +56,7 @@ export function protectedPublicationCompanyIds(pending: PendingProtectedSave) {
 
 export interface ProtectedPublicationOptions {
   priorityCompanyIds?: ReadonlySet<string>;
+  lastPublished?: ReadonlyMap<string, number>;
   prepareDocuments?: (companyId: string) => Promise<ReadonlyMap<string, string>>;
   shouldContinue?: () => boolean;
   onPublished?: (companyId: string) => void;
@@ -236,7 +237,8 @@ export async function publishProtectedBillingVault(
   const control = await client.request<{ sync_enabled: boolean; protocol_version?: number }>('billing.status');
   if (!control.sync_enabled) return { published: 0, skipped: true };
   if (control.protocol_version !== 2) throw new Error('Platforma necesită actualizarea protocolului financiar.');
-  deliveries.sort((a,b) => Number(options.priorityCompanyIds?.has(b.company_id)) - Number(options.priorityCompanyIds?.has(a.company_id)));
+  deliveries.sort((a,b) => Number(options.priorityCompanyIds?.has(b.company_id)) - Number(options.priorityCompanyIds?.has(a.company_id))
+    || (options.lastPublished?.get(a.company_id) || 0) - (options.lastPublished?.get(b.company_id) || 0));
   let published = 0;
   for (let data of deliveries) {
     // Finish a company's atomic commit before yielding to a newer vault.

@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.139
+
+- Verificările periodice nu mai întrerup o sincronizare financiară aflată în lucru. Modificările financiare noi păstrează protecția împotriva publicării unei versiuni depășite.
+- La reluare, clienții rămași în urmă sunt procesați înaintea celor publicați recent, păstrând prioritatea operațiunilor financiare noi.
+- Transferurile în registrul normal care încă așteaptă publicarea sunt prioritizate și după repornirea Hub-ului.
+- Fără migrare de schemă sau modificare a încasărilor existente.
+
 ### VR - Hub Management v0.1.138
 
 - Sincronizarea portalului pregătește PDF-ul facturii transferate în registrul normal înainte de a publica factura nouă și plata și de a elimina factura veche din contul clientului.
