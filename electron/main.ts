@@ -26,6 +26,7 @@ import { millisecondsUntilNextLocalMidnight } from './database/cashDayRollover'
 import { runStartupCashReconciliation } from './startupCashReconciliation'
 import { cleanupStaleProtectedRegistryTemporaryFiles, lockAllProtectedRegistrySessions, startProtectedBillingPublisher, stopProtectedRegistrySync, hasPendingProtectedFinancialPublication } from './protectedRegistry/service'
 import { cleanupStaleWindowsShareSnapshots } from './reports/windowsShareSnapshot'
+import { createAppLifecycle } from './device/appLifecycle'
 
 const DIST_PATH = path.join(__dirname, '../dist')
 process.env.DIST = DIST_PATH
@@ -53,6 +54,29 @@ app.enableSandbox()
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) app.quit()
+
+const lifecycle = createAppLifecycle({
+  confirmClose: () => {
+    if (!confirmFinancialClose()) return false;
+    confirmedQuit = true;
+    return true;
+  },
+  getWindow: () => win,
+  createWindow,
+  quit: () => app.quit(),
+  cleanup: [
+    stopProtectedRegistrySync,
+    () => { if (cashDayRolloverTimer) clearTimeout(cashDayRolloverTimer) },
+    lockAllProtectedRegistrySessions,
+    closeDb,
+  ],
+  reportError: error => console.error('[SHUTDOWN]', error),
+})
+if (hasSingleInstanceLock) {
+  app.on('second-instance', () => lifecycle.reopen())
+  app.on('before-quit', event => lifecycle.beforeQuit(event))
+  app.on('will-quit', () => lifecycle.willQuit())
+}
 
 function isAllowedAppUrl(targetUrl: string) {
   try {
@@ -95,6 +119,11 @@ function createWindow() {
       confirmedQuit=true;
     }
   });
+  win.on('closed', () => {
+    win = null;
+    // Quit even if a utility window still exists; don't leave an invisible Writer.
+    if (process.platform === 'win32') lifecycle.mainWindowClosed();
+  });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   win.webContents.on('will-navigate', (event, targetUrl) => {
     if (!isAllowedAppUrl(targetUrl)) event.preventDefault()
@@ -123,16 +152,8 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', (event) => {
-  if(!confirmFinancialClose()){event.preventDefault();return;}
-  confirmedQuit=true;
-  stopProtectedRegistrySync();
-  if (cashDayRolloverTimer) clearTimeout(cashDayRolloverTimer)
-  closeDb();
-  lockAllProtectedRegistrySessions();
-})
-
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return;
   app.setAppUserModelId('com.winleaks.vrhubmanagement')
   cleanupStaleProtectedRegistryTemporaryFiles()
   if (hasSingleInstanceLock) cleanupStaleWindowsShareSnapshots()
@@ -244,6 +265,7 @@ app.whenReady().then(async () => {
   registerProtectedRegistryHandlers()
   initializeUpdater()
   createWindow()
+  lifecycle.ready()
   setTimeout(() => {
     void runViewerSync()
   }, 2000)

@@ -1,3 +1,10 @@
+### VR - Hub Management v0.1.140
+
+- O nouă pornire readuce în față fereastra existentă, inclusiv dacă este minimizată.
+- Închiderea ferestrei principale pe Windows solicită închiderea aplicației și când mai există ferestre auxiliare.
+- Resursele sunt eliberate la ieșirea confirmată; o eroare de curățare nu mai împiedică executarea celorlalți pași.
+- Fără migrare de schemă sau modificare a înregistrărilor financiare.
+
 ### VR - Hub Management v0.1.139
 
 - Verificările periodice nu mai întrerup o sincronizare financiară aflată în lucru. Modificările financiare noi păstrează protecția împotriva publicării unei versiuni depășite.
