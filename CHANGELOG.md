@@ -1,3 +1,9 @@
+### VR - Hub Management v0.1.141
+
+- Corectează eroarea „CHECK constraint failed: available_amount >= 0” la aplicarea creditului și emiterea facturilor.
+- Alocarea creditului și calculul soldului rămas folosesc pence întregi, inclusiv pentru diferențele de precizie rămase din versiunile anterioare.
+- Fără migrare de schemă sau rescriere în masă a înregistrărilor financiare.
+
 ### VR - Hub Management v0.1.140
 
 - O nouă pornire readuce în față fereastra existentă, inclusiv dacă este minimizată.

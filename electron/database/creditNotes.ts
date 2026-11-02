@@ -579,17 +579,22 @@ export function applyCompanyCreditTransaction(connection: SqliteDatabase, input:
     const financials = getInvoiceFinancials(connection, invoiceId);
     if (requested > financials.outstanding + EPSILON) throw new Error('Creditul depășește restul de plată al facturii.');
     const entries = connection.prepare(`SELECT id, available_amount FROM company_credit_entries WHERE company_id = ? AND issuer_id = ? AND status = 'active' AND available_amount > 0.005 ORDER BY created_at, id`).all(companyId, issuerId) as Array<{ id: number; available_amount: number }>;
-    const available = roundMoney(entries.reduce((sum, row) => sum + row.available_amount, 0));
-    if (requested > available + EPSILON) throw new Error('Creditul disponibil este insuficient.');
-    let remaining = requested;
+    // SQLite REAL subtraction can leave 0.09999999999999964 instead of 0.10.
+    // Allocate and persist the remaining balance in whole pennies, including
+    // when consuming historical residues left by previous versions.
+    const availablePennies = entries.reduce((sum, row) => sum + Math.round(row.available_amount * 100), 0);
+    let remainingPennies = Math.round(requested * 100);
+    if (remainingPennies > availablePennies) throw new Error('Creditul disponibil este insuficient.');
     const applications: number[] = [];
     for (const entry of entries) {
-      if (remaining <= EPSILON) break;
-      const amount = roundMoney(Math.min(remaining, entry.available_amount));
+      if (remainingPennies === 0) break;
+      const entryPennies = Math.round(entry.available_amount * 100);
+      const appliedPennies = Math.min(remainingPennies, entryPennies);
+      const amount = appliedPennies / 100;
       const result = connection.prepare('INSERT INTO invoice_credit_applications (credit_entry_id, invoice_id, amount, reason) VALUES (?, ?, ?, ?)').run(entry.id, invoiceId, amount, reason);
-      connection.prepare('UPDATE company_credit_entries SET available_amount = available_amount - ? WHERE id = ?').run(amount, entry.id);
+      connection.prepare('UPDATE company_credit_entries SET available_amount = ? WHERE id = ?').run((entryPennies - appliedPennies) / 100, entry.id);
       applications.push(Number(result.lastInsertRowid));
-      remaining = roundMoney(remaining - amount);
+      remainingPennies -= appliedPennies;
     }
     syncCompanyCreditBalance(connection, companyId, issuerId);
     syncInvoiceFinancialStatus(connection, invoiceId);

@@ -81,6 +81,21 @@ test('new invoices automatically consume scoped credit once, preserve gross/cash
   } finally { connection.close(); }
 });
 
+test('issuance consumes fractional credit exactly without a negative floating-point remainder', () => {
+  const f = fixture();
+  try {
+    f.connection.prepare('UPDATE companies SET issuer_id=? WHERE id=?').run(f.issuerId, f.companyId);
+    // Existing databases can contain the residue of an earlier REAL subtraction.
+    f.connection.prepare('UPDATE company_credit_entries SET available_amount=? WHERE company_id=?').run(12.5 - 12.4, f.companyId);
+    const result = createInvoiceBatchTransaction(f.connection, [
+      { storeId: f.store1, items: [{ productName: 'Bread', quantity: 1, unitPrice: 0.1 }] },
+    ], today());
+    assert.equal(getInvoiceFinancials(f.connection, result[0].invoiceId).outstanding, 0);
+    assert.equal((f.connection.prepare('SELECT available_amount FROM company_credit_entries WHERE company_id=?').get(f.companyId) as any).available_amount, 0);
+    assert.equal((f.connection.prepare('SELECT SUM(amount) AS amount FROM invoice_credit_applications').get() as any).amount, 0.1);
+  } finally { f.connection.close(); }
+});
+
 test('manual and imported issuance use remaining credit; duplicate imports cannot consume it twice', () => {
   const f = fixture();
   try {
