@@ -108,3 +108,24 @@ test('requests arriving during a drain coalesce into a trailing scan without dup
   assert.equal((f.db.prepare('SELECT count(*) n FROM cash_transactions').get() as any).n,1);
  }finally{f.db.close();}
 });
+
+
+test('an ACK already accepted below the cursor does not leave an idle retry loop',async()=>{
+ const f=fixture();try {
+  cash.applyDriverCash(f.db,f.c);
+  queueDb.deferDriverCash(f.db,f.c,0);
+  f.state.incoming=[];
+  await f.api.syncDriverCash();
+  assert.equal(f.api.nextDriverCashRetry(),null);
+  assert.equal((f.db.prepare('SELECT count(*) n FROM cash_transactions').get() as any).n,1);
+ }finally{f.db.close();}
+});
+test('a still-pending receipt retains its known retry deadline, and a confirmed conflict clears it',async()=>{
+ const f=fixture();try {
+  queueDb.deferDriverCash(f.db,f.c,Date.now()+100000);
+  f.state.incoming=[f.c];await f.api.syncDriverCash();
+  assert.ok(f.api.nextDriverCashRetry()>Date.now());
+  f.state.incoming=[{...f.c,state:'CONFLICT',hub_result:{error:'Office review required'}}];
+  await f.api.syncDriverCash();assert.equal(f.api.nextDriverCashRetry(),null);
+ }finally{f.db.close();}
+});

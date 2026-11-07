@@ -53,6 +53,8 @@ async function run() {
     }
   }
   const cursor = Number((db.prepare("SELECT value FROM app_settings WHERE key='driver_cash_cursor'").get() as any)?.value || 0);
+  const deferredAtStart = db.prepare('SELECT operation_id FROM driver_cash_delivery_retries').all() as Array<{operation_id:string}>;
+  const observedOperations = new Set<string>();
   let pageAfter=0,through:number|undefined;
   const blocked=new Set<string>();
   setDriverCashPriority(true);
@@ -61,6 +63,7 @@ async function run() {
   let page=validateCashPage(await fetchPage(),pageAfter,through);
   through=page.through;
   let incoming=page.items;
+  for (const item of incoming) observedOperations.add(validateDriverCashCommand(item).operation_id);
   if(!current()) return;
   const refresh=incoming.map(validateDriverCashCommand).filter(c=>!c.association_error && c.company_id &&
     (c.state==='PENDING' || c.recoverable_association===true) && !blocked.has(c.root_operation_id) &&
@@ -104,7 +107,14 @@ async function run() {
   pageAfter=page.next_page_after;
   if(!page.has_more || !current()) break;
   } while(current());
-
+  if (current()) {
+    // A lost ACK response can leave a deferred item below the advanced cursor.
+    // The authoritative full pending scan has now confirmed it is no longer queued.
+    for (const row of deferredAtStart) if (!observedOperations.has(row.operation_id)) {
+      db.prepare("DELETE FROM driver_cash_delivery_retries WHERE operation_id=? AND EXISTS(SELECT 1 FROM driver_cash_operations o WHERE o.operation_id=? AND o.state IN ('PROCESSED','CONFLICT'))")
+        .run(row.operation_id,row.operation_id);
+    }
+  }
 }
 export async function correctHubDriverCash(transactionId: number | string, amount: number, expectedRevision?: number) {
   if (getDeviceRole()!=='writer') throw new Error('Numai Writer poate corecta încasările.');

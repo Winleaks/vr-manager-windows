@@ -21,6 +21,7 @@ export async function processDriverCashBatch(db:Database.Database,incoming:unkno
       if(known && ['PROCESSED','PROCESSING'].includes(known.state)) throw Object.assign(Error('Starea încasării diferă între Hub și server. Verifică reconcilierea înainte de continuare.'),{retryable:false});
       recordDriverCashConflict(db,command,command.hub_result?.error||'Încasarea necesită verificare la birou.');
       blockedRoots.add(command.root_operation_id);
+      deps.completed?.(command.operation_id);
       deps.saveCursor(command.sequence_id!);continue;
     }
     if (command.state!=='PENDING' && command.state!=='PROCESSED') throw new Error('Stare încasare invalidă.');
