@@ -1,3 +1,4 @@
+import type { PublicationReceipts } from './publicationReceipts.ts';
 import { getInvoiceFinancials } from '../database/creditNotes.ts';
 import { readInvoicePaymentTerms } from '../database/invoicePaymentTerms.ts';
 import type Database from 'better-sqlite3';
@@ -55,6 +56,7 @@ export function protectedPublicationCompanyIds(pending: PendingProtectedSave) {
 }
 
 export interface ProtectedPublicationOptions {
+  receipts?: PublicationReceipts;
   priorityCompanyIds?: ReadonlySet<string>;
   lastPublished?: ReadonlyMap<string, number>;
   prepareDocuments?: (companyId: string) => Promise<ReadonlyMap<string, string>>;
@@ -249,6 +251,10 @@ export async function publishProtectedBillingVault(
       if (data.invoices.some(row => !row.cancelled && !row.drive_file_id)) throw new Error('PDF-ul destinat portalului nu este confirmat.');
     }
     if (options.shouldContinue && !options.shouldContinue()) return { published, skipped: true };
+    options.assertCurrent?.();
+    // Compare only the final, document-verified snapshot. A revision alone is
+    // insufficient when normal invoices, tombstones or PDF identities changed.
+    if (options.receipts?.has(data)) continue;
     const parts = Math.max(1, Math.ceil(Math.max(data.invoices.length, data.deleted.length) / 50));
     for (let part = 0; part < parts; part++) {
       options.assertCurrent?.();
@@ -261,12 +267,13 @@ export async function publishProtectedBillingVault(
       }, `${data.source_id}:protected:${data.company_id}:${data.revision}:part:${part}`);
     }
     options.assertCurrent?.();
-    await client.request('billing.commit', {
+    const committed = await client.request('billing.commit', {
       source_id: data.source_id,
       company_id: data.company_id,
       revision: data.revision,
     }, `${data.source_id}:protected:${data.company_id}:${data.revision}:commit`);
     options.assertCurrent?.();
+    if (options.receipts && committed !== true) throw Error('Platforma nu a confirmat publicarea financiară.');
     // A merged acknowledgement also drains the corresponding normal revision.
     // Later normal changes remain queued; never acknowledge a newer snapshot.
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='billing_merged_revisions'").get()) {
@@ -277,6 +284,7 @@ export async function publishProtectedBillingVault(
         db.prepare('DELETE FROM billing_publication_delivery WHERE company_id=? AND revision<=?').run(merged.company_id,merged.normal_revision);
       })();
     }
+    options.receipts?.confirm(data);
     options.onPublished?.(data.company_id);
     published++;
   }

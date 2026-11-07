@@ -1,5 +1,5 @@
 import { resolveVrBakerEntities } from './vrBakerEntities.ts';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 
 export const VR_BAKER_API_ENDPOINT = 'https://qcblxsbzopvsgohfghrv.supabase.co/functions/v1/external-api';
 
@@ -270,6 +270,10 @@ export class VrBakerApiClient {
     this.timeoutMs = options.timeoutMs || 15_000;
     this.maxAttempts = options.maxAttempts || 3;
     this.wait = options.wait || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  }
+
+  publicationScope() {
+    return createHash('sha256').update(JSON.stringify([this.endpoint,this.token])).digest('hex');
   }
 
   async request<T>(action: string, payload: Record<string, unknown> = {}, idempotencyKey?: string): Promise<T> {

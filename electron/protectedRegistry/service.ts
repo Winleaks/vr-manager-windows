@@ -1,3 +1,4 @@
+import { ProtectedPublicationReceipts } from './publicationReceipts.ts';
 import { prepareInvoiceHandoff, activateInvoiceHandoff } from '../database/invoiceHandoffs.ts';
 import { beginTransfer, completeTransfer, transferBlock, transferFingerprint, validateTransfer, assertTransfersUnchanged } from './transfer.ts';
 import type { ProtectedTransferInput } from '../../src/shared/protectedTransfer.ts';
@@ -129,6 +130,17 @@ const sessionTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const recoveryRotations = new Set<number>();
 let routingOperationQueue: Promise<void> = Promise.resolve();
 const protectedOutbox = new ProtectedOutboxStore(path.join(app.getPath('userData'), 'protected-pending-v1'), keyBuffer);
+const protectedPublicationReceipts = new ProtectedPublicationReceipts(path.join(app.getPath('userData'), 'protected-publication-receipts-v1.enc'), keyBuffer);
+let protectedConfirmationGeneration = 0;
+export function invalidateProtectedPublicationReceipts() {
+  protectedConfirmationGeneration++;
+  protectedPublicationReceipts.clear();
+}
+export function forceProtectedBillingPublication() {
+  assertWriter();
+  invalidateProtectedPublicationReceipts();
+  scheduleProtectedBillingPublication(true);
+}
 const protectedBillingPriorities = new Set<string>();
 const protectedBillingLastPublished = new Map<string, number>();
 const protectedUploader = new ProtectedOutboxWorker(protectedOutbox, commitPendingProtectedSave, pending => {
@@ -171,6 +183,7 @@ async function publishProtectedBilling() {
   }
   protectedBillingPublishing = true;
   const generation=protectedFinancialGeneration;
+  const confirmationGeneration=protectedConfirmationGeneration;
   const connection=db;
   try {
     if (protectedOutbox.hasPending()) return;
@@ -184,7 +197,10 @@ async function publishProtectedBilling() {
     // Validate every company/store association before creating client-facing
     // document copies. A broken mapping must never place a PDF in the portal.
     prepareProtectedBillingDeliveries(db, latest.vault);
-    const outcome=await publishProtectedBillingVault(db, latest.vault, createVrBakerClient(), new Map(), {
+    const client = createVrBakerClient();
+    const clientScope = client.publicationScope();
+    const outcome=await publishProtectedBillingVault(db, latest.vault, client, new Map(), {
+      receipts: protectedPublicationReceipts.forScope(JSON.stringify([latest.cloudScope, clientScope])),
       priorityCompanyIds: new Set([...protectedBillingPriorities, ...latest.vault.invoices
         .filter(invoice => invoice.transfer?.state === 'committed' && invoice.companyKey.startsWith('vrbaker:') &&
           connection.prepare('SELECT 1 FROM billing_publication_queue WHERE company_id=? AND revision>published_revision').get(invoice.companyId))
@@ -192,14 +208,14 @@ async function publishProtectedBilling() {
       lastPublished: protectedBillingLastPublished,
       assertCurrent: () => {
         assertWriter();
-        if (db!==connection || protectedCloudAccountScope()!==latest.cloudScope) throw Error('Destinația sincronizării s-a schimbat.');
+        if (db!==connection || !connection.open || protectedCloudAccountScope()!==latest.cloudScope || confirmationGeneration!==protectedConfirmationGeneration || createVrBakerClient().publicationScope()!==clientScope) throw Error('Destinația sincronizării s-a schimbat.');
       },
       shouldContinue: () => generation===protectedFinancialGeneration && db===connection && getDeviceRole()==='writer'
         && protectedCloudAccountScope()===latest.cloudScope && !protectedOutbox.hasPending(),
       prepareDocuments: async companyId => {
         await prepareTransferredPortalDocuments(connection, companyId, uploadInvoicePdf, () => {
           assertWriter();
-          if (db!==connection || protectedCloudAccountScope()!==latest.cloudScope) throw Error('Destinația sincronizării s-a schimbat.');
+          if (db!==connection || !connection.open || protectedCloudAccountScope()!==latest.cloudScope || confirmationGeneration!==protectedConfirmationGeneration || createVrBakerClient().publicationScope()!==clientScope) throw Error('Destinația sincronizării s-a schimbat.');
         });
         const ids = new Map<string,string>();
         for (const invoice of latest.vault.invoices) {

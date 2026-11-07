@@ -1,3 +1,4 @@
+import {invalidateProtectedPublicationReceipts} from '../protectedRegistry/service';
 import {startDriverCashSync} from '../integrations/driverCashNotifications';
 import { dialog, BrowserWindow, shell, app } from 'electron';
 import fs from 'fs';
@@ -223,6 +224,7 @@ export function registerSystemHandlers() {
     }
 
     const filePath = result.filePaths[0];
+    invalidateProtectedPublicationReceipts();
     const ok = await restoreDb(filePath);
     startDriverCashSync();
     return { success: ok };
@@ -273,6 +275,7 @@ export function registerSystemHandlers() {
   });
 
   handleTrustedIpc('restore-from-cloud', async (_event, fileId?: string) => {
+    invalidateProtectedPublicationReceipts();
     try { return await restoreFromCloud(validateCloudFileId(fileId)); }
     finally { startDriverCashSync(); }
   });

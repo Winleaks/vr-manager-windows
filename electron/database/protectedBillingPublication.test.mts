@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {ProtectedPublicationReceipts,publicationFingerprint} from '../protectedRegistry/publicationReceipts.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
@@ -209,4 +213,102 @@ test('losing Writer authorization or cloud scope during staging prevents the fin
   }},new Map(),{assertCurrent:()=>{if(!allowed)throw Error('Writer scope changed');}}),/Writer scope changed/);
   assert.deepEqual(calls,['billing.status','billing.stage']);
  }finally{db.close();}
+});
+
+function confirmedFixture(t:any) {
+ const f=fixture();const dir=fs.mkdtempSync(path.join(os.tmpdir(),'hub-publication-'));
+ t.after(()=>{f.db.close();fs.rmSync(dir,{recursive:true,force:true});});
+ const filename=path.join(dir,'confirmed.enc'),key=Buffer.alloc(32,7);
+ const store=new ProtectedPublicationReceipts(filename,()=>key);
+ const calls:Array<{action:string,payload:any,key?:string}>=[];
+ const client={request:async(action:string,payload?:any,id?:string)=>{calls.push({action,payload,key:id});return action==='billing.status'?{sync_enabled:true,protocol_version:2}:true;}};
+ const ids=new Map([[f.invoice.id,'protected_portal_pdf_123']]);
+ return {...f,filename,key,store,calls,client,ids};
+}
+test('confirmed snapshot survives restart and emits only the control check, with encrypted receipts',async t=>{
+ const f=confirmedFixture(t);const receipts=f.store.forScope('destination');
+ await publishProtectedBillingVault(f.db,f.vault,f.client,f.ids,{receipts});f.calls.length=0;
+ const restarted=new ProtectedPublicationReceipts(f.filename,()=>f.key).forScope('destination');
+ assert.deepEqual(await publishProtectedBillingVault(f.db,f.vault,f.client,f.ids,{receipts:restarted}),{published:0,skipped:false});
+ assert.deepEqual(f.calls.map(c=>c.action),['billing.status']);
+ const disk=fs.readFileSync(f.filename,'utf8');for(const secret of [company,source,f.invoice.reference,'10000'])assert.equal(disk.includes(secret),false);
+});
+test('missing, corrupt or differently scoped confirmation cannot suppress work; explicit retry invalidates it',async t=>{
+ const f=confirmedFixture(t);const data=prepareProtectedBillingDeliveries(f.db,f.vault,f.ids)[0];
+ assert.equal(f.store.forScope('a').has(data),false);f.store.forScope('a').confirm(data);
+ assert.equal(f.store.forScope('b').has(data),false);
+ assert.equal(new ProtectedPublicationReceipts(f.filename,()=>Buffer.alloc(32,8)).forScope('a').has(data),false);
+ fs.writeFileSync(f.filename,'corrupted');assert.equal(f.store.forScope('a').has(data),false);
+ f.store.forScope('a').confirm(data);f.store.clear();assert.equal(f.store.forScope('a').has(data),false);
+});
+test('all final snapshot fields and identity participate in confirmation',async t=>{
+ const f=confirmedFixture(t),receipts=f.store.forScope('destination'),data=prepareProtectedBillingDeliveries(f.db,f.vault,f.ids)[0];receipts.confirm(data);
+ for(const update of [(d:any)=>d.revision++,(d:any)=>d.credit++,(d:any)=>d.source_id=store,(d:any)=>d.company_id=store,(d:any)=>d.deleted.push('99'),(d:any)=>d.invoices[0].drive_file_id='replacement_pdf_123',(d:any)=>d.invoices[0].paid++,(d:any)=>d.invoices[0].due_date='2026-10-01',(d:any)=>d.invoices[0].cancelled=true]){
+  const changed=structuredClone(data);update(changed);assert.equal(receipts.has(changed),false);
+ }
+ assert.equal(publicationFingerprint({...data,deleted:[...data.deleted].reverse()}),publicationFingerprint(data));
+});
+test('lost commit response retries the same keys and applies the server effect only once',async t=>{
+ const f=confirmedFixture(t);const receipts=f.store.forScope('destination');let lose=true,effects=0;const committed=new Set<string>();
+ const client={request:async(action:string,payload?:any,key?:string)=>{
+  f.calls.push({action,payload,key});if(action==='billing.status')return {sync_enabled:true,protocol_version:2};
+  if(action==='billing.commit') {if(!committed.has(key!)){effects++;committed.add(key!);}if(lose){lose=false;throw Error('Response lost');}}return true;
+ }};
+ await assert.rejects(publishProtectedBillingVault(f.db,f.vault,client,f.ids,{receipts}),/Response lost/);
+ assert.equal(receipts.has(prepareProtectedBillingDeliveries(f.db,f.vault,f.ids)[0]),false);
+ await publishProtectedBillingVault(f.db,f.vault,client,f.ids,{receipts});assert.equal(effects,1);
+ const keys=f.calls.filter(c=>c.action==='billing.commit').map(c=>c.key);assert.equal(keys[0],keys[1]);
+ f.calls.length=0;await publishProtectedBillingVault(f.db,f.vault,client,f.ids,{receipts});assert.deepEqual(f.calls.map(c=>c.action),['billing.status']);
+});
+test('stage failure, negative commit and malformed commit never become confirmed',async t=>{
+ const f=confirmedFixture(t),receipts=f.store.forScope('destination');
+ for(const mode of ['stage','false','invalid']) {
+  await assert.rejects(publishProtectedBillingVault(f.db,f.vault,{request:async(action:string)=>{
+   if(action==='billing.status')return {sync_enabled:true,protocol_version:2};
+   if(action==='billing.stage' && mode==='stage')throw Error('Unavailable');
+   if(action==='billing.commit')return mode==='false'?false:{success:true};return true;
+  }} as any,f.ids,{receipts}));
+  assert.equal(receipts.has(prepareProtectedBillingDeliveries(f.db,f.vault,f.ids)[0]),false);
+ }
+});
+test('a new revision arriving during a commit is not marked as confirmed',async t=>{
+ const f=confirmedFixture(t),receipts=f.store.forScope('destination');
+ await publishProtectedBillingVault(f.db,f.vault,{request:async(action:string)=>{
+  if(action==='billing.status')return {sync_enabled:true,protocol_version:2};
+  if(action==='billing.commit'){f.vault.revision++;f.invoice.paidAmount+=1;}return true;
+ }} as any,f.ids,{receipts});
+ assert.equal(receipts.has(prepareProtectedBillingDeliveries(f.db,f.vault,f.ids)[0]),false);
+ await publishProtectedBillingVault(f.db,f.vault,f.client,f.ids,{receipts});assert.ok(f.calls.some(c=>c.action==='billing.commit'));
+});
+test('document preparation occurs before suppression and changed PDF cannot reuse old confirmation',async t=>{
+ const f=confirmedFixture(t),receipts=f.store.forScope('destination');
+ await publishProtectedBillingVault(f.db,f.vault,f.client,f.ids,{receipts});f.calls.length=0;let prepared=0;
+ await publishProtectedBillingVault(f.db,f.vault,f.client,new Map(),{receipts,prepareDocuments:async()=>{prepared++;return new Map([[f.invoice.id,'replacement_pdf_123']]);}});
+ assert.equal(prepared,1);assert.ok(f.calls.some(c=>c.action==='billing.stage'&&c.payload.invoices[0].drive_file_id==='replacement_pdf_123'));
+});
+test('confirmation write failure preserves the retry and does not claim a completed publication',async t=>{
+ const f=confirmedFixture(t);const receipts={has:()=>false,confirm:()=>{throw Error('Disk unavailable');}};
+ await assert.rejects(publishProtectedBillingVault(f.db,f.vault,f.client,f.ids,{receipts}),/Disk unavailable/);
+ assert.equal(f.calls.filter(c=>c.action==='billing.commit').length,1);
+});
+
+test('partial multi-part staging never confirms a company and retries identical part keys',async t=>{
+ const f=confirmedFixture(t),receipts=f.store.forScope('destination');
+ for(let n=0;n<50;n++)f.vault.invoices.push({...f.invoice,id:`extra_${n}`,sequenceNumber:4000+n,reference:`TGBL-${4000+n}`});
+ let fail=true;const client={request:async(action:string,payload?:any,key?:string)=>{
+  f.calls.push({action,payload,key});if(action==='billing.status')return {sync_enabled:true,protocol_version:2};
+  if(action==='billing.stage'&&payload.part===1&&fail){fail=false;throw Error('Second part unavailable');}return true;
+ }};
+ await assert.rejects(publishProtectedBillingVault(f.db,f.vault,client,f.ids,{receipts}),/Second part/);
+ assert.equal(receipts.has(prepareProtectedBillingDeliveries(f.db,f.vault,f.ids)[0]),false);
+ await publishProtectedBillingVault(f.db,f.vault,client,f.ids,{receipts});
+ assert.equal(f.calls.filter(c=>c.action==='billing.commit').length,1);
+ const parts=f.calls.filter(c=>c.action==='billing.stage').map(c=>c.key);assert.deepEqual(parts.slice(0,2),parts.slice(2));
+});
+test('a destination switch after commit cannot persist confirmation for the previous context',async t=>{
+ const f=confirmedFixture(t),receipts=f.store.forScope('destination');let allowed=true;
+ await assert.rejects(publishProtectedBillingVault(f.db,f.vault,{request:async(action:string)=>{
+  if(action==='billing.status')return {sync_enabled:true,protocol_version:2};if(action==='billing.commit')allowed=false;return true;
+ }} as any,f.ids,{receipts,assertCurrent:()=>{if(!allowed)throw Error('Destination changed');}}),/Destination changed/);
+ assert.equal(receipts.has(prepareProtectedBillingDeliveries(f.db,f.vault,f.ids)[0]),false);
 });

@@ -336,10 +336,8 @@ export function registerBillingHandlers() {
     db.prepare('UPDATE billing_publication_queue SET retry_at=0').run();
     const {publishBilling}=await import('../integrations/billingPublisher');
     await publishBilling();
-    if(hasPendingProtectedFinancialPublication()) {
-      const {scheduleProtectedBillingPublication}=await import('../protectedRegistry/service');
-      scheduleProtectedBillingPublication();
-    }
+    const {forceProtectedBillingPublication}=await import('../protectedRegistry/service');
+    forceProtectedBillingPublication();
     return {success:true};
   });
   handleTrustedIpc('billing:getSettings' , () => {

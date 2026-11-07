@@ -1,3 +1,15 @@
+### VR - Hub Management v0.1.143
+
+RO:
+- Sincronizarea financiară nu mai retrimite automat versiunile deja confirmate și neschimbate.
+- Confirmările se păstrează criptat pe calculator și după repornire. Datele neconfirmate rămân disponibile pentru reîncercare, fără schimbarea identificatorilor operațiunilor.
+- Modificările sumelor, facturilor, documentelor și destinației sunt reverificate înaintea publicării. Republicarea manuală rămâne disponibilă.
+
+EN:
+- Financial synchronization no longer automatically resends unchanged versions already confirmed by the server.
+- Confirmations are stored encrypted on the computer and survive restarts. Unconfirmed data remains retryable with the same operation identifiers.
+- Changes to amounts, invoices, documents and destination are checked before publication. Manual republishing remains available.
+
 ### VR - Hub Management v0.1.142
 
 RO:

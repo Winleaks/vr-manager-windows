@@ -1,0 +1,13 @@
+# Hub 0.1.143 — durable financial publication confirmations
+
+Scope: stop repeated protected-registry billing.stage/billing.commit for the same confirmed company snapshot. No backend contract, database schema, amounts, document contents, subscriptions or new service changes. Existing control checks and failed-work retry schedules remain.
+
+A derived AES-256-GCM local receipt file stores hashes only, outside SQLite and its viewer replicas. Its context includes the API endpoint/credential fingerprint and Drive account scope; each company entry binds Writer source, company, exact revision and the complete prepared payload including PDF IDs and tombstones. Document preparation and current-scope authorization precede cache lookup. Only an explicit true billing.commit response permits persistence, after exact normal-revision acknowledgement. A lost response or disk failure leaves work retryable using unchanged idempotency keys. Changed local/vault revisions are deliberately not suppressed, even if some displayed amounts remain equal.
+
+Missing/corrupt confirmations cause a safe resend; they never imply success. No pre-upgrade work is presumed confirmed. The first cycle establishes confirmations using the existing idempotent API; later identical cycles omit stage/commit. No periodic job was added. The normal explicit Publish Now action invalidates confirmations for a forced retry. Restoring a database invalidates the cache before restore. Financial data, the encrypted vault and pending outbox are never deleted by this cache operation.
+
+Verification: focused tests cover persistence/restart, encryption, destination/key changes, exact payload changes, PDF preparation, partial multi-part staging, lost responses, negative/malformed commit, concurrent newer data and confirmation storage failure. Existing transfer/normal-revision and scheduling tests remain required. Windows CI must pass before promoting the exact installer artifact.
+
+Rollback: install the compatible v0.1.142 installer. It ignores the derived receipt file and resumes its former repeated publications, retaining idempotency and all financial records. No destructive migration or rollback is required. After adoption, compare equal 15-minute windows; unchanged billing.stage/commit replays should fall from the observed 74 to zero once warm-up completes, while control checks and genuine changes remain. No measured production reduction is claimed before this version is installed.
+
+The exact installed binary and local SQLite are not inspected remotely. Public GitHub release and admin-only bilingual changelog use the existing verified-artifact procedure extended for GitHub in the 0.1.142 release.
