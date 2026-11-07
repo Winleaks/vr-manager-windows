@@ -4,10 +4,12 @@ type WindowHandle = {
   restore(): void;
   show(): void;
   focus(): void;
+  hide?(): void;
 };
 
 export function createAppLifecycle(options: {
   confirmClose(): boolean;
+  canHideToTray?(): boolean;
   getWindow(): WindowHandle | null | undefined;
   createWindow(): void;
   quit(): void;
@@ -26,6 +28,18 @@ export function createAppLifecycle(options: {
       }
       quitting = true;
     },
+    windowClose(event: { preventDefault(): void }) {
+      if (quitting) return;
+      const window = options.getWindow();
+      if (options.canHideToTray?.() && window?.hide && !window.isDestroyed()) {
+        event.preventDefault();
+        window.hide();
+        return;
+      }
+      // A failed/missing tray must never leave an inaccessible background app.
+      if (!options.confirmClose()) event.preventDefault();
+    },
+    sessionEnding() { quitting = true; },
     mainWindowClosed() {
       if (!quitting) options.quit();
     },

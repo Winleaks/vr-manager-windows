@@ -8,7 +8,7 @@ const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const source=readFileSync(new URL('../../supabase/functions/external-api/index.ts',import.meta.url),'utf8');
 function actions(section:string,supabaseAdmin:any) {
  const code=ts.transpileModule(`const actions={${section}};`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
- const bindings={ExternalApiRequestError,parseBoundedInteger,requireUuid,supabaseAdmin,resolveStoreCompany,storeCompanyColumns,
+ const bindings={Deno:{env:{get:(key:string)=>key==='EXTERNAL_API_BILLING_WRITER_CREDENTIAL_ID'?'writer':'public-value'}},ExternalApiRequestError,parseBoundedInteger,requireUuid,supabaseAdmin,resolveStoreCompany,storeCompanyColumns,
   ensureDatabaseSuccess:(error:any)=>{if(error)throw error;},ensureCashDatabaseSuccess:(error:any)=>{if(error)throw error;}};
  return new Function(...Object.keys(bindings),code+';return actions;')(...Object.values(bindings));
 }
@@ -46,4 +46,19 @@ test('scoped store export excludes an unrelated contradictory association while 
  assert.equal(result.complete,true);assert.equal(result.count,1);assert.equal(result.rows[0].client_company_id,company.id);
  assert.deepEqual(result.merges,[aliases[0]]);assert.equal('company_owner' in result.rows[0],false);
  for(const selection of [[],['invalid'],new Array(51).fill(good.id)])await assert.rejects(api['stores.list'].handler({store_ids:selection}));
+});
+
+test('cash subscription requires the exact Writer credential and validated source/subscriber; cannot be cached as a command',async()=>{
+ const calls:any[]=[];
+ const api=actions(source.slice(source.indexOf('"driver.cash.subscribe":'),source.indexOf('"driver.cash.pending":')),
+  {rpc:async(name:string,payload:any)=>{calls.push({name,payload});return {data:{protocol_version:1,topic:'opaque'},error:null};}});
+ const action=api['driver.cash.subscribe'];
+ assert.equal(action.scope,'billing:write');assert.equal(action.mutates,false);
+ await assert.rejects(action.handler({source_id:id(1),subscriber_id:id(2)},{credential:{id:'other'}}));
+ await assert.rejects(action.handler({source_id:'bad',subscriber_id:id(2)},{credential:{id:'writer'}}));
+ assert.equal(calls.length,0);
+ const result=await action.handler({source_id:id(1),subscriber_id:id(2)},{credential:{id:'writer'}});
+ assert.deepEqual(calls,[{name:'register_driver_cash_signal',payload:{p_source:id(1),p_subscriber:id(2),p_credential:'writer'}}]);
+ assert.equal(result.topic,'opaque');
+ assert.equal('service_role' in result,false);
 });

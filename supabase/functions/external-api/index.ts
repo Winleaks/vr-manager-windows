@@ -215,6 +215,23 @@ function ensureDatabaseSuccess(error: unknown): void {
 }
 
 const actions: Record<string, ActionDefinition> = {
+  "driver.cash.subscribe": {
+    methods: new Set(["POST"]), scope: "billing:write", mutates: false,
+    handler: async (payload, { credential }) => {
+      // This capability authorizes only an empty wake-up hint, never cash data.
+      const writerId = Deno.env.get("EXTERNAL_API_BILLING_WRITER_CREDENTIAL_ID");
+      if (!writerId || credential.id !== writerId) {
+        throw new ExternalApiRequestError(403, "cash_writer_denied", "Writer neautorizat.");
+      }
+      const { data, error } = await supabaseAdmin.rpc("register_driver_cash_signal", {
+        p_source: requireUuid(payload.source_id, "source_id"),
+        p_subscriber: requireUuid(payload.subscriber_id, "subscriber_id"),
+        p_credential: credential.id,
+      });
+      ensureCashDatabaseSuccess(error);
+      return { ...data, url: Deno.env.get("SUPABASE_URL"), api_key: Deno.env.get("SUPABASE_ANON_KEY") };
+    },
+  },
   "driver.cash.pending": {
     methods: new Set(["POST"]), scope: "billing:write", mutates: false,
     handler: async (p) => {
@@ -872,3 +889,4 @@ Deno.serve(async (req: Request): Promise<Response> => {
     );
   }
 });
+

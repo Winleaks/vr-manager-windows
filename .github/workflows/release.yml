@@ -5,6 +5,7 @@ on:
     tags:
       - 'v*'
     branches:
+      - 'razvancristofor/writer-notifications-tray'
       - 'release/v*'
       - 'razvancristofor/release-v*'
 
@@ -64,6 +65,9 @@ jobs:
       - name: Build App Assets
         run: npx vite build
 
+      - name: Verify native Windows tray lifecycle
+        run: npx electron scripts/smokeWindowsTray.cjs
+
       - name: Build Electron Windows Package
         run: npx electron-builder --win --x64 -p never
 
@@ -74,7 +78,18 @@ jobs:
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
+      - name: Preserve verified Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: writer-windows-${{ steps.package.outputs.version }}
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          if-no-files-found: error
+
       - name: Publish Release to GitHub
+        if: github.ref != 'refs/heads/razvancristofor/writer-notifications-tray'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.package.outputs.version }}

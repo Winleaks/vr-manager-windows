@@ -1,3 +1,15 @@
+### VR - Hub Management v0.1.142
+
+RO:
+- Butonul X păstrează Hub activ în zona de notificări Windows. De la pictogramă poți redeschide aplicația sau alege „Închide definitiv”.
+- Writer preia încasările la pornire și reconectare și când primește notificări, fără verificarea periodică a cozii.
+- Încasările neconfirmate rămân disponibile pentru recuperare; reîncercările păstrează protecția împotriva dublurilor.
+
+EN:
+- Closing the window keeps Hub running in the Windows notification area. Use the icon to reopen Hub or quit completely.
+- Writer retrieves receipts on startup, reconnection and notifications, without periodic queue checks.
+- Unconfirmed receipts remain recoverable, with duplicate protection preserved during retries.
+
 ### VR - Hub Management v0.1.141
 
 - Corectează eroarea „CHECK constraint failed: available_amount >= 0” la aplicarea creditului și emiterea facturilor.

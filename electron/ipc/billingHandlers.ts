@@ -1,3 +1,4 @@
+import {startDriverCashSync} from '../integrations/driverCashNotifications';
 import * as billingRepo from '../database/repositories/billingRepo';
 import { updateSharedIssuerSettings } from '../database/sharedIssuerSettings';
 import { isBillingPublishing } from '../integrations/billingPublisher';
@@ -366,6 +367,7 @@ export function registerBillingHandlers() {
       const client = createVrBakerClient(token?.trim());
       await client.health();
       setVrBakerApiToken(token);
+      startDriverCashSync();
       removeLegacySupabaseCredential();
       for (const key of ['supabase_url', 'supabase_key', 'supabase_email']) billingRepo.deleteAppSetting(key);
       return { success: true, message: 'Tokenul VR Baker Platform a fost verificat și salvat securizat.' };

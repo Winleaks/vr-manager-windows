@@ -1,7 +1,7 @@
-import {startDriverCashSync,wakeDriverCashSync} from './integrations/driverCashSync';
+import {startDriverCashSync,stopDriverCashSync} from './integrations/driverCashNotifications';
 import {startBillingPublisher} from './integrations/billingPublisher';
 import { startDocumentSync } from './integrations/documentSync';
-import { app, BrowserWindow, dialog, session, powerMonitor } from 'electron'
+import { app, BrowserWindow, dialog, session, powerMonitor, Tray, Menu, nativeImage } from 'electron'
 import { execFileSync } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -35,6 +35,7 @@ process.env.PUBLIC = app.isPackaged ? DIST_PATH : path.join(DIST_PATH, '../publi
 let win: BrowserWindow | null
 let cashDayRolloverTimer: ReturnType<typeof setTimeout> | null = null
 let confirmedQuit=false;
+let hubTray: Tray | null = null;
 function confirmFinancialClose() {
   if(confirmedQuit||getDeviceRole()!=='writer'||!db?.open)return true;
   let pending=true;
@@ -61,11 +62,14 @@ const lifecycle = createAppLifecycle({
     confirmedQuit = true;
     return true;
   },
+  canHideToTray: () => process.platform === 'win32' && Boolean(hubTray && !hubTray.isDestroyed()),
   getWindow: () => win,
   createWindow,
   quit: () => app.quit(),
   cleanup: [
+    () => { hubTray?.destroy(); hubTray = null; },
     stopProtectedRegistrySync,
+    stopDriverCashSync,
     () => { if (cashDayRolloverTimer) clearTimeout(cashDayRolloverTimer) },
     lockAllProtectedRegistrySessions,
     closeDb,
@@ -94,6 +98,27 @@ function isAllowedAppUrl(targetUrl: string) {
   }
 }
 
+function createHubTray() {
+  if (process.platform !== 'win32') return;
+  try {
+    const icon = nativeImage.createFromPath(path.join(process.env.PUBLIC!, 'tray-icon.png'));
+    if (icon.isEmpty()) throw new Error('Pictograma Hub nu este disponibilă.');
+    hubTray = new Tray(icon);
+    hubTray.setToolTip('Baker Hub — activ în fundal');
+    hubTray.setContextMenu(Menu.buildFromTemplate([
+      { label: 'Deschide Baker Hub', click: () => lifecycle.reopen() },
+      { type: 'separator' },
+      { label: 'Închide definitiv', click: () => app.quit() },
+    ]));
+    hubTray.on('click', () => lifecycle.reopen());
+    hubTray.on('double-click', () => lifecycle.reopen());
+  } catch {
+    hubTray?.destroy();
+    hubTray = null;
+    console.error('[TRAY] Pictograma nu a putut fi creată; închiderea normală rămâne disponibilă.');
+  }
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1200,
@@ -111,14 +136,11 @@ function createWindow() {
   })
 
   trustIpcSender(win.webContents)
-  // On Windows, before-quit runs after the last window has disappeared.
-  // Intercept its close first, so "Keep Hub open" leaves a usable window.
-  win.on('close',event=>{
-    if(process.platform==='win32'){
-      if(!confirmFinancialClose()){event.preventDefault();return;}
-      confirmedQuit=true;
-    }
+  win.on('close', event => {
+    if (process.platform === 'win32') lifecycle.windowClose(event);
   });
+  // Windows session termination does not emit app.before-quit.
+  win.on('session-end', () => lifecycle.sessionEnding());
   win.on('closed', () => {
     win = null;
     // Quit even if a utility window still exists; don't leave an invisible Writer.
@@ -187,7 +209,7 @@ app.whenReady().then(async () => {
   initDb()
   startDriverCashSync()
   startBillingPublisher()
-  powerMonitor.on('resume',wakeDriverCashSync)
+  powerMonitor.on('resume',startDriverCashSync)
   startProtectedBillingPublisher()
   startDocumentSync()
   if (getDeviceRole() === 'writer') {
@@ -263,9 +285,14 @@ app.whenReady().then(async () => {
   registerDailyCashHandlers()
   registerBillingHandlers()
   registerProtectedRegistryHandlers()
-  initializeUpdater()
+  initializeUpdater(() => {
+    if (!confirmFinancialClose()) return false;
+    confirmedQuit = true;
+    return true;
+  }, () => { confirmedQuit = false; })
   createWindow()
   lifecycle.ready()
+  createHubTray()
   setTimeout(() => {
     void runViewerSync()
   }, 2000)

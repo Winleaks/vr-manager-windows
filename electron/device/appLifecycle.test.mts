@@ -2,16 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createAppLifecycle } from './appLifecycle.ts';
 
-function fixture() {
+function fixture(tray = false) {
   const calls: string[] = [];
   let allowed = true;
   let window: typeof handle | null = null;
   const handle = {
     isDestroyed: () => false, isMinimized: () => true,
     restore: () => { calls.push('restore'); },
+    hide: () => { calls.push('hide'); },
     show: () => { calls.push('show'); }, focus: () => { calls.push('focus'); },
   };
   const lifecycle = createAppLifecycle({
+    canHideToTray: () => tray,
     confirmClose: () => allowed, getWindow: () => window,
     createWindow: () => { calls.push('create'); window = handle; },
     quit: () => { calls.push('quit'); },
@@ -45,4 +47,38 @@ test('closing main window requests quit; accepted quit cannot reopen and cleans 
   assert.deepEqual(calls, ['quit']);
   lifecycle.willQuit(); lifecycle.willQuit();
   assert.deepEqual(calls, ['quit', 'stop', 'error', 'close-db']);
+});
+
+
+test('X with a working tray hides without confirmation or cleanup; reopening preserves the window', () => {
+  const { lifecycle, calls, cancelClose } = fixture(true);
+  lifecycle.ready(); lifecycle.reopen(); calls.length = 0;
+  cancelClose();
+  lifecycle.windowClose({ preventDefault: () => { calls.push('prevent'); } });
+  lifecycle.reopen();
+  assert.deepEqual(calls, ['prevent', 'hide', 'restore', 'show', 'focus']);
+});
+
+test('explicit quit bypasses tray hiding and cleans up once', () => {
+  const { lifecycle, calls } = fixture(true);
+  lifecycle.ready(); lifecycle.reopen(); calls.length = 0;
+  lifecycle.beforeQuit({ preventDefault: () => assert.fail('quit rejected') });
+  lifecycle.windowClose({ preventDefault: () => assert.fail('quit hidden') });
+  lifecycle.willQuit(); lifecycle.willQuit();
+  assert.deepEqual(calls, ['stop', 'error', 'close-db']);
+});
+
+test('without a tray, cancelling financial close retains the window', () => {
+  const { lifecycle, calls, cancelClose } = fixture(false);
+  cancelClose();
+  lifecycle.windowClose({ preventDefault: () => { calls.push('prevent'); } });
+  assert.deepEqual(calls, ['prevent']);
+});
+
+test('Windows session termination bypasses hiding and releases resources', () => {
+  const { lifecycle, calls } = fixture(true);
+  lifecycle.sessionEnding();
+  lifecycle.windowClose({ preventDefault: () => assert.fail('session end hidden') });
+  lifecycle.willQuit();
+  assert.deepEqual(calls, ['stop', 'error', 'close-db']);
 });

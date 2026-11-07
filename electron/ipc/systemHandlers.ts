@@ -1,3 +1,4 @@
+import {startDriverCashSync} from '../integrations/driverCashNotifications';
 import { dialog, BrowserWindow, shell, app } from 'electron';
 import fs from 'fs';
 import path from 'path';
@@ -223,6 +224,7 @@ export function registerSystemHandlers() {
 
     const filePath = result.filePaths[0];
     const ok = await restoreDb(filePath);
+    startDriverCashSync();
     return { success: ok };
   });
 
@@ -271,7 +273,8 @@ export function registerSystemHandlers() {
   });
 
   handleTrustedIpc('restore-from-cloud', async (_event, fileId?: string) => {
-    return await restoreFromCloud(validateCloudFileId(fileId));
+    try { return await restoreFromCloud(validateCloudFileId(fileId)); }
+    finally { startDriverCashSync(); }
   });
 
   handleTrustedIpc('disconnect-cloud', async () => {
@@ -293,7 +296,9 @@ export function registerSystemHandlers() {
   });
 
   handleTrustedIpc('set-device-role', (_event, role: DeviceRole) => {
-    return setDeviceRole(role);
+    const state = setDeviceRole(role);
+    startDriverCashSync();
+    return state;
   });
 
   handleTrustedIpc('sync-viewer-now', async (event) => {

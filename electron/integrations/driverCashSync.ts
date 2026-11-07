@@ -14,8 +14,8 @@ import {invalidateNormalBillingVisibility} from '../database/normalBillingVisibi
 import { publishBilling } from './billingPublisher';
 let running: Promise<void> | undefined;
 let requested=false;
-let lastScan=0;
-let lastSequence=-1;
+let environmentGeneration=0;
+let notificationWake: (() => void) | undefined;
 export function syncDriverCash() {
   requested=true;
   if (running) return running;
@@ -32,9 +32,10 @@ async function run() {
   await waitForDatabaseReady();
   if(getDeviceRole()!=='writer')return;
   const connection = db;
+  const generation = environmentGeneration;
   const client = createVrBakerClient();
   const source = sourceId();
-  const current=()=>db===connection && getDeviceRole()==='writer';
+  const current=()=>generation===environmentGeneration && db===connection && getDeviceRole()==='writer';
   const retry=(operationId:string)=>retryReviewedCash(client,source,operationId,current);
   await recoverDriverCashRouting(db,retry,current);
   if(!current()) return;
@@ -43,7 +44,7 @@ async function run() {
   for(const row of decisions) {await retryCashRoot(db,row.operation_id,()=>retry(row.operation_id),current);if(!current())return;}
   const outbox = db.prepare("SELECT payload,operation_id FROM driver_cash_office_outbox WHERE state='PENDING'").all() as any[];
   for (const row of outbox) {
-    if (db!==connection || getDeviceRole()!=='writer') return;
+    if (!current()) return;
     try { await client.request('driver.cash.correct',JSON.parse(row.payload),row.operation_id); }
     catch (error) {
       if ((error as any)?.retryable === false) db.prepare("UPDATE driver_cash_office_outbox SET state='CONFLICT',last_error=? WHERE operation_id=?")
@@ -103,7 +104,7 @@ async function run() {
   pageAfter=page.next_page_after;
   if(!page.has_more || !current()) break;
   } while(current());
-  lastScan=Date.now();lastSequence=through??0;
+
 }
 export async function correctHubDriverCash(transactionId: number | string, amount: number, expectedRevision?: number) {
   if (getDeviceRole()!=='writer') throw new Error('Numai Writer poate corecta încasările.');
@@ -126,33 +127,33 @@ export async function correctHubDriverCash(transactionId: number | string, amoun
   if (stillPending?.state==='CONFLICT') throw new Error('Corectarea necesită verificare. Există o operație concurentă.');
   return true;
 }
-let nextPoll=0,pollFailures=0,polling=false;
-export function wakeDriverCashSync() { if(getDeviceRole()!=='writer')return;if(running)requested=true;nextPoll=0;lastScan=0;void attemptDriverCashSync(); }
-async function attemptDriverCashSync() {
-  if(polling || running || getDeviceRole()!=='writer' || Date.now()<nextPoll) return;
-  polling=true;
-  try {
-    await waitForDatabaseReady();
-    if(getDeviceRole()!=='writer') return;
-    const connection=db;
-    if((db.prepare("SELECT value FROM app_settings WHERE key='driver_cash_sync_paused'").get() as any)?.value==='1') return;
-    if(lastScan) {
-      const cursor=Number((db.prepare("SELECT value FROM app_settings WHERE key='driver_cash_cursor'").get() as any)?.value||0);
-      const status=await createVrBakerClient().request<any>('driver.cash.status',{source_id:sourceId(),after:cursor});
-      if(db!==connection || getDeviceRole()!=='writer') return;
-      if(status?.protocol_version!==3 || !Number.isSafeInteger(status.latest_sequence) || typeof status.has_work!=='boolean') throw Error('Starea cozii este invalidă.');
-      if(!status.has_work || status.latest_sequence<=lastSequence && Date.now()-lastScan<30_000) return;
-    }
-    await syncDriverCash();setSyncError(null);pollFailures=0;
-  } catch(error) {
-    setSyncError(error instanceof Error?error.message:'Sincronizare indisponibilă.');
-    nextPoll=Date.now()+Math.max(Number((error as any)?.retryAfterMs)||0,Math.min(300_000,5_000*2**Math.min(pollFailures++,6)));
-    if((error as any)?.retryable===false) db.prepare("INSERT INTO app_settings(key,value) VALUES('driver_cash_sync_paused','1') ON CONFLICT(key) DO UPDATE SET value='1'").run();
-  } finally {polling=false;}
+export function wakeDriverCashSync() { notificationWake?.(); }
+export function bindDriverCashWake(wake: (() => void) | undefined) { notificationWake = wake; }
+export function invalidateDriverCashEnvironment() { environmentGeneration++; }
+export function driverCashSourceId() { return sourceId(); }
+export function setDriverCashConnectionError() {
+  if(db?.open && getDeviceRole()==='writer') setSyncError('Conexiunea pentru încasări este indisponibilă. Încasările rămân salvate și vor fi recuperate la reconectare.');
 }
-export function startDriverCashSync() {
-  wakeDriverCashSync();
-  setInterval(()=>void attemptDriverCashSync(),5_000).unref();
+export function nextDriverCashRetry(): number | null {
+  if (!db?.open || getDeviceRole() !== 'writer') return null;
+  const row = db.prepare('SELECT min(next_attempt_ms) AS deadline FROM driver_cash_delivery_retries').get() as {deadline: number | null};
+  return row.deadline;
+}
+export async function attemptDriverCashSync() {
+  await waitForDatabaseReady();
+  if(getDeviceRole()!=='writer') return;
+  if((db.prepare("SELECT value FROM app_settings WHERE key='driver_cash_sync_paused'").get() as any)?.value==='1') {
+    throw Object.assign(new Error('Sincronizarea încasărilor este în pauză.'), {retryable: false});
+  }
+  const connection = db, generation = environmentGeneration;
+  try { await syncDriverCash(); if (connection===db && generation===environmentGeneration) setSyncError(null); }
+  catch(error) {
+    if (connection===db && generation===environmentGeneration && db.open) {
+      setSyncError(error instanceof Error?error.message:'Sincronizare indisponibilă.');
+      if((error as any)?.retryable===false) db.prepare("INSERT INTO app_settings(key,value) VALUES('driver_cash_sync_paused','1') ON CONFLICT(key) DO UPDATE SET value='1'").run();
+    }
+    throw error;
+  }
 }
 
 function saveCursor(sequence: number) {
@@ -200,7 +201,7 @@ export async function resumeDriverCashSync() {
   if(getDeviceRole()!=='writer') throw Error('Numai Writer poate sincroniza încasările.');
   db.prepare('UPDATE driver_cash_delivery_retries SET next_attempt_ms=0').run();
   db.prepare("DELETE FROM app_settings WHERE key='driver_cash_sync_paused'").run();
-  try { await syncDriverCash(); setSyncError(null); }
+  try { await syncDriverCash(); setSyncError(null); wakeDriverCashSync(); }
   catch(error) { setSyncError(error instanceof Error?error.message:'Sincronizare indisponibilă.'); throw error; }
 }
 

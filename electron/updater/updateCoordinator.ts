@@ -4,6 +4,8 @@ import { createUpdateStateStore } from './updateState';
 
 const updateState = createUpdateStateStore(app.getVersion());
 let initialized = false;
+let confirmInstall: () => boolean = () => true;
+let cancelInstallApproval: () => void = () => {};
 let checkInFlight: Promise<ReturnType<typeof updateState.snapshot>> | null = null;
 let downloadInFlight: Promise<unknown> | null = null;
 
@@ -15,7 +17,9 @@ function broadcast() {
   return snapshot;
 }
 
-export function initializeUpdater() {
+export function initializeUpdater(confirmClose?: () => boolean, cancelApproval?: () => void) {
+  if (cancelApproval) cancelInstallApproval = cancelApproval;
+  if (confirmClose) confirmInstall = confirmClose;
   if (initialized) return;
   initialized = true;
   autoUpdater.autoDownload = false;
@@ -38,6 +42,7 @@ export function initializeUpdater() {
     broadcast();
   });
   autoUpdater.on('error', (error) => {
+    cancelInstallApproval();
     console.error('Eroare auto-update:', error);
     updateState.failed();
     broadcast();
@@ -89,5 +94,7 @@ export function installUpdate() {
   if (updateState.snapshot().status !== 'downloaded') {
     throw new Error('Actualizarea nu a fost încă descărcată.');
   }
-  autoUpdater.quitAndInstall(false, true);
+  if (!confirmInstall()) throw new Error('Instalarea a fost amânată. Hub rămâne deschis.');
+  try { autoUpdater.quitAndInstall(false, true); }
+  catch (error) { cancelInstallApproval(); throw error; }
 }
