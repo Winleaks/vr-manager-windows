@@ -19,14 +19,14 @@ export function startDriverCashSync() {
   if (getDeviceRole() !== 'writer') return;
   let stopped = false, socket: RealtimeClient | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let failures = 0;
+  let failures = 0, connecting = false;
   const subscriber = randomUUID();
   const queue = createCashWakeQueue({
     drain: attemptDriverCashSync,
     nextRetry: nextDriverCashRetry,
     failed: error => (error as {retryable?: boolean})?.retryable !== false,
   });
-  bindDriverCashWake(queue.wake);
+  bindDriverCashWake(() => { queue.wake(); if (!socket) void connect(); });
   stopCurrent = () => { stopped = true; if (timer) clearTimeout(timer); socket?.disconnect(); queue.stop(); };
   function later(fn: () => void, ms: number) {
     if (stopped) return;
@@ -34,6 +34,8 @@ export function startDriverCashSync() {
     timer = setTimeout(fn, ms); timer.unref();
   }
   async function connect() {
+    if (stopped || connecting) return;
+    connecting = true;
     try {
       await waitForDatabaseReady();
       if (stopped || getDeviceRole() !== 'writer') return;
@@ -68,12 +70,21 @@ export function startDriverCashSync() {
           if (!current() || socket !== active) return;
           if (fresh.topic !== lease.topic) { active.disconnect(); void connect(); return; }
           later(() => void renew(), fresh.renew_after_ms);
-        } catch { if (current() && socket === active) reconnect(); }
+        } catch (error) {
+          if (current() && socket === active) {
+            if ((error as {retryable?:boolean})?.retryable === false) {
+              socket = undefined; active.disconnect(); setDriverCashConnectionError();
+            } else reconnect();
+          }
+        }
       }
       later(() => void renew(), lease.renew_after_ms);
-    } catch {
-      if (!stopped) reconnect();
-    }
+    } catch (error) {
+      if (!stopped) {
+        if ((error as {retryable?:boolean})?.retryable === false) setDriverCashConnectionError();
+        else reconnect();
+      }
+    } finally { connecting = false; }
   }
   function reconnect() {
     setDriverCashConnectionError();

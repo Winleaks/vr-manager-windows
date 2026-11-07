@@ -7,7 +7,7 @@ const code = ts.transpileModule(readFileSync(new URL('./driverCashNotifications.
 const flush=async()=>{for(let i=0;i<15;i++)await Promise.resolve();};
 function fixture() {
  const sockets:any[]=[];const timers=new Map<any,()=>void>();
- const state={role:'writer', wakes:0, stopped:0, acquisitions:0, invalidations:0, callback:undefined as any};
+ const state={error:null as any,role:'writer', wakes:0, stopped:0, acquisitions:0, invalidations:0, callback:undefined as any};
  const lease={protocol_version:1,topic:'cash-writer:'+'a'.repeat(64),expires_at:new Date(Date.now()+900000).toISOString(),renew_after_ms:600000,url:'https://qcblxsbzopvsgohfghrv.supabase.co',api_key:'public-test-key'};
  class Socket {
   status:any;event:any;closed=false;
@@ -23,7 +23,7 @@ function fixture() {
   '@supabase/realtime-js':{RealtimeClient:Socket},
   '../database/db':{db:{},waitForDatabaseReady:async()=>{}},
   '../device/deviceRole':{getDeviceRole:()=>state.role},
-  './vrBakerIntegration':{createVrBakerClient:()=>({request:async(action:string)=>{assert.equal(action,'driver.cash.subscribe');state.acquisitions++;return lease;}})},
+  './vrBakerIntegration':{createVrBakerClient:()=>({request:async(action:string)=>{assert.equal(action,'driver.cash.subscribe');state.acquisitions++;if(state.error)throw state.error;return lease;}})},
   './cashWakeQueue':{createCashWakeQueue:()=>({wake:()=>{state.wakes++;},stop:()=>{state.stopped++;}})},
   './driverCashSync':{setDriverCashConnectionError:()=>{},bindDriverCashWake:(cb:any)=>{state.callback=cb;},driverCashSourceId:()=> 'source',invalidateDriverCashEnvironment:()=>{state.invalidations++;}},
  };
@@ -52,4 +52,10 @@ test('role change to viewer closes socket; late callbacks and timer do not fetch
  const {api,state,sockets,timers}=fixture();api.startDriverCashSync();await flush();
  state.role='viewer';api.startDriverCashSync();sockets[0].event();sockets[0].status('SUBSCRIBED');await flush();
  assert.equal(sockets[0].closed,true);assert.equal(state.wakes,0);assert.equal(timers.size,0);assert.equal(state.acquisitions,1);
+});
+
+test('permanent API denial waits for an explicit retry or credential change',async()=>{
+ const {api,state,sockets,timers}=fixture();state.error={retryable:false};api.startDriverCashSync();await flush();
+ assert.equal(state.acquisitions,1);assert.equal(timers.size,0);assert.equal(sockets.length,0);
+ state.error=null;state.callback();await flush();assert.equal(state.acquisitions,2);assert.equal(sockets.length,1);
 });
