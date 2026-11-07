@@ -113,6 +113,7 @@ export interface ProtectedCreditNote {
 }
 
 export interface ProtectedCreditApplication {
+  transferredAt?: string;
   id: string;
   operationId: string;
   companyKey: string;

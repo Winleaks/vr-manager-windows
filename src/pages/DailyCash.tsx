@@ -1,3 +1,4 @@
+import { DriverCollectionsReport } from '../components/DriverCollectionsReport';
 import { confirmAction, notify } from '../utils/feedback';
 import { useCallback, useEffect, useState } from 'react';
 import { 
@@ -194,6 +195,8 @@ export function DailyCash() {
             )}
           </div>
         </div>
+
+        <DriverCollectionsReport startDate={dateFilter.startDate} endDate={dateFilter.endDate} refreshKey={storeTransactions} />
 
         {/* Dashboard Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

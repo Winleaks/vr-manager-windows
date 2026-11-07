@@ -1,6 +1,6 @@
 import { ProtectedPublicationReceipts } from './publicationReceipts.ts';
 import { prepareInvoiceHandoff, activateInvoiceHandoff } from '../database/invoiceHandoffs.ts';
-import { beginTransfer, completeTransfer, transferBlock, transferFingerprint, validateTransfer, assertTransfersUnchanged } from './transfer.ts';
+import { beginTransfer, completeTransfer, transferBlock, transferFingerprint, transferCreditAmount, validateTransfer, assertTransfersUnchanged } from './transfer.ts';
 import type { ProtectedTransferInput } from '../../src/shared/protectedTransfer.ts';
 import {driverCashHasPriority} from '../integrations/driverCashQueue';
 import {companyPaymentDate} from '../database/driverCash';
@@ -1692,7 +1692,7 @@ export async function getProtectedTransferPreview(webContentsId: number, invoice
     const invoice = latest.vault.invoices.find(row => row.id === requireText(invoiceId, 'Factura', 100));
     if (!invoice) throw Error('Factura nu există.');
     return { invoice, expectedVersion: transferFingerprint(latest.vault, invoice), blockedReason: transferBlock(latest.vault, invoice),
-      payments: latest.vault.payments.filter(row => row.invoiceId === invoice.id && !row.reversedAt), invoiceDate: localTodayIso() };
+      appliedCredit: invoice.transfer?.credits?.reduce((sum, row) => sum + row.amount, 0) ?? transferCreditAmount(latest.vault, invoice), payments: latest.vault.payments.filter(row => row.invoiceId === invoice.id && !row.reversedAt), invoiceDate: localTodayIso() };
   }));
 }
 

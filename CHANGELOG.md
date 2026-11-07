@@ -1,3 +1,15 @@
+### VR - Hub Management v0.1.144
+
+RO:
+- Facturile pot fi transferate în registrul normal cu creditul aplicat și încasările existente păstrate, fără o încasare nouă obligatorie.
+- Daily Cash permite selectarea șoferului și afișează încasările pe magazine și totalul după data încasării efective.
+- Corectările și reîncercările nu dublează creditul sau totalul încasărilor.
+
+EN:
+- Invoices can move to the normal register while retaining applied credit and existing payments, without requiring a new payment.
+- Daily Cash shows collections by store and the total for the selected driver, using the actual collection date.
+- Corrections and retries do not duplicate credit or collection totals.
+
 ### VR - Hub Management v0.1.143
 
 RO:

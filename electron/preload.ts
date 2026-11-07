@@ -96,6 +96,7 @@ export const desktopApi = {
     toggleActive: (id: number, isActive: boolean) => ipcRenderer.invoke('toggle-employee', id, isActive),
   },
   dailyCash: {
+    getDriverCollectionsReport: (start: string, end: string, driverId: number): Promise<import('../src/shared/driverCollections').DriverCollectionsReport> => ipcRenderer.invoke('get-driver-collections-report', start, end, driverId),
     getDriverCashStatus: () => ipcRenderer.invoke('driver-cash-status'),
     correctDriverReceipt: (data: {rootId:string;amount:number;expectedRevision:number}) => ipcRenderer.invoke('driver-cash-correct',data),
     wakeDriverCashSync: () => ipcRenderer.invoke('driver-cash-wake'),
@@ -187,7 +188,7 @@ export const desktopApi = {
     syncEntities: () => ipcRenderer.invoke('billing:syncEntities'),
   },
   protectedRegistry: {
-    getTransferPreview: (id: string): Promise<{ invoice: import('./protectedRegistry/types').ProtectedInvoice; expectedVersion: string; blockedReason: string | null; payments: import('./protectedRegistry/types').ProtectedPayment[]; invoiceDate: string }> => ipcRenderer.invoke('protectedRegistry:getTransferPreview', id),
+    getTransferPreview: (id: string): Promise<{ invoice: import('./protectedRegistry/types').ProtectedInvoice; expectedVersion: string; appliedCredit: number; blockedReason: string | null; payments: import('./protectedRegistry/types').ProtectedPayment[]; invoiceDate: string }> => ipcRenderer.invoke('protectedRegistry:getTransferPreview', id),
     transferInvoice: (input: import('../src/shared/protectedTransfer').ProtectedTransferInput): Promise<import('../src/shared/protectedTransfer').ProtectedTransferResult> => ipcRenderer.invoke('protectedRegistry:transferInvoice', input),
     statementDocument: (input: import('../src/shared/protectedStatement').ProtectedStatementInput): Promise<{ success: boolean; cancelled?: boolean; error?: string }> => ipcRenderer.invoke('protectedRegistry:statementDocument', input),
     syncStatus: (): Promise<import('./protectedRegistry/outbox').ProtectedSyncStatus> => ipcRenderer.invoke('protectedRegistry:syncStatus'),

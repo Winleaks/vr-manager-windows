@@ -9,7 +9,7 @@ import { installBillingPublication } from './billingPublication.ts';
 import { installDocumentSyncQueue } from './documentSyncQueue.ts';
 import { installNormalBillingVisibility, replaceNormalBillingVisibility, normalBillingReadDatabase } from './normalBillingVisibility.ts';
 import { prepareInvoiceHandoff, activateInvoiceHandoff } from './invoiceHandoffs.ts';
-import { beginTransfer, completeTransfer, transferFingerprint, transferBlock, validateTransfer, assertTransfersUnchanged } from '../protectedRegistry/transfer.ts';
+import { beginTransfer, completeTransfer, transferFingerprint, transferCreditAmount, transferBlock, validateTransfer, assertTransfersUnchanged } from '../protectedRegistry/transfer.ts';
 import { createEmptyProtectedVault } from '../protectedRegistry/types.ts';
 import { prepareTransferredPortalDocuments, prepareProtectedBillingDeliveries, protectedBillingInvoiceId } from '../protectedRegistry/billingPublication.ts';
 import { isChannelAllowedForRole } from '../device/viewerPolicy.ts';
@@ -64,12 +64,12 @@ test('mixed payment freezes source, reserves one invisible number, resumes and m
 
 test('full payment, duplicate confirmation, stale preview and invalid eligibility',t=>{
  const {db,vault,invoice,request}=fixture(t);
- for(const change of [{status:'cancelled'},{testDocument:true},{creditedAmount:1},{paidAmount:100}]) { const altered={...invoice,...change};assert.ok(transferBlock(vault,altered)); }
- vault.creditApplications.push({invoiceId:invoice.id} as any);assert.match(transferBlock(vault,invoice)!,/credit aplicat/);vault.creditApplications=[];
+ for(const change of [{status:'cancelled'},{testDocument:true},{creditedAmount:1},{paidAmount:101}]) { const altered={...invoice,...change};assert.ok(transferBlock(vault,altered)); }
+ vault.creditApplications.push({invoiceId:invoice.id} as any);assert.match(transferBlock(vault,invoice)!,/Creditul aplicat/);vault.creditApplications=[];
  vault.creditNotes.push({status:'issued',sourceInvoiceIds:[invoice.id]} as any);assert.match(transferBlock(vault,invoice)!,/Credit Notes/);vault.creditNotes=[];
  assert.throws(()=>beginTransfer(vault,{...request,amount:71},'2026-10-18'),/depășește/);
  assert.throws(()=>beginTransfer(vault,{...request,expectedVersion:'stale'},'2026-10-18'),/modificat/);
- for(const change of [{amount:0},{amount:-1},{amount:Infinity},{paymentDate:'2026-10-19'},{cardReference:''},{bankName:''},{bankName:'Unknown'}]) assert.throws(()=>validateTransfer({...request,...change},'2026-10-18'));
+ for(const change of [{amount:-1},{amount:Infinity},{paymentDate:'2026-10-19'},{cardReference:''},{bankName:''},{bankName:'Unknown'}]) assert.throws(()=>validateTransfer({...request,...change},'2026-10-18'));
  const full={...request,amount:70};beginTransfer(vault,full,'2026-10-18');beginTransfer(vault,full,'2026-10-19');assert.throws(()=>beginTransfer(vault,request,'2026-10-18'),/altă operațiune/);
  const target=prepareInvoiceHandoff(db,vault,invoice);completeTransfer(vault,invoice.id,full.operationId,target);activateInvoiceHandoff(db,vault,invoice);
  assert.equal((db.prepare('SELECT status FROM invoices').get() as any).status,'paid');
@@ -113,8 +113,8 @@ test('Viewer cannot preview or execute transfer IPC',()=>{
 import { protectedOutboxHarness } from '../security/fixtures/protectedOutboxHarness.mts';
 for (const failure of ['registru-separat.pending','registru-separat.vault','registru-separat.manifest','delete','after-prepare','after-commit','after-activate']) {
  test(`actual encrypted service recovers ${failure} without duplicating money/number`,async t=>{
-  const {db,vault,invoice,request}=fixture(t); let injected=false;
-  const bindings={db,localTodayIso:()=> '2026-10-18',beginTransfer,completeTransfer,transferBlock,transferFingerprint,validateTransfer,
+  const {db,vault,invoice,request}=fixture(t); addCredit(vault,invoice); request.expectedVersion=transferFingerprint(vault,invoice); let injected=false;
+  const bindings={db,localTodayIso:()=> '2026-10-18',beginTransfer,completeTransfer,transferBlock,transferFingerprint, transferCreditAmount,validateTransfer,
    scheduleProtectedBillingPublication:()=>{},
    prepareInvoiceHandoff:(...args:Parameters<typeof prepareInvoiceHandoff>)=>{const result=prepareInvoiceHandoff(...args);if(failure==='after-prepare'&&!injected){injected=true;throw Error('interrupted after prepare');}return result;},
    activateInvoiceHandoff:(...args:Parameters<typeof activateInvoiceHandoff>)=>{if(failure==='after-commit'&&!injected){injected=true;throw Error('interrupted after commit');}const result=activateInvoiceHandoff(...args);if(failure==='after-activate'&&!injected){injected=true;throw Error('interrupted after activate');}return result;}
@@ -130,6 +130,8 @@ for (const failure of ['registru-separat.pending','registru-separat.vault','regi
   assert.equal(db.prepare('SELECT * FROM invoices').all().length,1);assert.equal(db.prepare('SELECT * FROM payments').all().length,2);
   assert.equal((db.prepare('SELECT paid_amount FROM invoices').get() as any).paid_amount,80);
   assert.equal(restarted.current().invoices.find((row:any)=>row.id===invoice.id).transfer.state,'committed');
+  assert.equal(db.prepare('SELECT * FROM invoice_credit_applications').all().length,1);
+  assert.equal(restarted.current().creditEntries[0].availableAmount,0);
  });
 }
 
@@ -199,7 +201,7 @@ test('simultaneous confirmations reserve different sequence numbers and replay o
  const {db,vault,invoice,request}=fixture(t);
  const second={...structuredClone(invoice),id:randomUUID(),reference:'TGBL-100',sequenceNumber:100,paidAmount:0};vault.invoices.push(second);
  const other={...request,invoiceId:second.id,operationId:randomUUID(),expectedVersion:transferFingerprint(vault,second)};
- const f=protectedOutboxHarness(t,undefined,vault,{db,localTodayIso:()=> '2026-10-18',beginTransfer,completeTransfer,transferBlock,transferFingerprint,validateTransfer,prepareInvoiceHandoff,activateInvoiceHandoff,scheduleProtectedBillingPublication:()=>{}});
+ const f=protectedOutboxHarness(t,undefined,vault,{db,localTodayIso:()=> '2026-10-18',beginTransfer,completeTransfer,transferBlock,transferFingerprint, transferCreditAmount,validateTransfer,prepareInvoiceHandoff,activateInvoiceHandoff,scheduleProtectedBillingPublication:()=>{}});
  const results=await Promise.all([f.api.transferProtectedInvoice(1,request),f.api.transferProtectedInvoice(1,other),f.api.transferProtectedInvoice(1,request)]);
  assert.equal(results[0].invoiceNumber,results[2].invoiceNumber);
  assert.notEqual(results[0].invoiceNumber,results[1].invoiceNumber);
@@ -237,7 +239,7 @@ test('merged portal acknowledgement drains only the delivered normal revision',a
 
 test('preview reconciles a lost cloud acknowledgement before the UI chooses its retry request',async t=>{
  const {db,vault,invoice,request}=fixture(t);
- const f=protectedOutboxHarness(t,undefined,vault,{db,localTodayIso:()=> '2026-10-18',beginTransfer,completeTransfer,transferBlock,transferFingerprint,validateTransfer,prepareInvoiceHandoff,activateInvoiceHandoff,scheduleProtectedBillingPublication:()=>{}});
+ const f=protectedOutboxHarness(t,undefined,vault,{db,localTodayIso:()=> '2026-10-18',beginTransfer,completeTransfer,transferBlock,transferFingerprint, transferCreditAmount,validateTransfer,prepareInvoiceHandoff,activateInvoiceHandoff,scheduleProtectedBillingPublication:()=>{}});
  f.state.failAt='registru-separat.vault';f.state.afterWrite=true;
  await assert.rejects(f.api.transferProtectedInvoice(1,request));
  assert.equal(f.sessions.get(1).vault.invoices[0].transfer,undefined,'memory is genuinely stale after lost acknowledgement');
@@ -265,4 +267,59 @@ test('portal prepares transferred PDF before replacing the old invoice and retri
  db.prepare("UPDATE document_sync_queue SET state='pending' WHERE document_id=?").run(target.invoiceId);
  await assert.rejects(()=>prepareTransferredPortalDocuments(db,company,uploader,()=>{throw Error('Writer changed');}),/Writer changed/);
  assert.equal(uploads,2);
+});
+
+function addCredit(vault: any, invoice: any, amount = 20) {
+ const id=randomUUID();
+ vault.creditEntries.push({id,companyKey:invoice.companyKey,issuerCode:invoice.issuerCode,sourceType:'payment_overpayment',sourceId:randomUUID(),originalAmount:amount,availableAmount:0,createdAt:'2026-10-02T10:00:00Z',testEntry:false});
+ vault.creditApplications.push({id:randomUUID(),invoiceId:invoice.id,companyKey:invoice.companyKey,issuerCode:invoice.issuerCode,amount,allocations:[{creditEntryId:id,amount}],createdAt:'2026-10-02T10:00:00Z',reversedAt:null,testEntry:false});
+}
+test('applied credit moves once without replenishing its source, creating cash or changing the outstanding amount',t=>{
+ const {db,vault,invoice,request}=fixture(t);addCredit(vault,invoice);
+ const revised={...request,expectedVersion:transferFingerprint(vault,invoice),amount:40};
+ assert.equal(transferBlock(vault,invoice),null);
+ assert.throws(()=>beginTransfer(vault,{...revised,amount:51},'2026-10-18'),/depășește/);
+ beginTransfer(vault,revised,'2026-10-18');
+ const target=prepareInvoiceHandoff(db,vault,invoice);
+ completeTransfer(vault,invoice.id,revised.operationId,target);
+ db.exec("CREATE TRIGGER fail_credit BEFORE INSERT ON invoice_credit_applications BEGIN SELECT RAISE(ABORT,'credit failure'); END");
+ assert.throws(()=>activateInvoiceHandoff(db,vault,invoice),/credit failure/);
+ assert.equal(db.prepare('SELECT * FROM payments').all().length,0);
+ assert.equal(db.prepare('SELECT * FROM company_credit_entries').all().length,0);
+ db.exec('DROP TRIGGER fail_credit');
+ activateInvoiceHandoff(db,vault,invoice);activateInvoiceHandoff(db,vault,invoice);
+ assert.equal(vault.creditEntries[0].availableAmount,0);assert.ok(vault.creditApplications[0].transferredAt);
+ assert.equal(db.prepare('SELECT * FROM invoice_credit_applications').all().length,1);
+ assert.equal((db.prepare('SELECT sum(amount) AS n FROM invoice_credit_applications').get() as any).n,20);
+ assert.equal((db.prepare('SELECT available_amount FROM company_credit_entries').get() as any).available_amount,0);
+ assert.equal((db.prepare('SELECT paid_amount FROM invoices').get() as any).paid_amount,70);
+ assert.equal(prepareProtectedBillingDeliveries(db,vault)[0].invoices[0].outstanding,1000);
+ assert.equal(db.prepare('SELECT * FROM cash_transactions').all().length,0);
+});
+test('credit plus payments can fully settle the new invoice and a frozen credit cannot be returned',t=>{
+ const {db,vault,invoice,request}=fixture(t);addCredit(vault,invoice);
+ beginTransfer(vault,{...request,expectedVersion:transferFingerprint(vault,invoice)},'2026-10-18');
+ const frozen=structuredClone(vault),modified=structuredClone(vault);modified.creditApplications[0].reversedAt='2026-10-19';
+ assert.throws(()=>assertTransfersUnchanged(frozen,modified),/blocată/);
+ const target=prepareInvoiceHandoff(db,vault,invoice);completeTransfer(vault,invoice.id,request.operationId,target);activateInvoiceHandoff(db,vault,invoice);
+ assert.equal((db.prepare('SELECT status FROM invoices').get() as any).status,'paid');
+});
+
+test('transfer without new payment preserves outstanding and fully credited invoices',t=>{
+ for(const credit of [20,70]) {
+  const {db,vault,invoice,request}=fixture(t);addCredit(vault,invoice,credit);
+  const input=validateTransfer({...request,amount:0,cardReference:'',bankName:undefined,expectedVersion:transferFingerprint(vault,invoice)},'2026-10-18');
+  beginTransfer(vault,input,'2026-10-18');const target=prepareInvoiceHandoff(db,vault,invoice);
+  completeTransfer(vault,invoice.id,input.operationId,target);activateInvoiceHandoff(db,vault,invoice);
+  assert.equal(db.prepare('SELECT * FROM payments').all().length,1);
+  assert.equal((db.prepare('SELECT paid_amount FROM invoices').get() as any).paid_amount,30);
+  assert.equal(prepareProtectedBillingDeliveries(db,vault)[0].invoices[0].outstanding,(70-credit)*100);
+ }
+});
+
+test('credit transfer rejects a mismatched company, issuer or allocation before freezing',t=>{
+ const {vault,invoice,request}=fixture(t);addCredit(vault,invoice);
+ for(const modify of [(v:any)=>{v.creditApplications[0].issuerCode='vatra';},(v:any)=>{v.creditApplications[0].companyKey='local:999';},(v:any)=>{v.creditApplications[0].allocations[0].amount=21;}]) {
+  const invalid=structuredClone(vault);modify(invalid);assert.throws(()=>beginTransfer(invalid,{...request,expectedVersion:transferFingerprint(invalid,invalid.invoices[0])},'2026-10-18'),/Creditul aplicat/);assert.equal(invalid.invoices[0].transfer,undefined);
+ }
 });

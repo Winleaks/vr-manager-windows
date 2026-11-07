@@ -44,7 +44,7 @@ export function ProtectedInvoiceList({ invoices, loading, error, reload, notify,
           <td className="px-5 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold whitespace-nowrap ${invoice.status === 'paid' ? 'bg-emerald-50 text-emerald-700' : invoice.status === 'cancelled' ? 'bg-slate-100 text-slate-500' : 'bg-amber-50 text-amber-700'}`}>{invoice.transfer ? invoice.transfer.state === 'pending' ? 'Transfer în curs' : 'Transferată' : labels[invoice.status] || invoice.status}</span></td>
           <td className="px-5 py-4"><div className="flex flex-wrap items-center gap-1 min-w-36">
             <ProtectedDocumentActions id={invoice.id} status={invoice.status} notify={notify} />
-            {!readOnly && onTransfer && (invoice.status !== 'cancelled' || invoice.transfer) && <Action label={invoice.transfer ? 'Reia / verifică transferul' : 'Încasează cu cardul și transferă'} icon={CreditCard} onClick={() => onTransfer(invoice)} />}
+            {!readOnly && onTransfer && (invoice.status !== 'cancelled' || invoice.transfer) && <Action label={invoice.transfer ? 'Reia / verifică transferul' : 'Transferă în registrul normal'} icon={CreditCard} onClick={() => onTransfer(invoice)} />}
             {!readOnly && !invoice.transfer && invoice.status !== 'cancelled' && <>
               <Action label="Editează factura" icon={Edit3} onClick={() => onEdit(invoice)} />
               <Action label="Schimbă emitentul" icon={ArrowRightLeft} onClick={() => onIssuerChange(invoice)} />

@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { syncInvoiceFinancialStatus } from './creditNotes.ts';
 import { createHash } from 'node:crypto';
 import { isIssuerReady, issuerSnapshot, type BillingIssuerRow } from './billingIssuers.ts';
 import type { ProtectedInvoice, ProtectedRegistryVault } from '../protectedRegistry/types.ts';
@@ -27,10 +28,11 @@ function payload(vault: ProtectedRegistryVault, source: ProtectedInvoice) {
     if (!payment) throw Error('Încasarea originală nu mai există.');
     return { amount: payment.amount, date: payment.paymentDate, method: payment.method, old: true };
   });
-  payments.push({ amount: transfer.request.amount, date: transfer.request.paymentDate, method: 'card', old: false });
+  if (transfer.request.amount > 0) payments.push({ amount: transfer.request.amount, date: transfer.request.paymentDate, method: 'card', old: false });
   return { companyId: source.companyId, storeId: source.storeId, storeExternalId: source.storeExternalId, issuerCode: source.issuerCode,
     invoiceDate: transfer.invoiceDate, total: source.totalAmount, items: source.items.map(item => ({ name: item.productName, nameRo: item.productNameRo, unit: item.unit,
       quantity: item.quantity, price: item.unitPrice, total: item.totalPrice, externalId: item.externalProductId, productOrder: item.productOrder })),
+    ...(transfer.credits?.length ? { credits: transfer.credits.map(row => ({ amount: row.amount, date: row.createdAt })) } : {}),
     payments, cardReference: transfer.request.cardReference, ...(transfer.request.bankName === undefined ? {} : { bankName: transfer.request.bankName }) };
 }
 export function prepareInvoiceHandoff(db: Database.Database, vault: ProtectedRegistryVault, source: ProtectedInvoice) {
@@ -50,7 +52,7 @@ export function prepareInvoiceHandoff(db: Database.Database, vault: ProtectedReg
     if (!issuer || !isIssuerReady(issuer)) throw Error('Emitentul original nu este configurat complet.');
     if (!data.items.length || data.items.reduce((sum, item) => sum + cents(item.total), 0) !== cents(data.total)) throw Error('Totalul pozițiilor nu corespunde facturii.');
     for (const item of data.items) if (!Number.isFinite(item.quantity) || item.quantity <= 0 || cents(item.quantity * item.price) !== cents(item.total)) throw Error('O poziție a facturii necesită verificare.');
-    if (data.payments.reduce((sum, row) => sum + cents(row.amount), 0) > cents(data.total)) throw Error('Încasările depășesc factura.');
+    if (data.payments.reduce((sum, row) => sum + cents(row.amount), 0) + (data.credits || []).reduce((sum, row) => sum + cents(row.amount), 0) > cents(data.total)) throw Error('Încasările depășesc factura.');
     const number = `${issuer.invoice_series}-${issuer.next_invoice_number}`;
     // Inert until the encrypted source commit is confirmed. No PDF job yet.
     const invoiceId = Number(db.prepare("INSERT INTO invoices(store_id,invoice_number,invoice_date,total_amount,paid_amount,status) VALUES(?,?,?,?,0,'cancelled')").run(data.storeId, number, data.invoiceDate, data.total).lastInsertRowid);
@@ -79,9 +81,16 @@ export function activateInvoiceHandoff(db: Database.Database, vault: ProtectedRe
       // Previously reconciled cash allocations must not be edited as new cash.
       if (row.old) db.prepare('INSERT INTO invoice_handoff_payments(payment_id) VALUES(?)').run(id);
     }
+    for (const credit of data.credits || []) {
+      const entryId = Number(db.prepare("INSERT INTO company_credit_entries(company_id,issuer_id,source_type,original_amount,available_amount) VALUES(?,?,'legacy',?,0)")
+        .run(data.companyId,identity.issuer_id,credit.amount).lastInsertRowid);
+      db.prepare('INSERT INTO invoice_credit_applications(credit_entry_id,invoice_id,amount,reason,applied_at) VALUES(?,?,?,?,?)')
+        .run(entryId,target.invoiceId,credit.amount,'Credit preluat la emiterea facturii',credit.date);
+    }
     const paid = data.payments.reduce((sum,row)=>sum+cents(row.amount),0);
     db.prepare("UPDATE invoice_handoffs SET state='ready' WHERE operation_id=?").run(source.transfer!.operationId);
     db.prepare('UPDATE invoices SET paid_amount=?,status=? WHERE id=?').run(paid/100,paid===cents(data.total)?'paid':'partial',target.invoiceId);
+    syncInvoiceFinancialStatus(db,target.invoiceId);
     return target;
   })();
 }

@@ -1,3 +1,4 @@
+import { driverCollectionsReport } from '../database/driverCollections';
 import {db} from '../database/db';
 import {correctHubDriverCash,driverCashStatus,retryDriverCashConflict,resumeDriverCashSync,discardRejectedDriverCashOffice,resolveDriverCashReview,wakeDriverCashSync} from '../integrations/driverCashSync';
 import { app, shell } from 'electron';
@@ -47,6 +48,8 @@ export function registerDailyCashHandlers() {
   handleTrustedIpc('driver-cash-wake',()=>wakeDriverCashSync());
   handleTrustedIpc('driver-cash-review',(_e,operation,decision,cashId)=>resolveDriverCashReview(operation,decision,cashId));
   handleTrustedIpc('driver-cash-sync', () => resumeDriverCashSync());
+
+  handleTrustedIpc('get-driver-collections-report', (_e, start, end, driverId) => driverCollectionsReport(db, start, end, driverId));
 
   // Cash Transactions
   handleTrustedIpc('get-active-cash-day', () => {
