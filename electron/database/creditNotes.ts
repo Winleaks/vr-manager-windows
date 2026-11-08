@@ -228,13 +228,31 @@ export function getInvoiceFinancials(connection: SqliteDatabase, invoiceIdInput:
   const invoiceId = requirePositiveInteger(invoiceIdInput, 'Factura');
   const row = connection.prepare('SELECT total_amount, paid_amount, status FROM invoices WHERE id = ?').get(invoiceId) as { total_amount: number; paid_amount: number; status: string } | undefined;
   if (!row) throw new Error('Factura nu există.');
+  return financialAmounts(row, creditedTotal(connection, invoiceId), creditApplied(connection, invoiceId));
+}
+
+function financialAmounts(row: {total_amount:number;paid_amount:number;status:string}, credited: number, applied: number) {
   const grossAmount = roundMoney(row.total_amount);
-  const creditedAmount = roundMoney(creditedTotal(connection, invoiceId));
+  const creditedAmount = roundMoney(credited);
   const netAmount = roundMoney(Math.max(0, grossAmount - creditedAmount));
   const cashPaid = roundMoney(row.paid_amount);
-  const appliedCredit = roundMoney(creditApplied(connection, invoiceId));
+  const appliedCredit = roundMoney(applied);
   const outstanding = roundMoney(Math.max(0, netAmount - cashPaid - appliedCredit));
   return { grossAmount, creditedAmount, netAmount, cashPaid, appliedCredit, outstanding, isCancelled: row.status === 'cancelled' };
+}
+
+/** Read-only batches retain the caller's visibility projection and original rounding rules. */
+export function getInvoiceFinancialsBatch(connection: SqliteDatabase, invoiceIds: number[]) {
+  const result = new Map<number, ReturnType<typeof financialAmounts>>();
+  const ids = [...new Set(invoiceIds.map(id => requirePositiveInteger(id, 'Factura')))];
+  for (let offset=0; offset<ids.length; offset+=500) {
+    const batch=ids.slice(offset,offset+500), marks=batch.map(()=>'?').join(',');
+    const rows=connection.prepare(`SELECT id,total_amount,paid_amount,status FROM invoices WHERE id IN (${marks})`).all(...batch) as Array<{id:number;total_amount:number;paid_amount:number;status:string}>;
+    const credited=new Map((connection.prepare(`SELECT link.invoice_id AS id,SUM(link.credited_total) AS amount FROM credit_note_invoice_links link JOIN credit_notes cn ON cn.id=link.credit_note_id WHERE cn.status='issued' AND link.invoice_id IN (${marks}) GROUP BY link.invoice_id`).all(...batch) as {id:number;amount:number}[]).map(r=>[r.id,r.amount]));
+    const applied=new Map((connection.prepare(`SELECT invoice_id AS id,SUM(amount) AS amount FROM invoice_credit_applications WHERE reversed_at IS NULL AND invoice_id IN (${marks}) GROUP BY invoice_id`).all(...batch) as {id:number;amount:number}[]).map(r=>[r.id,r.amount]));
+    for(const row of rows) result.set(row.id,financialAmounts(row,credited.get(row.id)||0,applied.get(row.id)||0));
+  }
+  return result;
 }
 
 export function syncInvoiceFinancialStatus(connection: SqliteDatabase, invoiceId: number) {

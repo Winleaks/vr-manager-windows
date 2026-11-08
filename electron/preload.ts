@@ -144,6 +144,7 @@ export const desktopApi = {
     recordCompanyPayment: (data: any) => ipcRenderer.invoke('billing:recordCompanyPayment', data),
     updatePayment: (data: UpdatePaymentInput) => ipcRenderer.invoke('billing:updatePayment', data),
     deletePayment: (data: DeletePaymentInput) => ipcRenderer.invoke('billing:deletePayment', data),
+    getInvoicePage: (filters: {page?: number; search?: string; status?: string; startDate?: string; endDate?: string; issuerId?: number}): Promise<{rows: any[]; total: number; page: number; pageSize: number}> => ipcRenderer.invoke('billing:getInvoicePage', filters),
     getInvoices: (startDate?: string, endDate?: string, issuerId?: number) =>
       ipcRenderer.invoke('billing:getInvoices', startDate, endDate, issuerId),
     createManualInvoice: (data: { storeId?: number; issuerId?: number; vatRatePercent?: 0 | 20; oneOffCustomer?: { name: string; address?: string; cui?: string; regCom?: string; phone?: string }; invoiceDate: string; items: Array<{ productId?: number; productName?: string; nameRo?: string; unit?: string; quantity: number; unitPrice: number }> }) =>

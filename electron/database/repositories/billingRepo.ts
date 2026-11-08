@@ -50,6 +50,7 @@ import {
   getCreditNoteDraft,
   getCreditNotes,
   getInvoiceFinancials,
+  getInvoiceFinancialsBatch,
   reverseCreditApplicationTransaction,
   type ApplyCompanyCreditInput,
   type CreateCreditNoteInput,
@@ -290,28 +291,24 @@ function companiesAndStores(db: typeof import('../db').db) {
   const stores = db.prepare('SELECT * FROM stores WHERE COALESCE(is_one_off, 0) = 0 ORDER BY name').all() as any[];
 
   const retired = retiredLegacyCompanyIds(db);
+  const storesByCompany = new Map<number, any[]>();
+  for (const store of stores) { const list=storesByCompany.get(store.company_id)||[]; list.push(store); storesByCompany.set(store.company_id,list); }
+  const open = db.prepare("SELECT i.id,s.company_id FROM invoices i JOIN stores s ON s.id=i.store_id WHERE i.status!='cancelled' AND COALESCE(s.is_one_off,0)=0").all() as {id:number;company_id:number}[];
+  const financials = getInvoiceFinancialsBatch(db, open.map(row=>row.id));
+  const totals = new Map<number,{count:number;amount:number}>();
+  for(const row of open) { const amount=financials.get(row.id)!.outstanding; if(amount<=0.005)continue; const total=totals.get(row.company_id)||{count:0,amount:0};total.count++;total.amount+=amount;totals.set(row.company_id,total); }
+  const creditsByCompany = new Map<number,any[]>();
+  const credits=db.prepare(`SELECT cic.company_id,cic.issuer_id,cic.balance,bi.legal_name AS issuer_name,bi.code AS issuer_code,bi.color AS issuer_color FROM company_issuer_credits cic JOIN billing_issuers bi ON bi.id=cic.issuer_id ORDER BY bi.is_default DESC,bi.legal_name`).all() as any[];
+  for(const {company_id,...credit} of credits){const list=creditsByCompany.get(company_id)||[];list.push(credit);creditsByCompany.set(company_id,list);}
   return flagPossibleCompanyDuplicates(companies.filter(c=>!retired.has(c.id))).map(c => {
-    const compStores = stores.filter(s => s.company_id === c.id);
-    const storeIds = compStores.map(s => s.id);
-    let unpaidInvoicesCount = 0;
-    let unpaidTotal = 0;
-
-    if (storeIds.length > 0) {
-      const placeholders = storeIds.map(() => '?').join(',');
-      const invoiceIds = db.prepare(`SELECT id FROM invoices WHERE store_id IN (${placeholders}) AND status != 'cancelled'`).all(...storeIds) as Array<{ id: number }>;
-      const balances = invoiceIds.map((row) => getInvoiceFinancials(db, row.id)).filter((row) => row.outstanding > 0.005);
-      unpaidInvoicesCount = balances.length;
-      unpaidTotal = balances.reduce((sum, row) => sum + row.outstanding, 0);
-    }
+    const compStores = storesByCompany.get(c.id)||[];
+    const unpaidInvoicesCount = totals.get(c.id)?.count||0;
+    const unpaidTotal = totals.get(c.id)?.amount||0;
 
     return {
       ...c,
       credit_balance: c.credit_balance || 0,
-      issuerCredits: db.prepare(`
-        SELECT cic.issuer_id, cic.balance, bi.legal_name AS issuer_name, bi.code AS issuer_code, bi.color AS issuer_color
-        FROM company_issuer_credits cic JOIN billing_issuers bi ON bi.id = cic.issuer_id
-        WHERE cic.company_id = ? ORDER BY bi.is_default DESC, bi.legal_name
-      `).all(c.id),
+      issuerCredits: creditsByCompany.get(c.id)||[],
       stores: compStores,
       unpaidInvoicesCount,
       unpaidTotal
@@ -349,12 +346,16 @@ export function getCompanyProfileDetails(companyId: number) {
       ORDER BY i.invoice_date DESC, i.id DESC
     `).all(...storeIds) as any[];
 
+    const financialsById = getInvoiceFinancialsBatch(db, invoices.map(inv=>inv.id));
+    const itemsByInvoice = new Map<number,any[]>();
+    for(let offset=0;offset<invoices.length;offset+=500){
+      const ids=invoices.slice(offset,offset+500).map(inv=>inv.id);
+      const rows=db.prepare(`SELECT * FROM invoice_items WHERE invoice_id IN (${ids.map(()=>'?').join(',')}) ORDER BY CASE WHEN product_order IS NULL THEN 1 ELSE 0 END,product_order,id`).all(...ids) as any[];
+      for(const item of rows){const list=itemsByInvoice.get(item.invoice_id)||[];list.push(item);itemsByInvoice.set(item.invoice_id,list);}
+    }
     invoices = invoices.map(inv => {
-      const items = db.prepare(`
-        SELECT * FROM invoice_items WHERE invoice_id = ?
-        ORDER BY CASE WHEN product_order IS NULL THEN 1 ELSE 0 END, product_order, id
-      `).all(inv.id) as any[];
-      const financials = getInvoiceFinancials(db, inv.id);
+      const items = itemsByInvoice.get(inv.id)||[];
+      const financials = financialsById.get(inv.id)!;
       return {
         ...inv,
         ...financials,
@@ -538,6 +539,50 @@ export function getInvoiceById(invoiceIdInput: number) {
 export function getPaymentReport(from: string, to: string) { return paymentReport(normalRead(), from, to); }
 export function getStatement(companyId: number, issuerId: number, from: string, to: string) { return statementReport(normalRead(), companyId, issuerId, from, to); }
 
+const invoiceSearchConnections = new WeakSet<object>();
+
+// Bounded list read: full document hydration remains exclusive to getInvoiceById.
+export function getInvoicePage(input: unknown) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw Error('Filtre invalide.');
+  if (!invoiceSearchConnections.has(db)) {
+    db.function('invoice_search_lower', {deterministic:true}, value => typeof value === 'string' ? value.toLowerCase() : '');
+    invoiceSearchConnections.add(db);
+  }
+  const { page = 1, search = '', status = 'all', startDate, endDate, issuerId } = input as Record<string, unknown>;
+  if (!Number.isSafeInteger(page) || Number(page) < 1 || Number(page) > 1000000) throw Error('Pagina invalidă.');
+  if (typeof search !== 'string' || search.length > 200) throw Error('Căutare invalidă.');
+  if (typeof status !== 'string' || !['all','paid','partial','unpaid','cancelled','credited'].includes(status)) throw Error('Status invalid.');
+  const dateValid = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0,10) === v;
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+  if (startDate !== undefined || endDate !== undefined) {
+    if (!dateValid(startDate) || !dateValid(endDate) || startDate > endDate) throw Error('Perioadă invalidă.');
+    where.push('i.invoice_date BETWEEN ? AND ?'); params.push(startDate, endDate);
+  }
+  if (issuerId !== undefined) {
+    if (!Number.isSafeInteger(issuerId) || Number(issuerId) <= 0) throw Error('Emitent invalid.');
+    where.push('ii.issuer_id = ?'); params.push(Number(issuerId));
+  }
+  if (status !== 'all') { where.push('i.status = ?'); params.push(status); }
+  if (search.trim()) {
+    where.push("(instr(invoice_search_lower(i.invoice_number),invoice_search_lower(?)) > 0 OR instr(invoice_search_lower(s.name),invoice_search_lower(?)) > 0 OR instr(invoice_search_lower(c.name),invoice_search_lower(?)) > 0 OR instr(invoice_search_lower(cl.name),invoice_search_lower(?)) > 0)");
+    params.push(...Array(4).fill(search.trim()));
+  }
+  const connection = normalRead();
+  const from = ` FROM invoices i JOIN stores s ON s.id=i.store_id JOIN companies c ON c.id=s.company_id JOIN clients cl ON cl.id=c.client_id LEFT JOIN invoice_identities ii ON ii.invoice_id=i.id`;
+  const filter = where.length ? ` WHERE ${where.join(' AND ')}` : '';
+  return db.transaction(() => {
+    const total = (connection.prepare('SELECT COUNT(*) AS total'+from+filter).get(...params) as {total:number}).total;
+    const currentPage = Math.min(Number(page), Math.max(1, Math.ceil(total / 50)));
+    const ids = connection.prepare('SELECT i.id'+from+filter+' ORDER BY i.invoice_date DESC, ii.sequence_number DESC, i.id DESC LIMIT 50 OFFSET ?').all(...params, (currentPage-1)*50) as {id:number}[];
+    const rows = ids.length ? connection.prepare(invoiceSelect+` WHERE i.id IN (${ids.map(()=>'?').join(',')}) ORDER BY i.invoice_date DESC, ii.sequence_number DESC, i.id DESC`).all(...ids.map(row=>row.id)) as any[] : [];
+    return { page: currentPage, pageSize: 50, total, rows: rows.map(inv => {
+      const { issuer_snapshot_json: _snapshot, ...summary } = inv;
+      return { ...summary, ...readInvoicePaymentTerms(db, inv.id, inv.invoice_date), ...getInvoiceFinancials(db, inv.id) };
+    }) };
+  })();
+}
+
 export function getInvoicesByDateRange(startDate?: string, endDate?: string, issuerId?: number) {
   const db = normalRead();
   let query = invoiceSelect;
@@ -585,7 +630,8 @@ export function getBillingStats(issuerId?: number, from?: string, to?: string) {
   const db = normalRead();
   if (from !== undefined || to !== undefined) return weeklyBillingStats(db, issuerId, from!, to!);
   const invoiceIds = db.prepare(`SELECT i.id FROM invoices i LEFT JOIN invoice_identities ii ON ii.invoice_id = i.id WHERE i.status != 'cancelled' AND (? IS NULL OR ii.issuer_id = ?)`).all(issuerId ?? null, issuerId ?? null) as Array<{ id: number }>;
-  const rows = invoiceIds.map((row) => getInvoiceFinancials(db, row.id));
+  const batch = getInvoiceFinancialsBatch(db, invoiceIds.map(row=>row.id));
+  const rows = invoiceIds.map(row=>batch.get(row.id)!);
   return {
     totalInvoiced: rows.reduce((sum, row) => sum + row.grossAmount, 0),
     totalCredited: rows.reduce((sum, row) => sum + row.creditedAmount, 0),

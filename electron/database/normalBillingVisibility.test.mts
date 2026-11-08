@@ -104,3 +104,65 @@ test('visibility migration/replica and failed writes retain data and fail closed
     assert.equal(repo.getInvoicesByDateRange().length,1);
   } finally { db.close(); }
 });
+
+
+test('paged invoices preserve visibility, financials, filters and validate untrusted parameters', () => {
+ const {db,repo}=fixture();
+ try {
+  visibility.replaceNormalBillingVisibility(db,[2]);
+  db.exec("INSERT INTO company_credit_entries(id,company_id,issuer_id,source_type,original_amount,available_amount) VALUES(20,1,1,'legacy',15,0); INSERT INTO invoice_credit_applications(credit_entry_id,invoice_id,amount,reason) VALUES(20,1,15,'fixture'); UPDATE stores SET name='Școală' WHERE id=1;");
+  assert.equal(repo.getInvoicePage({search:'șCOALĂ'}).total,1);
+  const page=repo.getInvoicePage({});
+  assert.equal(page.total,1); assert.equal(page.rows.length,1);
+  const full=repo.getInvoiceById(1);
+  for(const key of ['grossAmount','creditedAmount','netAmount','cashPaid','appliedCredit','outstanding','due_date']) assert.equal(page.rows[0][key],full[key],key);
+  assert.deepEqual(credits.getInvoiceFinancialsBatch(db,[1,2]).get(1),credits.getInvoiceFinancials(db,1));
+  assert.equal(repo.getAllCompaniesAndStores()[0].unpaidTotal,55);
+  assert.equal(credits.getInvoiceFinancialsBatch(visibility.normalBillingReadDatabase(db),[1,2]).has(2),false);
+  db.exec("UPDATE invoice_credit_applications SET reversed_at=CURRENT_TIMESTAMP WHERE credit_entry_id=20; UPDATE invoices SET status='cancelled' WHERE id=2;");
+  assert.deepEqual(credits.getInvoiceFinancialsBatch(db,[1,2]).get(1),credits.getInvoiceFinancials(db,1));
+  assert.deepEqual(credits.getInvoiceFinancialsBatch(db,[1,2]).get(2),credits.getInvoiceFinancials(db,2));
+  assert.equal(page.rows[0].appliedCredit,15); assert.equal(page.rows[0].outstanding,55);
+  assert.equal(page.rows[0].items,undefined); assert.equal(page.rows[0].issuer_snapshot_json,undefined);
+  assert.equal(repo.getInvoicePage({search:'Hidden'}).total,0);
+  assert.equal(repo.getInvoicePage({search:'normal company',status:'partial',issuerId:1}).total,1);
+  assert.equal(repo.getInvoicePage({search:'TEST-2'}).total,0);
+  assert.equal(repo.getInvoicePage({search:'%'}).total,0);
+  assert.equal(repo.getInvoicePage({startDate:'2026-09-21',endDate:'2026-09-30'}).total,0);
+  for(const input of [null,[],{page:0},{page:1.5},{page:Infinity},{search:42},{search:'x'.repeat(201)},{status:'bad'},{issuerId:-1},{startDate:'2026-02-30',endDate:'2026-03-01'}]) assert.throws(()=>repo.getInvoicePage(input));
+ } finally {db.close();}
+});
+
+test('10000 invoices: bounded hydration, full-history search, deterministic pages and event-loop stall benchmark', async () => {
+ const {db,repo}=fixture();
+ try {
+  visibility.replaceNormalBillingVisibility(db,[]);
+  db.transaction(()=>{
+   const add=db.prepare("INSERT INTO invoices(id,store_id,invoice_number,invoice_date,total_amount,paid_amount,status) VALUES(?,1,?,'2026-09-19',100,0,'unpaid')");
+   const item=db.prepare("INSERT INTO invoice_items(invoice_id,product_name,quantity,unit_price,total_price) VALUES(?,'Bread',1,100,100)");
+   for(let id=3;id<=10000;id++){add.run(id,'HISTORY-'+id);item.run(id);}
+  })();
+  async function measure(fn:()=>any){
+   const start=performance.now();let lag=0;
+   const heartbeat=new Promise<void>(resolve=>setTimeout(()=>{lag=performance.now()-start;resolve();},0));
+   const result=fn();const elapsed=performance.now()-start;await heartbeat;return {result,elapsed,lag};
+  }
+  const before=await measure(()=>repo.getInvoicesByDateRange());
+  const after=await measure(()=>repo.getInvoicePage({}));
+  assert.equal(before.result.length,10000); assert.equal(after.result.total,10000);assert.equal(after.result.rows.length,50);
+  assert.equal(repo.getInvoicePage({search:'HISTORY-10000'}).rows.some((r:any)=>r.invoice_number==='HISTORY-10000'),true);
+  const next=repo.getInvoicePage({page:2});assert.equal(next.rows.some((r:any)=>after.result.rows.some((p:any)=>p.id===r.id)),false);
+  assert.equal(repo.getInvoicePage({page:999}).page,200);
+  assert.equal(repo.getInvoicePage({status:'unpaid'}).total,9998);
+  assert.ok(after.elapsed < before.elapsed,'bounded list must improve latency');
+  const ids=before.result.map((r:any)=>r.id);
+  const oldFinancials=await measure(()=>ids.map((id:number)=>credits.getInvoiceFinancials(db,id)));
+  const batchFinancials=await measure(()=>credits.getInvoiceFinancialsBatch(db,ids));
+  ids.forEach((id:number,index:number)=>assert.deepEqual(batchFinancials.result.get(id),oldFinancials.result[index]));
+  const clients=repo.getAllCompaniesAndStores();
+  assert.equal(clients.find((c:any)=>c.id===1).unpaidInvoicesCount,9999);
+  assert.equal(clients.find((c:any)=>c.id===1).unpaidTotal,999870);
+  console.log(JSON.stringify({financialBenchmark:{beforeMs:oldFinancials.elapsed,afterMs:batchFinancials.elapsed}}));
+  console.log(JSON.stringify({invoiceBenchmark:{count:10000,beforeMs:before.elapsed,afterMs:after.elapsed,beforeEventLoopLagMs:before.lag,afterEventLoopLagMs:after.lag}}));
+ } finally {db.close();}
+});

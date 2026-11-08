@@ -170,6 +170,7 @@ export function registerBillingHandlers() {
   });
   handleTrustedIpc('billing:updatePayment', (_, data) => billingRepo.updatePayment(data));
   handleTrustedIpc('billing:deletePayment', (_, data) => billingRepo.deletePayment(data));
+  handleTrustedIpc('billing:getInvoicePage', (_, filters) => billingRepo.getInvoicePage(filters));
   handleTrustedIpc('billing:getInvoices', (_, startDate, endDate, issuerId) => billingRepo.getInvoicesByDateRange(startDate, endDate, issuerId));
   handleTrustedIpc('billing:getInvoice', (_, invoiceId) => billingRepo.getInvoiceById(invoiceId));
   handleTrustedIpc('billing:getInvoiceIssuerChangeOptions', (_, invoiceId: number) => billingRepo.getInvoiceIssuerChangeOptions(invoiceId));

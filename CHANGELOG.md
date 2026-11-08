@@ -1,3 +1,17 @@
+## 0.1.145 — 2026-11-08
+
+### RO
+- Facturile se încarcă în pagini de 50; căutarea include întregul registru și păstrează filtrele.
+- Încărcare mai rapidă a clienților, profilurilor și soldurilor financiare, fără schimbarea regulilor de calcul.
+- Pornire mai ușoară: biblioteca Excel este încărcată numai la export.
+- Căutările întârziate nu suprascriu rezultatele noi; erorile de încărcare pot fi reîncercate.
+
+### EN
+- Invoices load in pages of 50; search covers the full register with existing filters.
+- Faster customer, profile and financial-balance reads with unchanged calculation rules.
+- Reduced startup load: the Excel library loads only when exporting.
+- Stale searches cannot overwrite newer results; failed list reads can be retried.
+
 ### VR - Hub Management v0.1.144
 
 RO:

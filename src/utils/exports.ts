@@ -1,9 +1,8 @@
 import { notify } from './feedback';
-import ExcelJS from 'exceljs';
-import { generateTablePdf } from './tablePdf';
 import { api } from '../shared/api';
 
 export async function exportToExcel(data: any[], filename: string, sheetName: string = 'Sheet1') {
+  const { default: ExcelJS } = await import('exceljs');
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet(sheetName);
   const columns = Array.from(new Set(data.flatMap(row => Object.keys(row))));
@@ -30,6 +29,7 @@ export async function exportToPDF(
   filename: string, 
   title: string
 ) {
+  const { generateTablePdf } = await import('./tablePdf');
   const pdfBuffer = generateTablePdf(headers, data, title);
   
   const res = await api.system.saveFile({

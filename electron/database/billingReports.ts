@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { requireIsoDate, requirePositiveInteger } from './businessValidation.ts';
-import { getInvoiceFinancials } from './creditNotes.ts';
+import { getInvoiceFinancialsBatch } from './creditNotes.ts';
 
 export function reportPeriod(from: string, to: string) {
   const start = requireIsoDate(from, 'De la');
@@ -30,7 +30,8 @@ export function outstandingReport(db: Database.Database, companyId: number, issu
     FROM invoices i JOIN stores s ON s.id = i.store_id JOIN invoice_identities ii ON ii.invoice_id = i.id
     WHERE s.company_id = ? AND ii.issuer_id = ? AND i.store_id = ? AND i.status != 'cancelled'
     ORDER BY i.invoice_date, i.id`).all(companyId, issuerId, storeId) as Array<{ id: number; invoice_number: string; invoice_date: string; store_name: string }>;
-  const rows = invoices.map(row => ({ ...row, ...getInvoiceFinancials(db, row.id) })).filter(row => row.outstanding > 0.005);
+  const batch = getInvoiceFinancialsBatch(db, invoices.map(row=>row.id));
+  const rows = invoices.map(row => ({ ...row, ...batch.get(row.id)! })).filter(row => row.outstanding > 0.005);
   return { rows, total: rows.reduce((sum, row) => sum + cents(row.outstanding), 0) / 100 };
 }
 
@@ -70,10 +71,11 @@ export function weeklyBillingStats(db: Database.Database, issuerId: number | und
   const scalar = (sql: string) => Number((db.prepare(sql).get(start, end, id, id) as { value:number }).value);
   const invoices = db.prepare(`SELECT i.id FROM invoices i JOIN invoice_identities ii ON ii.invoice_id=i.id
     WHERE i.status != 'cancelled' AND (? IS NULL OR ii.issuer_id=?)`).all(id, id) as Array<{id:number}>;
+  const batch = getInvoiceFinancialsBatch(db, invoices.map(row=>row.id));
   return {
     totalInvoiced: scalar(`SELECT COALESCE(SUM(i.total_amount),0) AS value FROM invoices i JOIN invoice_identities ii ON ii.invoice_id=i.id WHERE i.invoice_date BETWEEN ? AND ? AND (? IS NULL OR ii.issuer_id=?) AND i.status!='cancelled'`),
     totalPaid: scalar(`SELECT COALESCE(SUM(amount),0) AS value FROM payments WHERE payment_date BETWEEN ? AND ? AND (? IS NULL OR issuer_id=?)`),
     totalCredited: scalar(`SELECT COALESCE(SUM(total_amount),0) AS value FROM credit_notes WHERE issue_date BETWEEN ? AND ? AND (? IS NULL OR issuer_id=?) AND status='issued'`),
-    totalUnpaid: invoices.reduce((sum,row) => sum + cents(getInvoiceFinancials(db,row.id).outstanding),0)/100,
+    totalUnpaid: invoices.reduce((sum,row) => sum + cents(batch.get(row.id)!.outstanding),0)/100,
   };
 }

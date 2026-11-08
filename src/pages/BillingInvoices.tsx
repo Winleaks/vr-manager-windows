@@ -1,5 +1,5 @@
 import { confirmAction, notify } from '../utils/feedback';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Receipt, Search, Edit3, Trash2, FilePlus2,
   CheckCircle2, Clock, AlertCircle, Building2, Store, FileText, Loader2, RefreshCw, FileMinus2, Banknote
@@ -89,28 +89,37 @@ export function BillingInvoices() {
   const [paymentInvoice, setPaymentInvoice] = useState<Invoice | null>(null);
   const [generatingPdfId, setGeneratingPdfId] = useState<number | null>(null);
 
-  const loadInvoices = useCallback(async () => {
-    setLoading(true);
-    try {
-      let startStr: string | undefined = undefined;
-      let endStr: string | undefined = undefined;
-
-      if (useDateFilter) {
-        startStr = format(startDate, 'yyyy-MM-dd');
-        endStr = format(endDate, 'yyyy-MM-dd');
-      }
-
-      const data = await api.billing.getInvoices(startStr, endStr, issuerFilter === 'all' ? undefined : Number(issuerFilter));
-      setInvoices(data || []);
-    } catch (e) {
-      console.error('Eroare la încărcarea facturilor:', e);
-    } finally {
-      setLoading(false);
-    }
-  }, [useDateFilter, startDate, endDate, issuerFilter]);
-
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [loadError, setLoadError] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState(searchQuery);
+  const requestId = useRef(0);
   useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+  const filterKey = JSON.stringify([debouncedSearch, statusFilter, issuerFilter, useDateFilter, startDate, endDate]);
+  const previousFilter = useRef(filterKey);
+  const loadInvoices = useCallback(async () => {
+    const id = ++requestId.current;
+    const requestedPage = previousFilter.current === filterKey ? page : 1;
+    previousFilter.current = filterKey;
+    setLoading(true); setLoadError('');
+    try {
+      const result = await api.billing.getInvoicePage({page: requestedPage, search: debouncedSearch, status: statusFilter,
+        startDate: useDateFilter ? format(startDate, 'yyyy-MM-dd') : undefined,
+        endDate: useDateFilter ? format(endDate, 'yyyy-MM-dd') : undefined,
+        issuerId: issuerFilter === 'all' ? undefined : Number(issuerFilter)});
+      if (id !== requestId.current) return;
+      setInvoices(result.rows); setTotal(result.total); setPage(result.page);
+    } catch (error) {
+      if (id === requestId.current) setLoadError(error instanceof Error ? error.message : 'Facturile nu au putut fi încărcate.');
+    } finally { if (id === requestId.current) setLoading(false); }
+  }, [page, filterKey, debouncedSearch, statusFilter, issuerFilter, useDateFilter, startDate, endDate]);
+  useEffect(() => {
+    const requests = requestId;
     void loadInvoices();
+    return () => { requests.current++; };
   }, [loadInvoices]);
 
   useEffect(() => {
@@ -158,7 +167,7 @@ export function BillingInvoices() {
     try {
       const result = await api.billing.reissueCancelledInvoice(inv.id);
       await loadInvoices();
-      const replacement = (await api.billing.getInvoices()).find((item: Invoice) => item.id === result.invoiceId);
+      const replacement = await api.billing.getInvoice(result.invoiceId);
       if (replacement) await handlePrintPdf(replacement, true);
       notify(`Factura a fost reemisă cu numărul ${result.invoiceNumber}.`);
     } catch (e: any) { notify('Eroare la reemitere: ' + e.message); }
@@ -183,19 +192,6 @@ export function BillingInvoices() {
       setGeneratingPdfId(null);
     }
   };
-
-  // Filtrare locală după text și status
-  const filteredInvoices = invoices.filter(inv => {
-    const matchesSearch = 
-      inv.invoice_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (inv.store_name && inv.store_name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (inv.company_name && inv.company_name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (inv.client_name && inv.client_name.toLowerCase().includes(searchQuery.toLowerCase()));
-
-    const matchesStatus = statusFilter === 'all' || inv.status === statusFilter;
-
-    return matchesSearch && matchesStatus;
-  });
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -223,7 +219,7 @@ export function BillingInvoices() {
             <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="Caută după nr. factură, magazin, firmă sau client..."
+              maxLength={200} placeholder="Caută după nr. factură, magazin, firmă sau client..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors"
@@ -290,6 +286,11 @@ export function BillingInvoices() {
         </div>
       </div>
 
+      {loadError && <div role="alert" className="mb-4 text-red-700">{loadError} <button onClick={() => void loadInvoices()} className="underline">Reîncearcă</button></div>}
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <span role="status">{loading ? 'Se încarcă facturile...' : `${total} ${total === 1 ? 'factură' : 'facturi'} · Pagina ${page} din ${Math.max(1, Math.ceil(total / 50))}`}</span>
+        <div className="flex gap-3"><button disabled={loading || page <= 1} onClick={() => setPage(p => p-1)} className="disabled:opacity-40">Înapoi</button><button disabled={loading || page*50 >= total} onClick={() => setPage(p => p+1)} className="disabled:opacity-40">Înainte</button></div>
+      </div>
       {/* Tabel cu facturi */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         {loading && !invoices.length ? (
@@ -297,7 +298,7 @@ export function BillingInvoices() {
             <Loader2 size={24} className="animate-spin text-indigo-600" />
             <span>Se încarcă facturile...</span>
           </div>
-        ) : filteredInvoices.length === 0 ? (
+        ) : invoices.length === 0 ? (
           <div className="p-12 text-center text-slate-500">
             <FileText size={48} className="mx-auto mb-4 text-slate-300" />
             <p className="text-lg font-medium text-slate-700">Nu am găsit nicio factură.</p>
@@ -317,7 +318,7 @@ export function BillingInvoices() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
-                {filteredInvoices.map((inv) => {
+                {invoices.map((inv) => {
                   const isPaid = inv.status === 'paid';
                   const isPartial = inv.status === 'partial';
                   const isCancelled = inv.status === 'cancelled';
