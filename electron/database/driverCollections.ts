@@ -28,6 +28,20 @@ export function driverCollectionsReport(db: Database.Database, startInput: unkno
       AND NOT EXISTS(SELECT 1 FROM driver_cash_receipts r WHERE r.root_id=o.root_id)
       AND NOT EXISTS(SELECT 1 FROM driver_cash_operations n WHERE n.root_id=o.root_id AND n.state='PROCESSED'
         AND json_extract(n.request,'$.revision')>json_extract(o.request,'$.revision'))`).all(driverId) as Receipt[];
+  // Office receipts already exist in Daily Cash. Read them; never create a
+  // financial movement to make a report complete. Linked import movements are
+  // excluded, and acknowledged manual allocations consume only their share.
+  const office = db.prepare(`SELECT t.id,d.date,round(t.amount*100) AS amount_pence,
+      coalesce((SELECT sum(json_extract(o.request,'$.amount_pence'))
+        FROM driver_cash_reviews v JOIN driver_cash_operations o USING(operation_id)
+        WHERE v.reference=cast(t.id AS TEXT) AND v.decision='manual'
+          AND o.state='PROCESSED' AND json_extract(o.result,'$.disposition')='recorded_manually'
+          AND NOT EXISTS(SELECT 1 FROM driver_cash_operations n
+            WHERE n.root_id=o.root_id AND n.state='PROCESSED'
+              AND json_extract(n.request,'$.revision')>json_extract(o.request,'$.revision'))),0) AS allocated_pence
+    FROM cash_transactions t JOIN cash_days d ON d.id=t.cash_day_id
+    WHERE t.reference_id=? AND t.type='IN' AND t.category='driver_collection'
+      AND t.driver_cash_root IS NULL AND d.date BETWEEN ? AND ?`).all(driverId,startDate,endDate) as Array<{id:number;date:string;amount_pence:number;allocated_pence:number}>;
   const grouped = new Map<string, DriverCollectionsReport['stores'][number]>();
   for (const row of [...rows, ...manual]) {
     const date = londonDate.format(row.recorded_at_ms);
@@ -36,6 +50,15 @@ export function driverCollectionsReport(db: Database.Database, startInput: unkno
     const key = row.store_id === null ? row.root_id : String(row.store_id);
     const store = grouped.get(key) || { storeId: row.store_id, storeName: row.store_name || 'Magazin indisponibil', amountPence: 0, receipts: 0 };
     store.amountPence += row.amount_pence; store.receipts++;
+    grouped.set(key, store);
+  }
+  for (const row of office) {
+    const remaining = row.amount_pence - row.allocated_pence;
+    if (!Number.isSafeInteger(remaining) || remaining < 0) throw Error('Încasarea manuală necesită reconciliere.');
+    if (!remaining) continue;
+    const key = 'office';
+    const store = grouped.get(key) || { storeId: null, storeName: 'Încasări manuale (Daily Cash)', amountPence: 0, receipts: 0 };
+    store.amountPence += remaining; store.receipts++;
     grouped.set(key, store);
   }
   const stores = [...grouped.values()].sort((a, b) => a.storeName.localeCompare(b.storeName));

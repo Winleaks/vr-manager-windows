@@ -27,7 +27,7 @@ export function DriverCollectionsReport({ startDate, endDate, refreshKey }: { st
   }, [driverId, startDate, endDate, refreshKey, retry]);
   return <section className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4" aria-labelledby="driver-collections-title">
     <h2 id="driver-collections-title" className="text-lg font-bold text-slate-800">Încasări pe șofer</h2>
-    <p className="text-sm text-slate-500">După data încasării efective, ora Londrei. Sunt incluse încasările sincronizate și confirmate, cu ultimele corectări.</p>
+    <p className="text-sm text-slate-500">Încasările din aplicație folosesc data efectivă, ora Londrei. Încasările manuale folosesc ziua din Daily Cash; sunt incluse o singură dată.</p>
     <label className="block text-sm font-semibold">Șofer<select aria-label="Șofer" className="block mt-2 w-full sm:max-w-sm border rounded-lg p-2" value={driverId} onChange={event => setDriverId(event.target.value)}>
       <option value="">Selectează șoferul</option>{drivers.map(driver => <option key={driver.id} value={driver.id}>{driver.name}</option>)}
     </select></label>
