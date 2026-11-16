@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import Database from 'better-sqlite3';
+import {withPrivateCloudOperation,resolvePrivateFolderInOperation} from '../integrations/privateCloudOperation.ts';
 import { ProtectedOutboxWorker } from '../protectedRegistry/outbox.ts';
 
 const source=ts.createSourceFile('service.ts',readFileSync(new URL('../protectedRegistry/service.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
@@ -22,7 +23,7 @@ function fixture(){
     protectedPublicationCompanyIds:()=>[],protectedBillingPriorities:new Set(),protectedBillingLastPublished:new Map(),
     protectedCloudAccountScope:()=> 'fixture',protectedConfirmationGeneration:0,protectedPublicationReceipts:{forScope:()=>({})},
     commitPendingProtectedSave:async()=>{await cloudGate;commits++;},getDeviceRole:()=>role,isProtectedRegistryEnabled:()=>true,
-    withRegistryRoutingLock:async(fn:Function)=>fn(),withPrivateCloudOperation:async(fn:Function)=>fn(),
+    withRegistryRoutingLock:async(fn:Function)=>fn(),withPrivateCloudOperation,
     keyBuffer:()=>Buffer.alloc(32),reconcilePending:async()=>{},loadVaultFromCloud:async()=>{loads++;return {vault:{assignments:[],invoices:[]},cloudScope:'fixture'};},
     prepareProtectedBillingDeliveries:()=>[],createVrBakerClient:()=>({publicationScope:()=>'api-scope'}),uploadProtectedClientInvoicePdf:async()=>{throw Error('Unexpected PDF');},
     publishProtectedBillingVault:async(_db:any,_vault:any,_client:any,_ids:any,options:any)=>{publications++;assert.equal(options.shouldContinue(),true);if(fail)throw Error('Unavailable');if(duringPublish) {const callback=duringPublish;duringPublish=undefined;await callback(options);}return {skipped:false};},
@@ -77,5 +78,14 @@ test('periodic inspection never creates a false financial pending marker',async(
  const f=fixture();try{
   f.api.scheduleProtectedBillingPublication(false,false);
   assert.equal(f.db.prepare("SELECT value FROM app_settings WHERE key='protected_financial_pending'").get(),undefined);
+ }finally{f.close();}
+});
+
+test('one publication shares folder lookups across PDFs but next publication resolves freshly',async()=>{
+ const f=fixture();try{
+  let lookups=0;
+  const check=async()=>{for(let n=0;n<100;n++)assert.equal(await resolvePrivateFolderInOperation('same-account:portal-folder',async()=>{lookups++;return 'verified-folder';}),'verified-folder');};
+  f.duringPublish(check);await f.api.protectedUploader.start();await f.settle();assert.equal(lookups,1);
+  f.duringPublish(check);f.api.scheduleProtectedBillingPublication(true,false);await f.settle();assert.equal(lookups,2);
  }finally{f.close();}
 });

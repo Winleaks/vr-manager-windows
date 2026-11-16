@@ -1,3 +1,11 @@
+## 0.1.148 — 2026-11-16
+
+### RO
+- Verificarea PDF-urilor în Google Drive reutilizează căutările aceluiași folder în cadrul unei sincronizări, reducând cererile repetate. Fiecare document este verificat în continuare.
+
+### EN
+- Google Drive PDF verification reuses folder lookups within a synchronization run, reducing repeated requests while retaining individual document verification.
+
 ## 0.1.147 — 2026-11-16
 
 ### RO

@@ -208,7 +208,7 @@ async function publishProtectedBilling() {
     prepareProtectedBillingDeliveries(db, latest.vault);
     const client = createVrBakerClient();
     const clientScope = client.publicationScope();
-    const outcome=await publishProtectedBillingVault(db, latest.vault, client, new Map(), {
+    const outcome=await withPrivateCloudOperation(() => publishProtectedBillingVault(db, latest.vault, client, new Map(), {
       receipts: protectedPublicationReceipts.forScope(JSON.stringify([latest.cloudScope, clientScope])),
       priorityCompanyIds: new Set([...protectedBillingPriorities, ...latest.vault.invoices
         .filter(invoice => invoice.transfer?.state === 'committed' && invoice.companyKey.startsWith('vrbaker:') &&
@@ -237,7 +237,7 @@ async function publishProtectedBilling() {
         protectedBillingLastPublished.set(companyId, Date.now());
         if (generation===protectedFinancialGeneration) protectedBillingPriorities.delete(companyId);
       },
-    });
+    }));
     if(!outcome.skipped&&generation===protectedFinancialGeneration&&!protectedOutbox.hasPending()) {
       db.prepare("INSERT INTO app_settings(key,value) VALUES('protected_financial_confirmed_at',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(Date.now()));
       db.prepare("DELETE FROM app_settings WHERE key IN ('protected_financial_error','protected_financial_retry_at','protected_financial_attempts','protected_financial_rate_limit')").run();
