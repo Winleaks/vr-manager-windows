@@ -6,7 +6,7 @@ import Database from 'better-sqlite3';
 import { ProtectedOutboxWorker } from '../protectedRegistry/outbox.ts';
 
 const source=ts.createSourceFile('service.ts',readFileSync(new URL('../protectedRegistry/service.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
-const names=new Set(['scheduleProtectedBillingPublication','publishProtectedBilling']);
+const names=new Set(['scheduleProtectedBillingPublication','publishProtectedBilling','hasPendingProtectedFinancialPublication']);
 const functions=source.statements.filter(node=>ts.isFunctionDeclaration(node)&&names.has(node.name?.text||'')).map(node=>node.getText(source)).join('\n').replaceAll('export ','');
 const uploader=source.statements.find(node=>ts.isVariableStatement(node)&&node.declarationList.declarations.some(declaration=>declaration.name.getText(source)==='protectedUploader'))!.getText(source);
 const code=ts.transpileModule(`${functions}\n${uploader}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
@@ -54,7 +54,7 @@ test('protected publication waits for Drive, never runs on Viewer and retains a 
     else f.api.scheduleProtectedBillingPublication(true);
     await f.settle();
     assert.equal(f.stats().publications,mode==='failed'?1:0,mode);
-    assert.equal(f.timers.size,0);
+    assert.equal(f.timers.size,mode==='failed'?1:0);
     if(mode==='failed')assert.equal((f.db.prepare("SELECT value FROM app_settings WHERE key='protected_financial_pending'").get() as any).value,'1');
   }finally{f.close()}}
 });
@@ -71,4 +71,11 @@ test('periodic checks do not abort a slow publication; real financial changes st
    assert.ok(f.stats().publications>=1);
   }finally{f.close();}
  }
+});
+
+test('periodic inspection never creates a false financial pending marker',async()=>{
+ const f=fixture();try{
+  f.api.scheduleProtectedBillingPublication(false,false);
+  assert.equal(f.db.prepare("SELECT value FROM app_settings WHERE key='protected_financial_pending'").get(),undefined);
+ }finally{f.close();}
 });

@@ -138,8 +138,7 @@ export function invalidateProtectedPublicationReceipts() {
 }
 export function forceProtectedBillingPublication() {
   assertWriter();
-  invalidateProtectedPublicationReceipts();
-  scheduleProtectedBillingPublication(true);
+  scheduleProtectedBillingPublication(true, false);
 }
 const protectedBillingPriorities = new Set<string>();
 const protectedBillingLastPublished = new Map<string, number>();
@@ -150,8 +149,13 @@ const protectedUploader = new ProtectedOutboxWorker(protectedOutbox, commitPendi
 let protectedBillingPublishing = false;
 let protectedBillingQueued = false;
 let protectedFinancialGeneration = 0;
+export function protectedFinancialPublicationStatus() {
+  const read=(key:string)=>(db.prepare('SELECT value FROM app_settings WHERE key=?').get(key) as {value:string}|undefined)?.value;
+  return {pending:hasPendingProtectedFinancialPublication(),publishing:protectedBillingPublishing,
+    reason:read('protected_financial_error')||null,lastConfirmedAt:Number(read('protected_financial_confirmed_at'))||null,nextAttemptAt:Number(read('protected_financial_retry_at'))||null};
+}
 export function hasPendingProtectedFinancialPublication() {
-  return protectedOutbox.hasPending() || protectedBillingPublishing ||
+  return protectedOutbox.hasPending() ||
     (db.prepare("SELECT value FROM app_settings WHERE key='protected_financial_pending'").get() as {value:string}|undefined)?.value==='1';
 }
 let protectedBillingTimer: ReturnType<typeof setInterval> | null = null;
@@ -175,6 +179,11 @@ export function stopProtectedRegistrySync() {
 async function publishProtectedBilling() {
   if (protectedBillingPublishing || getDeviceRole() !== 'writer' || !isProtectedRegistryEnabled()) {
     if (protectedBillingPublishing) protectedBillingQueued = true;
+    return;
+  }
+  const rateLimit=Number((db.prepare("SELECT value FROM app_settings WHERE key='protected_financial_rate_limit'").get() as {value:string}|undefined)?.value)||0;
+  if(rateLimit>Date.now()) {
+    if(!protectedBillingDebounce){protectedBillingDebounce=setTimeout(()=>{protectedBillingDebounce=null;void publishProtectedBilling();},Math.min(rateLimit-Date.now(),2147483647));protectedBillingDebounce.unref();}
     return;
   }
   if(driverCashHasPriority()) {
@@ -229,11 +238,20 @@ async function publishProtectedBilling() {
         if (generation===protectedFinancialGeneration) protectedBillingPriorities.delete(companyId);
       },
     });
-    if(!outcome.skipped&&generation===protectedFinancialGeneration&&!protectedOutbox.hasPending()) db.prepare("INSERT INTO app_settings(key,value) VALUES('protected_financial_pending','0') ON CONFLICT(key) DO UPDATE SET value='0'").run();
-  } catch {
-    // The encrypted vault and PDF synchronization are authoritative and must
-    // never fail because the read-only client mirror is temporarily offline.
-    // The same immutable revision is retried on the next schedule.
+    if(!outcome.skipped&&generation===protectedFinancialGeneration&&!protectedOutbox.hasPending()) {
+      db.prepare("INSERT INTO app_settings(key,value) VALUES('protected_financial_confirmed_at',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(Date.now()));
+      db.prepare("DELETE FROM app_settings WHERE key IN ('protected_financial_error','protected_financial_retry_at','protected_financial_attempts','protected_financial_rate_limit')").run();
+      db.prepare("INSERT INTO app_settings(key,value) VALUES('protected_financial_pending','0') ON CONFLICT(key) DO UPDATE SET value='0'").run();
+    }
+  } catch (error) {
+    if(db!==connection || getDeviceRole()!=='writer')return;
+    const failure=error as {retryAfterMs?:number;retryable?:boolean};
+    if(failure?.retryAfterMs)db.prepare("INSERT INTO app_settings(key,value) VALUES('protected_financial_rate_limit',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(Date.now()+failure.retryAfterMs));
+    const attempts=Number((db.prepare("SELECT value FROM app_settings WHERE key='protected_financial_attempts'").get() as {value:string}|undefined)?.value)||0;
+    const delay=Math.max([2000,5000,15000,30000,60000][Math.min(attempts,4)],failure?.retryAfterMs||0);
+    const reason=failure?.retryable===false?'Configurația sincronizării necesită verificare în Setări Facturare.':'Sincronizarea financiară nu a fost confirmată. Reîncercare automată.';
+    for(const [key,value] of [['protected_financial_error',reason],['protected_financial_attempts',String(attempts+1)],['protected_financial_retry_at',String(Date.now()+delay)]]) db.prepare('INSERT INTO app_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,value);
+    if(hasPendingProtectedFinancialPublication() && failure?.retryable!==false && !protectedBillingDebounce){protectedBillingDebounce=setTimeout(()=>{protectedBillingDebounce=null;void publishProtectedBilling();},delay);protectedBillingDebounce.unref();}
   } finally {
     protectedBillingPublishing = false;
     if (protectedBillingQueued) {
@@ -247,7 +265,7 @@ export function scheduleProtectedBillingPublication(immediate = false, financial
   if (getDeviceRole() !== 'writer' || !isProtectedRegistryEnabled()) return;
   // Periodic checks queue work without invalidating the in-flight snapshot.
   if (financialChange) protectedFinancialGeneration++;
-  db.prepare("INSERT INTO app_settings(key,value) VALUES('protected_financial_pending','1') ON CONFLICT(key) DO UPDATE SET value='1'").run();
+  if (financialChange) db.prepare("INSERT INTO app_settings(key,value) VALUES('protected_financial_pending','1') ON CONFLICT(key) DO UPDATE SET value='1'").run();
   protectedBillingQueued = true;
   if (immediate) {
     if (protectedBillingDebounce) clearTimeout(protectedBillingDebounce);

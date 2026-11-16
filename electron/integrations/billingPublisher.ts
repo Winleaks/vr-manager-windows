@@ -1,7 +1,7 @@
 import { db, waitForDatabaseReady } from "../database/db";
 import { getDeviceRole } from "../device/deviceRole";
 import { createVrBakerClient } from "./vrBakerIntegration";
-import { retiredLegacyCompanyIds } from '../database/legacyEntityRepair';
+import { financialPublicationQueue, publicationMetadata, savePublicationMetadata, publicationRetryDelay } from '../database/financialPublicationState';
 import { normalBillingReadDatabase } from '../database/normalBillingVisibility';
 import {
   acknowledgeBillingDelivery,
@@ -10,6 +10,7 @@ import {
 let running = false;
 let scheduled: ReturnType<typeof setTimeout> | null = null;
 let requested = false;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
 const immediateCompanies = new Set<number>();
 let immediateDatabase = db;
 
@@ -33,16 +34,31 @@ export function scheduleBillingPublication() {
   scheduled = setTimeout(() => { scheduled = null; requested = false; void publishBilling(); }, 250);
   scheduled.unref();
 }
+/** A manual/reconnect request is queued even while a commit is in progress. */
+export function retryBillingPublication(manual = false) {
+  if (getDeviceRole() !== 'writer') return;
+  if(manual) for(const row of financialPublicationQueue(db)) {const meta=publicationMetadata(db,row.company_id);if(meta.blockedRevision!==undefined)savePublicationMetadata(db,row.company_id,{...meta,blockedRevision:undefined});}
+  for (const row of financialPublicationQueue(db)) if (row.state!=='association_required' && row.rateLimitUntil<=Date.now()) immediateCompanies.add(row.company_id);
+  requested=true;
+  if(running)return;
+  requested=false;
+  void publishBilling();
+}
 export function isBillingPublishing() { return running; }
 export async function publishBilling() {
   if (running || getDeviceRole() !== "writer") return;
   if (immediateDatabase !== db) { immediateCompanies.clear(); immediateDatabase = db; }
   running = true;
+  let canRetry=false;
   try {
     await waitForDatabaseReady();
     if (getDeviceRole() !== "writer") return;
     const { ensureNormalBillingVisibility } = await import('../protectedRegistry/service');
     await ensureNormalBillingVisibility();
+    canRetry=true;
+    const classified=financialPublicationQueue(db);
+    for(const id of immediateCompanies) if(!classified.some(row=>row.company_id===id && row.state!=='association_required' && row.rateLimitUntil<=Date.now())) immediateCompanies.delete(id);
+    if(!classified.some(row=>row.state!=='association_required' && row.rateLimitUntil<=Date.now() && (row.retry_at<=Date.now() || immediateCompanies.has(row.company_id)))) return;
     const connection = db;
     const client = createVrBakerClient();
     const control = await client.request<{ sync_enabled: boolean; protocol_version?: number; drive_folder_id?: string }>(
@@ -55,18 +71,13 @@ export async function publishBilling() {
       db.prepare("INSERT INTO app_settings(key,value) VALUES('invoice_drive_folder_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(control.drive_folder_id);
     }
     if(control.sync_enabled && control.protocol_version !== 2) throw new Error('Platforma necesită actualizarea protocolului financiar.');
-    if (!control.sync_enabled) { immediateCompanies.clear(); return; }
+    if (!control.sync_enabled) {canRetry=false; immediateCompanies.clear(); return; }
     if (getDeviceRole() !== "writer") return;
     const priority = new Set(immediateCompanies);
     immediateCompanies.clear();
-    const ids = [...priority];
-    const prioritySql = ids.length ? ` OR q.company_id IN (${ids.map(() => '?').join(',')})` : '';
-    const queue = normalBillingReadDatabase(db).prepare(
-      `SELECT q.company_id FROM billing_publication_queue q JOIN companies c ON c.id=q.company_id WHERE q.revision>q.published_revision AND (q.retry_at<=?${prioritySql}) AND c.vrbaker_missing=0 ORDER BY q.company_id`,
-    ).all(Date.now(), ...ids) as { company_id: number }[];
-    queue.sort((a,b) => Number(priority.has(b.company_id)) - Number(priority.has(a.company_id)));
-    const retired = retiredLegacyCompanyIds(db);
-    for (const { company_id } of queue.filter(row=>!retired.has(row.company_id))) {
+    const queue = financialPublicationQueue(db).filter(row=>row.state!=='association_required' && row.rateLimitUntil<=Date.now() && (row.retry_at<=Date.now() || priority.has(row.company_id)));
+    queue.sort((a,b)=>Number(priority.has(b.company_id))-Number(priority.has(a.company_id)));
+    for (const {company_id} of queue) {
       // Assigned companies with normal invoice exceptions still need one merged
       // protected/normal portal snapshot, never two competing publishers.
       if (db.prepare('SELECT 1 FROM normal_billing_visibility WHERE company_id=? AND hidden=1').get(company_id)) {
@@ -81,7 +92,7 @@ export async function publishBilling() {
         if (immediateCompanies.size) {
           // Preserve explicit requests not yet attempted when a newer receipt
           // interrupts this snapshot, including companies still in backoff.
-          for (const row of queue) if (priority.has(row.company_id) && !retired.has(row.company_id)) immediateCompanies.add(row.company_id);
+          for (const row of queue) if (priority.has(row.company_id)) immediateCompanies.add(row.company_id);
           break;
         }
         priority.delete(company_id);
@@ -113,27 +124,28 @@ export async function publishBilling() {
         }, `${data.source_id}:${company_id}:${data.revision}:commit`);
         if (db !== connection) return;
         acknowledgeBillingDelivery(db, company_id, data.revision);
+        savePublicationMetadata(db,company_id,{lastConfirmedAt:Date.now()});
         // Finish an older immutable delivery first, then send the newest
         // receipt immediately instead of waiting for another scheduled batch.
         if (db.prepare('SELECT 1 FROM billing_publication_queue WHERE company_id=? AND revision>published_revision').get(company_id)) immediateCompanies.add(company_id);
       } catch (error) {
         if (db !== connection) return;
-        const localMessage = error instanceof Error &&
-            /asociere|duplicată|sumă|Suma|Factura/.test(error.message)
-          ? error.message
-          : "Publicarea a eșuat. Verifică asocierea companiei/magazinelor, permisiunea billing:write și configurația platformei.";
-        db.prepare(
-          `UPDATE billing_publication_queue SET last_error=?, attempts=attempts+1, retry_at=? WHERE company_id=?`,
-        ).run(localMessage, Date.now() + 300000, company_id);
+        recordFailure(company_id,error);
       }
     }
-  } catch {
-    // Failed connection/visibility verification must not cause a tight loop.
-    // Durable financial revisions remain pending for the periodic retry.
+  } catch (error) {
     immediateCompanies.clear();
-    if(getDeviceRole()==='writer') db.prepare("UPDATE billing_publication_queue SET last_error=?,retry_at=? WHERE revision>published_revision").run('Publicarea este indisponibilă. Verifică protocolul platformei și permisiunea billing:write.',Date.now()+300000);
+    try {if(getDeviceRole()==='writer' && immediateDatabase===db) for(const row of financialPublicationQueue(db)) {
+      if(row.state!=='association_required') recordFailure(row.company_id,error);
+    }} catch {/* Visibility and database failures stay fail-closed. */}
+
   } finally {
     running = false;
+    if(retryTimer){clearTimeout(retryTimer);retryTimer=null;}
+    try {if(canRetry && getDeviceRole()==='writer' && immediateDatabase===db) {
+      const pending=financialPublicationQueue(db).filter(row=>row.state!=='association_required');
+      if(pending.length){const due=Math.min(...pending.map(row=>row.nextAttemptAt!));retryTimer=setTimeout(()=>{retryTimer=null;void publishBilling();},Math.min(2147483647,Math.max(2000,due-Date.now())));retryTimer.unref();}
+    }} catch {/* Startup/visibility retry is handled by the periodic wake. */}
     if (getDeviceRole() !== 'writer' || immediateDatabase !== db) immediateCompanies.clear();
     if (immediateCompanies.size) {
       requested = false;
@@ -141,6 +153,16 @@ export async function publishBilling() {
       void publishBilling();
     } else if (requested) scheduleBillingPublication();
   }
+}
+function recordFailure(companyId:number,error:unknown) {
+  const row=db.prepare('SELECT revision,attempts FROM billing_publication_queue WHERE company_id=?').get(companyId) as {revision:number;attempts:number};
+  const failure=error as {retryable?:boolean;retryAfterMs?:number;message?:string};
+  const blocked=failure?.retryable===false || /asociere|duplicată|protocol|Folderul facturilor|sumă|Suma|Factura/.test(failure?.message||'');
+  const reason=blocked?'Asocierea sau configurația necesită corectare. Verifică Setări Facturare.':'Conexiunea cu platforma nu a confirmat datele. Reîncercare automată.';
+  const delay=publicationRetryDelay(row.attempts,failure?.retryAfterMs);
+  const meta=publicationMetadata(db,companyId);
+  savePublicationMetadata(db,companyId,{...meta,blockedRevision:blocked?row.revision:undefined,reason,rateLimitUntil:failure?.retryAfterMs?Date.now()+failure.retryAfterMs:meta.rateLimitUntil});
+  db.prepare('UPDATE billing_publication_queue SET last_error=?,attempts=attempts+1,retry_at=? WHERE company_id=?').run(reason,Date.now()+delay,companyId);
 }
 export function startBillingPublisher() {
   void publishBilling();

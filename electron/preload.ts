@@ -125,6 +125,7 @@ export const desktopApi = {
     onDayRolloverError: (callback: EventCallback) => subscribe('cash-day-rollover-error', callback),
   },
   billing: {
+    wakePublication: () => ipcRenderer.invoke('billing:wakePublication'),
     getPublicationStatus: () => ipcRenderer.invoke('billing:publicationStatus'),
     publishNow: () => ipcRenderer.invoke('billing:publishNow'),
     getInvoice: (invoiceId: number) => ipcRenderer.invoke('billing:getInvoice', invoiceId),

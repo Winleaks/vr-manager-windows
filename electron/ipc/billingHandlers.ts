@@ -21,7 +21,7 @@ import {
   downloadCreditNotePdfFromCloud,
 } from '../database/cloudSync';
 import { db, backupDb } from '../database/db';
-import { retiredLegacyCompanyIds } from '../database/legacyEntityRepair';
+import { financialPublicationQueue, lastFinancialConfirmation } from '../database/financialPublicationState';
 import { selectReadyGroupsForZone } from '../integrations/weeklyZoneBilling';
 import {
   assertNormalStoreAllowed,
@@ -31,6 +31,7 @@ import {
   withRegistryRoutingLock,
   ensureNormalBillingVisibility,
   hasPendingProtectedFinancialPublication,
+  protectedFinancialPublicationStatus,
 } from '../protectedRegistry/service';
 import { assignEstimatedInvoiceReferences } from '../../src/utils/invoicePreviewNumbering';
 import { localInvoiceCatalog, priceInvoiceCatalog } from '../integrations/invoiceCatalogPricing';
@@ -322,21 +323,26 @@ export function registerBillingHandlers() {
 
   handleTrustedIpc('billing:publicationStatus', () => {
     const db = normalBillingReadDatabase(dbForVisibility());
-    const retired = retiredLegacyCompanyIds(db);
+    const pending = financialPublicationQueue(dbForVisibility());
     return {
     publishing:isBillingPublishing(),
     writer:getDeviceRole()==='writer',
     protectedPending:hasPendingProtectedFinancialPublication(),
+    protectedStatus:protectedFinancialPublicationStatus(),
+    lastConfirmedAt:lastFinancialConfirmation(dbForVisibility()),
     identity:db.prepare('SELECT source_id FROM billing_publication_identity WHERE id=1').get(),
-    pending:db.prepare('SELECT q.*,c.name FROM billing_publication_queue q JOIN companies c ON c.id=q.company_id WHERE q.revision>q.published_revision AND c.vrbaker_missing=0').all().filter((row:any)=>!retired.has(row.company_id)),
+    pending,
     excluded:db.prepare('SELECT c.id,c.name FROM companies c WHERE c.vrbaker_missing=1').all(),
     invoiceCount:(db.prepare('SELECT count(*) AS n FROM invoices').get() as {n:number}).n,
     folderId:billingRepo.getAppSetting('invoice_drive_folder_id')||'',
   }; });
+  handleTrustedIpc('billing:wakePublication', async () => {
+    const {retryBillingPublication}=await import('../integrations/billingPublisher');retryBillingPublication();
+    const {scheduleProtectedBillingPublication}=await import('../protectedRegistry/service');scheduleProtectedBillingPublication(true,false);
+  });
   handleTrustedIpc('billing:publishNow', async () => {
-    db.prepare('UPDATE billing_publication_queue SET retry_at=0').run();
-    const {publishBilling}=await import('../integrations/billingPublisher');
-    await publishBilling();
+    const {retryBillingPublication}=await import('../integrations/billingPublisher');
+    retryBillingPublication(true);
     const {forceProtectedBillingPublication}=await import('../protectedRegistry/service');
     forceProtectedBillingPublication();
     return {success:true};

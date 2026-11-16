@@ -302,7 +302,7 @@ export class VrBakerApiClient {
         if(response.status===429) {
           const header=response.headers.get('retry-after');
           const seconds=header && /^\d+$/.test(header) ? Number(header)*1000 : header ? Date.parse(header)-Date.now() : 60_000;
-          throw Object.assign(lastError,{retryable:true,retryAfterMs:Math.max(5_000,Math.min(300_000,Number.isFinite(seconds)?seconds:60_000))});
+          throw Object.assign(lastError,{retryable:true,retryAfterMs:Math.max(5_000,Number.isFinite(seconds)?seconds:60_000)});
         }
         if (response.status < 500) {
           throw Object.assign(lastError, { retryable: false });

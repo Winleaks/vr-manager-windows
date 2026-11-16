@@ -114,7 +114,8 @@ test('entity list is read-only, publisher excludes missing but never inactive pl
   const repo=readFileSync(new URL('./repositories/billingRepo.ts',import.meta.url),'utf8');
   assert.doesNotMatch(repo,/cleanupOrphanCompanies/);
   const publisher=readFileSync(new URL('../integrations/billingPublisher.ts',import.meta.url),'utf8');
-  assert.match(publisher,/c.vrbaker_missing=0/);
+  const classification=readFileSync(new URL('./financialPublicationState.ts',import.meta.url),'utf8');
+  assert.match(classification,/c.vrbaker_missing=0/);
   assert.doesNotMatch(publisher,/platform_active/);
   const integration=readFileSync(new URL('../integrations/vrBakerIntegration.ts',import.meta.url),'utf8');
   assert.match(integration,/connection !== db \|\| getDeviceRole\(\) !== 'writer'/);

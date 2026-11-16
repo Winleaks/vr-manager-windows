@@ -86,7 +86,7 @@ import { UpdateModal } from './components/UpdateModal';
 import { BillingLayout } from './pages/BillingLayout';
 
 export default function App() {
-  useEffect(()=>{const wake=()=>{void api.dailyCash.wakeDriverCashSync().catch(()=>{});};window.addEventListener('online',wake);return()=>window.removeEventListener('online',wake);},[]);
+  useEffect(()=>{const wake=()=>{void api.dailyCash.wakeDriverCashSync().catch(()=>{});void api.billing.wakePublication().catch(()=>{});};window.addEventListener('online',wake);return()=>window.removeEventListener('online',wake);},[]);
   return (
     <>
       <DocumentSyncBanner />

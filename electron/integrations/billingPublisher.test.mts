@@ -6,6 +6,7 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { initialSchema } from '../database/schema.ts';
 import * as publication from '../database/billingPublication.ts';
+import * as financialState from '../database/financialPublicationState.ts';
 import * as visibility from '../database/normalBillingVisibility.ts';
 import { installEntitySyncState } from '../database/entitySync.ts';
 import { recordCompanyPaymentTransaction } from '../database/repositories/billingTransactions.ts';
@@ -35,6 +36,7 @@ function fixture() {
     '../device/deviceRole': { getDeviceRole: () => role },
     '../database/billingPublication': publication,
     '../database/normalBillingVisibility': visibility,
+    '../database/financialPublicationState': financialState,
     '../database/legacyEntityRepair': { retiredLegacyCompanyIds: () => new Set() },
     '../protectedRegistry/service': { ensureNormalBillingVisibility: async () => visibility.assertNormalBillingVisibilityReady(database.db) },
     './vrBakerIntegration': { createVrBakerClient: () => ({ request: async (action: string, payload: any, key?: string) => {
@@ -111,7 +113,7 @@ test('failed immediate delivery keeps the payment and immutable retry; does not 
     f.api.publishCompanyPaymentNow(1);await f.settle();
     const pending=publication.prepareBillingDelivery(f.db,1);
     assert.equal(f.calls.filter(row=>row.action==='billing.stage').length,1);
-    assert.equal(f.timers.size,0);assert.ok((f.db.prepare('SELECT retry_at FROM billing_publication_queue WHERE company_id=1').get() as any).retry_at>Date.now());
+    assert.equal(f.timers.size,1);assert.ok((f.db.prepare('SELECT retry_at FROM billing_publication_queue WHERE company_id=1').get() as any).retry_at>Date.now());
     assert.equal(JSON.stringify(f.db.prepare('SELECT * FROM payments').all()),before);
     f.fail(false);f.before(async()=>{});f.api.publishCompanyPaymentNow(1);await f.settle();
     const stages=f.calls.filter(row=>row.action==='billing.stage');
@@ -130,7 +132,7 @@ test('consecutive company receipts keep their immediate requests when an older d
     assert.deepEqual(stages.map(row=>row.payload.invoices[0].id),['1','1','3']);
     assert.deepEqual(stages.map(row=>row.payload.invoices[0].paid),[1000,3000,1000]);
     assert.equal((f.db.prepare('SELECT count(*) n FROM payments').get() as any).n,3);
-    assert.equal(f.timers.size,0);
+    assert.equal(f.timers.size,1);
   }finally{f.close()}
 });
 
@@ -152,7 +154,7 @@ test('disabled platform sync or a failed status check retains the receipt withou
     f.pay(3);if(mode==='disabled')f.disable();else f.fail(true);
     f.api.publishCompanyPaymentNow(3);await f.settle();
     assert.equal(f.calls.length,1);assert.equal(f.calls[0].action,'billing.status');
-    assert.equal(f.timers.size,0);
+    assert.equal(f.timers.size,mode==='offline'?1:0);
     assert.equal((f.db.prepare('SELECT count(*) n FROM payments').get() as any).n,1);
     assert.equal((f.db.prepare('SELECT revision>published_revision AS pending FROM billing_publication_queue WHERE company_id=3').get() as any).pending,1);
   }finally{f.close()}}
@@ -168,6 +170,7 @@ test('real payment IPC starts delivery only after local commit, returns while of
       './trustedHandler':{handleTrustedIpc:(name:string,fn:Function)=>handlers.set(name,fn)},
       '../database/repositories/billingRepo':{recordCompanyPayment:(input:any)=>recordCompanyPaymentTransaction(f.db,input)},
       '../database/db':{db:f.db},
+      '../database/financialPublicationState':financialState,
       '../protectedRegistry/service':{ensureNormalBillingVisibility:async()=>visibility.assertNormalBillingVisibilityReady(f.db)},
       '../integrations/billingPublisher':f.api,
     };
@@ -187,4 +190,37 @@ test('real payment IPC starts delivery only after local commit, returns while of
     f.fail(true);release();await f.settle();
     assert.equal((f.db.prepare('SELECT count(*) n FROM payments').get() as any).n,1,'offline delivery cannot undo or repeat payment');
   }finally{f.close()}
+});
+
+test('manual retry requested during active stage is not lost and returns immediately',async()=>{
+ const f=fixture();try{
+  let retry=false;f.before(async(action)=>{if(action==='billing.stage'&&!retry){retry=true;f.api.retryBillingPublication(true);}});
+  await f.api.publishBilling();await f.settle();
+  assert.equal(f.calls.filter(c=>c.action==='billing.commit').length,3);
+  assert.equal(financialState.financialPublicationQueue(f.db).length,0);
+ }finally{f.close();}
+});
+test('only the empty unassigned shell is ignored and no status request is made for it',async()=>{
+ const f=fixture();try{
+  f.db.exec("UPDATE billing_publication_queue SET published_revision=revision; INSERT INTO companies(id,client_id,name,supabase_company_id) VALUES(10,1,'Magazine neasociate','vrbaker-unassigned-company');");
+  await f.api.publishBilling();assert.equal(f.calls.length,0);assert.equal(f.timers.size,0);
+  f.db.exec("INSERT INTO invoices(id,store_id,invoice_number,invoice_date,total_amount,status) VALUES(10,1,'Test','2026-11-16',10,'unpaid'); UPDATE stores SET company_id=10 WHERE id=1; UPDATE billing_publication_queue SET published_revision=revision WHERE company_id!=10;");
+  await f.api.publishBilling();assert.equal(f.calls.length,0);assert.equal(financialState.financialPublicationQueue(f.db)[0].state,'association_required');
+ }finally{f.close();}
+});
+test('server Retry-After cannot be bypassed by receipt or manual retry and survives worker restart',async()=>{
+ const f=fixture();try{
+  f.before(async(action)=>{if(action==='billing.stage')throw Object.assign(Error('Limit'),{retryAfterMs:600000});});
+  f.api.publishCompanyPaymentNow(1);await f.settle();const calls=f.calls.length;
+  f.api.retryBillingPublication(true);await f.settle();f.api.publishCompanyPaymentNow(1);await f.settle();
+  assert.equal(f.calls.length,calls);assert.ok(financialState.financialPublicationQueue(f.db).find(r=>r.company_id===1)!.rateLimitUntil>Date.now()+590000);
+ }finally{f.close();}
+});
+test('lost commit response retries the same immutable revision before acknowledging',async()=>{
+ const f=fixture();try{
+  f.db.exec('UPDATE billing_publication_queue SET published_revision=revision WHERE company_id!=1');let lost=true;
+  f.before(async action=>{if(action==='billing.commit'&&lost){lost=false;throw Error('Response lost');}});
+  await f.api.publishBilling();const first=f.calls.find(r=>r.action==='billing.commit')!;assert.ok(financialState.financialPublicationQueue(f.db).length);
+  f.api.retryBillingPublication(true);await f.settle();const commits=f.calls.filter(r=>r.action==='billing.commit');assert.equal(commits.length,2);assert.equal(commits[1].key,first.key);assert.equal(financialState.financialPublicationQueue(f.db).length,0);
+ }finally{f.close();}
 });

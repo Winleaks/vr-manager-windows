@@ -33,6 +33,8 @@ export function BillingPublicationSettings({isWriter}:{isWriter:boolean}) {
    </div>
   </fieldset>
   {notice&&<p className="text-sm" role="status">{notice}</p>}
-  {state?.pending?.filter((row:any)=>row.last_error).map((row:any)=><p key={row.company_id} className="text-sm text-amber-800">{row.name}: {row.last_error}</p>)}
+  {state?.protectedPending&&state?.protectedStatus?.reason&&<p className="text-sm text-amber-800">{state.protectedStatus.reason}</p>}
+  {state?.lastConfirmedAt&&<p className="text-sm text-slate-600">Ultima confirmare: {new Date(state.lastConfirmedAt).toLocaleString('ro-RO')}</p>}
+  {state?.pending?.map((row:any)=><div key={row.company_id} className="text-sm text-amber-800"><p>{row.name}: {row.reason||'În așteptare'}</p>{row.stores?.length>0&&<p>Magazine afectate: {row.stores.map((store:any)=>store.name).join(', ')}</p>}{row.nextAttemptAt&&<p>Următoarea încercare: {new Date(row.nextAttemptAt).toLocaleTimeString('ro-RO')}</p>}{row.lastConfirmedAt&&<p>Ultima confirmare: {new Date(row.lastConfirmedAt).toLocaleString('ro-RO')}</p>}</div>)}
  </section>;
 }

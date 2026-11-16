@@ -1,3 +1,19 @@
+## 0.1.147 — 2026-11-16
+
+### RO
+- Compania tehnică „Magazine neasociate” fără istoric financiar nu mai produce o avertizare permanentă de sincronizare.
+- Problemele de asociere afișează motivul și magazinele afectate; datele de corectat rămân vizibile.
+- Reîncercări automate mai rapide pentru întreruperi temporare, cu respectarea limitelor serverului.
+- Reîncercarea în timpul sincronizării este păstrată; confirmările existente nu sunt șterse.
+- Verificările periodice nu mai marchează singure modificări financiare în așteptare.
+
+### EN
+- Empty unassigned technical companies no longer cause a permanent financial synchronization warning.
+- Mapping problems show their reason and affected stores while preserving unresolved financial data.
+- Faster progressive retries for temporary failures respect server rate limits.
+- Retry requests during an active synchronization are retained and existing confirmations are preserved.
+- Periodic checks no longer create financial-pending state by themselves.
+
 ## 0.1.145 — 2026-11-08
 
 ### RO
