@@ -287,7 +287,7 @@ export function scheduleProtectedBillingPublication(immediate = false, financial
 export function startProtectedBillingPublisher() {
   if (getDeviceRole() !== 'writer' || protectedBillingTimer) return;
   scheduleProtectedBillingPublication();
-  protectedBillingTimer = setInterval(() => scheduleProtectedBillingPublication(false, false), 300000);
+  protectedBillingTimer = setInterval(() => { if (!protectedBillingPublishing) scheduleProtectedBillingPublication(false, false); }, 300000);
   protectedBillingTimer.unref();
 }
 

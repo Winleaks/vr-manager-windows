@@ -7,7 +7,7 @@ import {withPrivateCloudOperation,resolvePrivateFolderInOperation} from '../inte
 import { ProtectedOutboxWorker } from '../protectedRegistry/outbox.ts';
 
 const source=ts.createSourceFile('service.ts',readFileSync(new URL('../protectedRegistry/service.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
-const names=new Set(['scheduleProtectedBillingPublication','publishProtectedBilling','hasPendingProtectedFinancialPublication']);
+const names=new Set(['scheduleProtectedBillingPublication','publishProtectedBilling','hasPendingProtectedFinancialPublication','startProtectedBillingPublisher']);
 const functions=source.statements.filter(node=>ts.isFunctionDeclaration(node)&&names.has(node.name?.text||'')).map(node=>node.getText(source)).join('\n').replaceAll('export ','');
 const uploader=source.statements.find(node=>ts.isVariableStatement(node)&&node.declarationList.declarations.some(declaration=>declaration.name.getText(source)==='protectedUploader'))!.getText(source);
 const code=ts.transpileModule(`${functions}\n${uploader}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
@@ -16,6 +16,7 @@ function fixture(){
   const db=new Database(':memory:');db.exec('CREATE TABLE app_settings(key TEXT PRIMARY KEY,value TEXT)');
   let role='writer',pending=true,commits=0,publications=0,loads=0,fail=false;
   let cloudGate=Promise.resolve();
+  let periodic: (()=>void) | undefined;
   let duringPublish: ((options:any)=>Promise<void>) | undefined;
   const timers=new Map<object,()=>void>();
   const store:any={hasPending:()=>pending,read:()=>pending?[{name:'encrypted-fixture',value:{}}]:[],acknowledge:()=>{pending=false;}};
@@ -27,11 +28,12 @@ function fixture(){
     keyBuffer:()=>Buffer.alloc(32),reconcilePending:async()=>{},loadVaultFromCloud:async()=>{loads++;return {vault:{assignments:[],invoices:[]},cloudScope:'fixture'};},
     prepareProtectedBillingDeliveries:()=>[],createVrBakerClient:()=>({publicationScope:()=>'api-scope'}),uploadProtectedClientInvoicePdf:async()=>{throw Error('Unexpected PDF');},
     publishProtectedBillingVault:async(_db:any,_vault:any,_client:any,_ids:any,options:any)=>{publications++;assert.equal(options.shouldContinue(),true);if(fail)throw Error('Unavailable');if(duringPublish) {const callback=duringPublish;duringPublish=undefined;await callback(options);}return {skipped:false};},
+    setInterval:(fn:()=>void)=>{periodic=fn;return {unref(){}};},
     setTimeout:(fn:()=>void)=>{const timer={unref(){}};timers.set(timer,fn);return timer;},clearTimeout:(timer:object)=>timers.delete(timer),
   };
-  const api=new Function(...Object.keys(bindings),`let protectedBillingPublishing=false,protectedBillingQueued=false,protectedFinancialGeneration=0,protectedBillingDebounce=null;\n${code}\nreturn {scheduleProtectedBillingPublication,protectedUploader,busy:()=>protectedBillingPublishing};`)(...Object.values(bindings));
+  const api=new Function(...Object.keys(bindings),`let protectedBillingPublishing=false,protectedBillingQueued=false,protectedFinancialGeneration=0,protectedBillingDebounce=null,protectedBillingTimer=null;\n${code}\nreturn {scheduleProtectedBillingPublication,startProtectedBillingPublisher,protectedUploader,busy:()=>protectedBillingPublishing};`)(...Object.values(bindings));
   const settle=async()=>{for(let n=0;n<100&&api.busy();n++)await new Promise(resolve=>setImmediate(resolve));assert.equal(api.busy(),false);};
-  return {api,db,timers,settle,stats:()=>({commits,publications,loads}),setRole:(value:string)=>{role=value;},
+  return {api,db,timers,settle,tick:()=>periodic?.(),stats:()=>({commits,publications,loads}),setRole:(value:string)=>{role=value;},
     duringPublish:(callback:(options:any)=>Promise<void>)=>{duringPublish=callback;},fail:()=>{fail=true;},gate:(value:Promise<void>)=>{cloudGate=value;},close:()=>{api.protectedUploader.stop();db.close();}};
 }
 
@@ -87,5 +89,14 @@ test('one publication shares folder lookups across PDFs but next publication res
   const check=async()=>{for(let n=0;n<100;n++)assert.equal(await resolvePrivateFolderInOperation('same-account:portal-folder',async()=>{lookups++;return 'verified-folder';}),'verified-folder');};
   f.duringPublish(check);await f.api.protectedUploader.start();await f.settle();assert.equal(lookups,1);
   f.duringPublish(check);f.api.scheduleProtectedBillingPublication(true,false);await f.settle();assert.equal(lookups,2);
+ }finally{f.close();}
+});
+
+test('periodic wake cannot queue another complete PDF scan behind a slow active scan',async()=>{
+ const f=fixture();try{
+  f.api.startProtectedBillingPublisher();
+  f.duringPublish(async()=>{f.tick();});
+  await f.api.protectedUploader.start();await f.settle();
+  assert.equal(f.stats().publications,1);assert.equal(f.timers.size,0);
  }finally{f.close();}
 });
