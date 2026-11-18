@@ -143,18 +143,24 @@ export function ProtectedRegistryHotspot() {
 }
 
 interface AccessProps {
-  onUnlocked: () => void;
+  refreshStatus: () => void;
   status: any;
 }
 
-function ProtectedAccess({ onUnlocked, status }: AccessProps) {
+function ProtectedAccess({ refreshStatus, status }: AccessProps) {
   const [pin, setPin] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [recoveryKey, setRecoveryKey] = useState('');
-  const [recoveryMode, setRecoveryMode] = useState(Boolean(status.needsRecovery));
+  const [recoveryMode, setRecoveryMode] = useState(Boolean(!status.readOnly && status.needsRecovery));
   const [oneTimeKey, setOneTimeKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!status.lockedUntil) return;
+    const timer = setTimeout(refreshStatus, Math.max(0, Date.parse(status.lockedUntil) - Date.now()) + 50);
+    return () => clearTimeout(timer);
+  }, [status.lockedUntil, refreshStatus]);
 
   const submit = async () => {
     setBusy(true); setError('');
@@ -164,12 +170,11 @@ function ProtectedAccess({ onUnlocked, status }: AccessProps) {
         setOneTimeKey(result.recoveryKey);
         return;
       }
-      if (recoveryMode && status.readOnly) await api.protectedRegistry.activateViewer(recoveryKey, pin, confirmation);
-      else if (recoveryMode) await api.protectedRegistry.recover(recoveryKey, pin, confirmation);
+      if (recoveryMode && !status.readOnly) await api.protectedRegistry.recover(recoveryKey, pin, confirmation);
       else await api.protectedRegistry.unlock(pin);
       setRecoveryKey(''); setPin(''); setConfirmation('');
-      onUnlocked();
-    } catch (nextError) { setError(errorMessage(nextError)); }
+      refreshStatus();
+    } catch (nextError) { setError(errorMessage(nextError)); if (status.readOnly) refreshStatus(); }
     finally { setBusy(false); }
   };
 
@@ -179,22 +184,22 @@ function ProtectedAccess({ onUnlocked, status }: AccessProps) {
       <h1 className="text-2xl font-bold">Cheie de recuperare creată</h1>
       <p className="text-slate-600">Aceasta este singura afișare. Păstreaz-o offline, într-un loc sigur. Nu o trimite prin mesaje și nu o salva în folderul Duplicat.</p>
       <div className="rounded-xl bg-slate-100 border border-slate-200 p-4 font-mono font-bold break-all select-all">{oneTimeKey}</div>
-      <button onClick={onUnlocked} className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white">Am salvat cheia. Intră în registru</button>
+      <button onClick={refreshStatus} className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white">Am salvat cheia. Intră în registru</button>
     </div></div>;
   }
 
   return <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
     <div className="max-w-md w-full rounded-3xl bg-white p-8 shadow-2xl space-y-5">
       <div className="h-12 w-12 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center"><Lock /></div>
-      <div><h1 className="text-2xl font-bold text-slate-900">Registru separat</h1><p className="text-sm text-slate-500 mt-1">{status.readOnly ? 'Viewer — doar consultare și documente. La prima activare introdu cheia de recuperare și alege PIN-ul acestui calculator. PIN-ul Writer-ului nu se modifică.' : 'Acces administrativ Writer, protejat de PIN și Google Drive.'}</p></div>
+      <div><h1 className="text-2xl font-bold text-slate-900">Registru separat</h1><p className="text-sm text-slate-500 mt-1">{status.readOnly ? 'Introdu PIN-ul Writerului pentru a consulta registrul.' : 'Acces administrativ Writer, protejat de PIN și Google Drive.'}</p></div>
       {!status.secureStorageAvailable && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">Stocarea securizată a sistemului nu este disponibilă.</p>}
       {status.lockedUntil && <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">Acces blocat până la {new Date(status.lockedUntil).toLocaleTimeString('ro-RO')}.</p>}
       {recoveryMode && <label className="block text-sm font-semibold text-slate-700">Cheie de recuperare<input type="password" value={recoveryKey} onChange={(event) => setRecoveryKey(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono" autoComplete="off" /></label>}
       <label className="block text-sm font-semibold text-slate-700">{recoveryMode ? 'PIN nou' : status.configured ? 'PIN' : 'PIN nou'}<PinInput value={pin} onValueChange={setPin} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-3 text-center text-xl tracking-[.5em]" autoFocus /></label>
       {(!status.configured || recoveryMode) && <label className="block text-sm font-semibold text-slate-700">Confirmă PIN-ul<PinInput value={confirmation} onValueChange={setConfirmation} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-3 text-center text-xl tracking-[.5em]" /></label>}
       {error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-      <button disabled={busy || Boolean(status.lockedUntil)} onClick={submit} className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white disabled:opacity-50">{busy ? 'Se verifică…' : !status.configured ? 'Configurează registrul' : recoveryMode ? (status.readOnly ? 'Activează accesul Viewer' : 'Recuperează accesul') : 'Deblochează'}</button>
-      {status.configured && <button onClick={() => setRecoveryMode((value) => !value)} className="w-full text-sm text-indigo-700">{recoveryMode ? 'Înapoi la PIN' : 'Folosește cheia de recuperare'}</button>}
+      <button disabled={busy || Boolean(status.lockedUntil)} onClick={submit} className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white disabled:opacity-50">{busy ? 'Se verifică…' : !status.configured ? 'Configurează registrul' : recoveryMode ? 'Recuperează accesul' : 'Deblochează'}</button>
+      {status.configured && !status.readOnly && <button onClick={() => setRecoveryMode((value) => !value)} className="w-full text-sm text-indigo-700">{recoveryMode ? 'Înapoi la PIN' : 'Folosește cheia de recuperare'}</button>}
       <button onClick={() => { window.location.hash = '/'; }} className="w-full text-sm text-slate-500">Înapoi la Hub</button>
     </div>
   </div>;
@@ -623,7 +628,7 @@ export function ProtectedRegistry() {
   useEffect(() => { void reload(); }, [reload]);
   if (denied) return <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6"><div className="rounded-2xl bg-white p-8 max-w-md"><Lock className="text-red-600 mb-4" /><h1 className="text-2xl font-bold">Acces indisponibil</h1><p className="text-slate-600 mt-2">{denied}</p><button onClick={() => { window.location.hash = '/'; }} className="mt-5 flex gap-2 text-indigo-700"><ArrowLeft size={18} />Înapoi la Hub</button></div></div>;
   if (!status) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center"><RefreshCw className="animate-spin" /></div>;
-  if (!status.unlocked) return <ProtectedAccess status={status} onUnlocked={reload} />;
+  if (!status.unlocked) return <ProtectedAccess status={status} refreshStatus={reload} />;
   if (status.readOnly) return <NavigationMemory key="viewer"><ProtectedViewer onLocked={() => setStatus((current: any) => ({ ...current, unlocked: false }))} /></NavigationMemory>;
   return <NavigationMemory key="writer"><ProtectedWorkspace onLocked={() => setStatus((current: any) => ({ ...current, unlocked: false }))} /></NavigationMemory>;
 }

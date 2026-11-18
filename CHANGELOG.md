@@ -1,3 +1,13 @@
+## 0.1.149 — 2026-11-18
+
+### RO
+- Viewerul deschide Registru separat cu PIN-ul curent al Writerului. Actualizează ambele calculatoare și deblochează o dată registrul pe Writer cu Google Drive conectat. Apoi Writerul poate fi închis.
+- Schimbarea PIN-ului pe Writer actualizează și accesul Viewerelor. Viewerul păstrează accesul doar pentru consultare.
+
+### EN
+- Viewers can unlock the separate register with the current Writer PIN. Update both computers and unlock the register once on the Writer while connected to Google Drive. The Writer can then be closed.
+- Writer PIN changes update Viewer access. Viewers retain their read-only permissions.
+
 ## 0.1.148 — 2026-11-16
 
 ### RO

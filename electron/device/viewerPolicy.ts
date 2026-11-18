@@ -2,7 +2,6 @@ import type { DeviceRole } from './deviceRole';
 
 const VIEWER_ALLOWED_CHANNELS = new Set([
   'protectedRegistry:status',
-  'protectedRegistry:activateViewer',
   'protectedRegistry:refreshViewer',
   'protectedRegistry:unlock',
   'protectedRegistry:lock',

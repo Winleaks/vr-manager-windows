@@ -1,5 +1,15 @@
 # Read-only protected register on Viewer
 
+## Shared Writer PIN (November 2026)
+
+Update both computers, then unlock the existing register once on Writer while connected to Drive. Each updated Viewer opens the register with the current six-digit Writer PIN on the same Drive account. Writer can be closed. New register setup, PIN change and Writer recovery also publish the Viewer grant.
+
+The Writer wraps the vault key using scrypt and AES-256-GCM in `Duplicat/registru-separat.viewer-access`. Each Viewer unlock reads this file and the verified vault, holds the key in the session, and removes legacy local Viewer credentials after successful migration. Five wrong PINs lock that device for 15 minutes. Someone with copied Drive files can try PINs offline. Update legacy Viewers to enforce the new login flow.
+
+If Drive loses a PIN-change acknowledgement, retry the change on Writer using the previous PIN. A fresh Writer unlock with the locally committed PIN also reconciles the grant. The recovery string remains a Writer recovery credential.
+
+## Historical workflow (September 2026)
+
 ## Approved scope
 
 Viewer may activate using the existing recovery key entered directly in the desktop app, choose a local PIN, consult the encrypted register and open/print/share invoices and Credit Notes. Writer retains all financial, configuration and import mutations.

@@ -78,8 +78,8 @@ window.desktopApi = {
       if (recoveryFailure) throw new Error('Confirmarea Drive a eșuat (test sintetic).');
       return { success: true, recoveryKey: 'SYNTHETIC-RECOVERY-TEST-ONLY' };
     },
-    status: async () => ({ unlocked: protectedUnlocked, readOnly: role === 'viewer', configured: true, needsRecovery: !protectedUnlocked, secureStorageAvailable: true }), getOverview: dashboardOverview,
-    activateViewer: async () => { calls.push('activate-viewer'); protectedUnlocked = true; },
+    status: async () => ({ unlocked: protectedUnlocked, readOnly: role === 'viewer', configured: true, needsRecovery: role !== 'viewer' && !protectedUnlocked, secureStorageAvailable: true }), getOverview: dashboardOverview,
+    unlock: async (pin: string) => { if (pin !== '482719') throw Error('PIN incorect.'); calls.push('unlock'); protectedUnlocked = true; },
     refreshViewer: async () => ({ success: true, revision: 1 }),
     openDocument: async () => { calls.push('protected-open'); return { success: true }; },
     shareDocument: async () => { calls.push('protected-share'); return { success: true }; },

@@ -10,6 +10,8 @@ import {
   recoverVaultKey,
   routingHash,
   verifyPin,
+  wrapViewerKey,
+  unwrapViewerKey,
 } from '../protectedRegistry/crypto.ts';
 import { createEmptyProtectedVault } from '../protectedRegistry/types.ts';
 
@@ -43,4 +45,16 @@ test('six digit PIN verifier and opaque routing hashes are deterministic and sep
   assert.equal(routingHash(key, 'company', 'vrbaker:abc'), routingHash(key, 'company', 'vrbaker:abc'));
   assert.notEqual(routingHash(key, 'company', 'vrbaker:abc'), routingHash(key, 'order', 'vrbaker:abc'));
   assert.equal(routingHash(key, 'company', 'vrbaker:abc').includes('abc'), false);
+});
+
+test('Viewer grant binds a randomized authenticated key wrap to the vault and PIN', () => {
+  const key = generateVaultKey(), first = wrapViewerKey(key, '012345');
+  const record = JSON.parse(first.toString());
+  const second = JSON.parse(wrapViewerKey(key, '012345').toString());
+  assert.notEqual(record.salt, second.salt);
+  assert.notEqual(record.wrappedKey, second.wrappedKey);
+  assert.deepEqual(unwrapViewerKey(first, record.keyId, '012345'), key);
+  assert.throws(() => unwrapViewerKey(first, 'another-vault', '012345'), /registrului/);
+  record.tag = Buffer.alloc(16).toString('base64');
+  assert.equal(unwrapViewerKey(Buffer.from(JSON.stringify(record)), record.keyId, '012345'), null);
 });

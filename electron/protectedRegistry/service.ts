@@ -33,6 +33,8 @@ import {
   getCloudStatus,
   readVerifiedPrivateCloudFile,
   readProtectedViewerVault,
+  readProtectedViewerAccess,
+  VIEWER_ACCESS_FILE,
   writeVerifiedPrivateCloudFile,
   protectedCloudAccountScope,
   initializeProtectedCloudScope,
@@ -44,6 +46,7 @@ import { normalBillingVisibilityReady, invalidateNormalBillingVisibility, replac
 import { getDeviceRole } from '../device/deviceRole.ts';
 import {
   getCredential,
+  deleteCredential,
   isCredentialStorageAvailable,
   setCredential,
 } from '../security/credentialStore.ts';
@@ -54,6 +57,8 @@ import * as billingRepo from '../database/repositories/billingRepo.ts';
 import { normalCloudDocumentFolders, protectedCloudDocumentFolders } from '../reports/clientDocumentStorage.ts';
 import {
   createPinVerifier,
+  wrapViewerKey,
+  unwrapViewerKey,
   decryptVault,
   encryptVault,
   encryptVaultWithExistingRecovery,
@@ -107,13 +112,14 @@ const MAX_ATTEMPTS = 5;
 
 interface AuthState {
   version: 1;
-  pin: PinVerifier;
+  pin?: PinVerifier;
   failedAttempts: number;
   lockUntil: string | null;
 }
 
 interface Session {
   role?: 'writer' | 'viewer';
+  viewerKey?: Buffer;
   webContentsId: number;
   lastActivity: number;
   vault: ProtectedRegistryVault;
@@ -453,7 +459,7 @@ function readAuthState(): AuthState | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as AuthState;
-    if (parsed.version !== 1 || !parsed.pin || !Number.isSafeInteger(parsed.failedAttempts) || parsed.failedAttempts < 0) return null;
+    if (parsed.version !== 1 || (!parsed.pin && getDeviceRole() !== 'viewer') || !Number.isSafeInteger(parsed.failedAttempts) || parsed.failedAttempts < 0) return null;
     return parsed;
   } catch {
     return null;
@@ -719,7 +725,7 @@ export async function protectedRegistryStatus(webContentsId: number) {
   return {
     readOnly,
     configured: readOnly || (isProtectedRegistryEnabled() && Boolean(auth)) || remoteVaultExists,
-    needsRecovery: (readOnly || remoteVaultExists) && !auth,
+    needsRecovery: !readOnly && remoteVaultExists && !auth,
     secureStorageAvailable: isCredentialStorageAvailable(),
     unlocked: sessionValid,
     lockedUntil,
@@ -740,6 +746,7 @@ export async function configureProtectedRegistry(webContentsId: number, pin: unk
     throw new Error(cloud.lastError || 'Conexiunea Google Drive nu este validă. Reconectează contul din Setări înainte de configurarea registrului.');
   }
   const verifier = createPinVerifier(String(pin));
+  const scope = await initializeProtectedCloudScope();
   const existing = await readVerifiedPrivateCloudFile(FOLDER, VAULT_FILE);
   if (existing) throw new Error('În Google Drive există deja un registru. Folosește cheia de recuperare, nu inițializarea.');
   const key = generateVaultKey();
@@ -747,8 +754,9 @@ export async function configureProtectedRegistry(webContentsId: number, pin: unk
   const vault = createEmptyProtectedVault();
   addAudit(vault, 'registry_configured', randomBytes(18).toString('base64url'), { mode: 'test' });
   const envelope = encryptVault(encode(vault), key, recoveryKey, vault.revision);
-  await writeVerifiedPrivateCloudFile({ folderNames: FOLDER, filename: VAULT_FILE, mimeType: 'application/octet-stream', buffer: encode(envelope), expectedVersion: null });
-  await uploadManifest(vault, key, envelope.recovery, null);
+  await publishViewerAccess(key, String(pin), envelope.keyId, scope);
+  await writeVerifiedPrivateCloudFile({ folderNames: FOLDER, filename: VAULT_FILE, mimeType: 'application/octet-stream', buffer: encode(envelope), expectedVersion: null, accountScope: scope });
+  await uploadManifest(vault, key, envelope.recovery, null, scope);
   setCredential(KEY_CREDENTIAL, key.toString('base64'));
   saveAuthState({ version: 1, pin: verifier, failedAttempts: 0, lockUntil: null });
   setCredential(ENABLED_CREDENTIAL, '1');
@@ -759,8 +767,9 @@ export async function configureProtectedRegistry(webContentsId: number, pin: unk
 export async function unlockProtectedRegistry(webContentsId: number, pinInput: unknown) {
   const role = getDeviceRole();
   const generation = sessionGenerations.get(webContentsId) || 0;
+  if (role === 'viewer') return withRegistryRoutingLock(() => unlockViewer(webContentsId, String(pinInput ?? ''), generation));
   const auth = readAuthState();
-  if (!auth || (role === 'writer' && !isProtectedRegistryEnabled())) throw new Error('Registrul separat nu este activat pe acest calculator.');
+  if (!auth || !isProtectedRegistryEnabled()) throw new Error('Registrul separat nu este activat pe acest calculator.');
   if (auth.lockUntil && Date.parse(auth.lockUntil) > Date.now()) throw new Error(`Acces blocat până la ${new Date(auth.lockUntil).toLocaleTimeString('ro-RO')}.`);
   const pin = String(pinInput ?? '');
   if (!verifyPin(pin, auth.pin)) {
@@ -775,13 +784,12 @@ export async function unlockProtectedRegistry(webContentsId: number, pinInput: u
   saveAuthState(auth);
   return withRegistryRoutingLock(async () => {
     const key = keyBuffer();
-    if (role === 'writer') {
-      protectedOutbox.discardIncompleteWrites();
-      if (protectedOutbox.hasPending()) await protectedUploader.start();
-      else await reconcilePending(key);
-    }
+    assertWriter();
+    protectedOutbox.discardIncompleteWrites();
+    if (protectedOutbox.hasPending()) await protectedUploader.start();
+    else await reconcilePending(key);
     const latest = await loadVaultFromCloud(key);
-    const pending = role === 'writer' ? protectedOutbox.read() : [];
+    const pending = protectedOutbox.read();
     if (pending.some(entry => entry.value.scope !== latest.cloudScope || entry.value.fileId !== latest.driveFileId)) {
       throw Error('Salvările temporare aparțin altui cont Drive sau altui seif. Datele au fost păstrate.');
     }
@@ -790,6 +798,8 @@ export async function unlockProtectedRegistry(webContentsId: number, pinInput: u
       latest.vault = parseVault(encode(tail.vault));
       latest.envelope = encryptVaultWithExistingRecovery(encode(latest.vault), key, latest.vault.revision, tail.recovery);
     }
+    if (!latest.cloudScope) throw Error('Contul Drive trebuie reverificat.');
+    await publishViewerAccess(key, pin, latest.envelope.keyId, latest.cloudScope);
     if (getDeviceRole() !== role || (sessionGenerations.get(webContentsId) || 0) !== generation) throw new Error('Accesul a fost închis. Deblochează din nou registrul.');
     setSession({ webContentsId, lastActivity: Date.now(), ...latest });
     return protectedRegistryStatus(webContentsId);
@@ -830,29 +840,53 @@ export function cleanupStaleProtectedRegistryTemporaryFiles() {
   } catch {}
 }
 
-export async function activateProtectedViewer(webContentsId: number, recoveryKeyInput: unknown, newPin: unknown, confirmation: unknown) {
-  if (getDeviceRole() !== 'viewer') throw new Error('Activarea este disponibilă numai pe Viewer.');
-  if (!isCredentialStorageAvailable()) throw new Error('Stocarea securizată nu este disponibilă.');
-  if (newPin !== confirmation) throw new Error('Cele două PIN-uri nu coincid.');
-  const verifier = createPinVerifier(String(newPin));
-  const generation = sessionGenerations.get(webContentsId) || 0;
-  const file = await readProtectedViewerVault();
-  if (!file) throw new Error('Registrul nu există în contul Google Drive conectat.');
+async function publishViewerAccess(key: Buffer, pin: string, keyId: string, scope: string) {
+  assertWriter();
+  const existing = await readVerifiedPrivateCloudFile(FOLDER, VIEWER_ACCESS_FILE);
+  if (protectedCloudAccountScope() !== scope) throw Error('Contul Drive s-a schimbat.');
+  if (existing) {
+    // The Writer has already authenticated and holds the authoritative vault key.
+    // Rebuild a mismatched or obsolete grant, including after an interrupted PIN change.
+    let current: Buffer | null = null;
+    try { current = unwrapViewerKey(existing.buffer, keyId, pin); } catch { /* replace invalid grant */ }
+    if (current?.equals(key)) return;
+  }
+  await writeVerifiedPrivateCloudFile({ folderNames: FOLDER, filename: VIEWER_ACCESS_FILE,
+    mimeType: 'application/octet-stream', buffer: wrapViewerKey(key, pin),
+    expectedVersion: existing?.version ?? null, expectedFileId: existing?.fileId, accountScope: scope });
+}
+
+async function unlockViewer(webContentsId: number, pin: string, generation: number) {
+  const assertActive = () => {
+    if (getDeviceRole() !== 'viewer' || (sessionGenerations.get(webContentsId) || 0) !== generation) throw Error('Accesul a fost închis.');
+  };
+  assertActive();
+  if (!isCredentialStorageAvailable()) throw Error('Stocarea securizată nu este disponibilă.');
+  const auth = readAuthState();
+  if (auth?.lockUntil && Date.parse(auth.lockUntil) > Date.now()) throw Error('Acces blocat temporar. Reîncearcă după expirarea blocării.');
+  const [file, access] = await Promise.all([readProtectedViewerVault(), readProtectedViewerAccess()]);
+  assertActive();
+  if (!file) throw Error('Registrul nu există în contul Google Drive conectat.');
+  if (!access) throw Error('Deschide Registru separat o dată pe Writer după actualizare.');
   const envelope = parseEnvelope(file.buffer);
-  const key = recoverVaultKey(envelope, String(recoveryKeyInput ?? ''));
+  const key = /^\d{6}$/.test(pin) ? unwrapViewerKey(access.buffer, envelope.keyId, pin) : null;
+  if (!key) {
+    const failed = registerFailedPinAttempt(auth?.failedAttempts || 0, Date.now(), MAX_ATTEMPTS, LOCKOUT_MS);
+    saveAuthState({ version: 1, ...failed });
+    throw Error(failed.lockUntil ? 'Prea multe încercări greșite. Accesul a fost blocat 15 minute.' : `PIN incorect. Mai ai ${MAX_ATTEMPTS - failed.failedAttempts} încercări.`);
+  }
   const vault = parseVault(decryptVault(envelope, key));
-  if (getDeviceRole() !== 'viewer' || (sessionGenerations.get(webContentsId) || 0) !== generation) throw new Error('Activarea a fost întreruptă.');
-  // Separate OS-protected credentials; never replace Writer authentication or upload an audit/recovery mutation.
-  setCredential(registryCredential(KEY_CREDENTIAL), key.toString('base64'));
-  saveAuthState({ version: 1, pin: verifier, failedAttempts: 0, lockUntil: null });
-  setSession({ webContentsId, lastActivity: Date.now(), vault, envelope, driveVersion: file.version });
+  saveAuthState({ version: 1, failedAttempts: 0, lockUntil: null });
+  deleteCredential(registryCredential(KEY_CREDENTIAL));
+  setSession({ webContentsId, lastActivity: Date.now(), viewerKey: key, vault, envelope, driveVersion: file.version });
   return protectedRegistryStatus(webContentsId);
 }
 
 export async function refreshProtectedViewer(webContentsId: number) {
   if (getDeviceRole() !== 'viewer') throw new Error('Operațiune disponibilă numai pe Viewer.');
   const session = await freshSession(webContentsId);
-  const latest = await loadVaultFromCloud(keyBuffer());
+  if (!session.viewerKey) throw Error('Deblochează din nou registrul.');
+  const latest = await loadVaultFromCloud(session.viewerKey);
   if (getDeviceRole() !== 'viewer' || await freshSession(webContentsId) !== session) throw new Error('Sesiunea s-a schimbat. Deblochează din nou.');
   if (latest.vault.revision < session.vault.revision) throw new Error('Drive a returnat o versiune mai veche a registrului. Reîncearcă.');
   Object.assign(session, latest);
@@ -864,11 +898,14 @@ export async function recoverProtectedRegistry(webContentsId: number, recoveryKe
   assertWriter();
   if (newPin !== newPinConfirmation) throw new Error('Cele două PIN-uri nu coincid.');
   const verifier = createPinVerifier(String(newPin));
+  const scope = await initializeProtectedCloudScope();
   const file = await readVerifiedPrivateCloudFile(FOLDER, VAULT_FILE);
   if (!file) throw new Error('Seiful registrului nu a fost găsit în Google Drive.');
   const envelope = parseEnvelope(file.buffer);
   const key = recoverVaultKey(envelope, String(recoveryKeyInput ?? ''));
   const vault = parseVault(decryptVault(envelope, key));
+  await publishViewerAccess(key, String(newPin), envelope.keyId, scope);
+  assertWriter();
   setCredential(KEY_CREDENTIAL, key.toString('base64'));
   saveAuthState({ version: 1, pin: verifier, failedAttempts: 0, lockUntil: null });
   setCredential(ENABLED_CREDENTIAL, '1');
@@ -881,11 +918,16 @@ export async function recoverProtectedRegistry(webContentsId: number, recoveryKe
 export async function changeProtectedRegistryPin(webContentsId: number, currentPinInput: unknown, newPinInput: unknown, confirmationInput: unknown) {
   assertWriter();
   await freshSession(webContentsId);
+  const scope = await initializeProtectedCloudScope();
   const auth = readAuthState();
   if (!auth || !verifyPin(String(currentPinInput ?? ''), auth.pin)) throw new Error('PIN-ul actual este incorect.');
   if (newPinInput !== confirmationInput) throw new Error('Cele două PIN-uri noi nu coincid.');
+  const verifier = createPinVerifier(String(newPinInput));
   await mutate(webContentsId, randomBytes(18).toString('base64url'), 'pin_changed', () => undefined);
-  auth.pin = createPinVerifier(String(newPinInput));
+  const session = await freshSession(webContentsId);
+  await publishViewerAccess(keyBuffer(), String(newPinInput), session.envelope.keyId, scope);
+  assertWriter();
+  auth.pin = verifier;
   auth.failedAttempts = 0;
   auth.lockUntil = null;
   saveAuthState(auth);

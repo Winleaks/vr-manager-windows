@@ -184,13 +184,46 @@ export function recoverVaultKey(envelope: ProtectedEnvelope, recoveryKey: string
   }
 }
 
+function viewerPinMaterial(pin: string, salt: Buffer) {
+  if (!/^\d{6}$/.test(pin)) throw Error('PIN-ul trebuie să conțină exact 6 cifre.');
+  return scryptSync(pin, salt, KEY_BYTES, { N: 65536, r: 8, p: 1, maxmem: 96 * 1024 * 1024 });
+}
+
+function viewerAccessContext(keyId: string) {
+  return Buffer.from(`vr-hub-viewer-access:v1:${keyId}`);
+}
+
+export function wrapViewerKey(key: Buffer, pin: string) {
+  const keyId = createHash('sha256').update(key).digest('base64url').slice(0, 22);
+  const salt = randomBytes(16);
+  const { iv, tag, ciphertext } = encryptBytes(viewerPinMaterial(pin, salt), key, viewerAccessContext(keyId));
+  return Buffer.from(JSON.stringify({ version: 1, keyId, salt: salt.toString('base64'),
+    iv: iv.toString('base64'), tag: tag.toString('base64'), wrappedKey: ciphertext.toString('base64') }));
+}
+
+export function unwrapViewerKey(bytes: Uint8Array, keyId: string, pin: string): Buffer | null {
+  if (bytes.length > 1024) throw Error('Fișierul de acces Viewer este invalid.');
+  let access;
+  try { access = JSON.parse(Buffer.from(bytes).toString()); } catch { throw Error('Fișierul de acces Viewer este invalid.'); }
+  if (access?.version !== 1 || access.keyId !== keyId) throw Error('Accesul Viewer nu corespunde registrului.');
+  const field = (name: string, size: number) => {
+    const value = decodeBase64(access[name], name, size);
+    if (value.length !== size) throw Error('Fișierul de acces Viewer este invalid.');
+    return value;
+  };
+  const salt = field('salt', 16), iv = field('iv', IV_BYTES), tag = field('tag', 16), wrapped = field('wrappedKey', KEY_BYTES);
+  const material = viewerPinMaterial(pin, salt);
+  try { return decryptBytes(material, iv, tag, wrapped, viewerAccessContext(keyId)); }
+  catch { return null; }
+}
+
 export function createPinVerifier(pin: string): PinVerifier {
   if (!/^\d{6}$/.test(pin)) throw new Error('PIN-ul trebuie să conțină exact 6 cifre.');
   const salt = randomBytes(16);
   return { version: 1, salt: salt.toString('base64'), digest: scryptSync(pin, salt, 32).toString('base64') };
 }
 
-export function verifyPin(pin: string, verifier: PinVerifier) {
+export function verifyPin(pin: string, verifier?: PinVerifier) {
   if (!/^\d{6}$/.test(pin) || verifier?.version !== 1) return false;
   try {
     const expected = decodeBase64(verifier.digest, 'pin.digest', 32);

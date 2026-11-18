@@ -4,7 +4,6 @@ import type { InvoiceIssuerChangeInput } from '../../src/shared/invoiceIssuerCha
 import {
   getProtectedTransferPreview, transferProtectedInvoice, resumeProtectedTransfers,
   protectedStatementDocument,
-  activateProtectedViewer,
   refreshProtectedViewer,
   cancelProtectedInvoice,
   changeProtectedInvoiceIssuer,
@@ -63,9 +62,14 @@ export function registerProtectedRegistryHandlers() {
     return result;
   });
   handleTrustedIpc('protectedRegistry:statementDocument', (event, input) => protectedStatementDocument(event.sender.id, input));
+  let authenticating = false;
+  async function authenticate<T>(operation: () => Promise<T>) {
+    if (authenticating) throw Error('Se verifică deja accesul. Reîncearcă.');
+    authenticating = true;
+    try { return await operation(); } finally { authenticating = false; }
+  }
   handleTrustedIpc('protectedRegistry:syncStatus', event => protectedRegistrySyncStatus(event.sender.id));
   handleTrustedIpc('protectedRegistry:retrySync', event => retryProtectedRegistrySync(event.sender.id));
-  handleTrustedIpc('protectedRegistry:activateViewer', (event, data) => activateProtectedViewer(event.sender.id, data?.recoveryKey, data?.pin, data?.confirmation));
   handleTrustedIpc('protectedRegistry:refreshViewer', event => refreshProtectedViewer(event.sender.id));
   handleTrustedIpc('protectedRegistry:getInvoiceForEdit', (event, id: string) => getProtectedInvoiceForEdit(event.sender.id, id));
   handleTrustedIpc('protectedRegistry:getInvoiceProducts', (event, id: string, verifyPrices: boolean) => getProtectedInvoiceProducts(event.sender.id, id, verifyPrices));
@@ -74,18 +78,18 @@ export function registerProtectedRegistryHandlers() {
   handleTrustedIpc('protectedRegistry:getInvoiceIssuerChangeOptions', (event, invoiceId: string) => getProtectedIssuerChangeOptions(event.sender.id, invoiceId));
   handleTrustedIpc('protectedRegistry:changeInvoiceIssuer', (event, data: InvoiceIssuerChangeInput<string>) => changeProtectedInvoiceIssuer(event.sender.id, data));
   handleTrustedIpc('protectedRegistry:status', (event) => protectedRegistryStatus(event.sender.id));
-  handleTrustedIpc('protectedRegistry:configure', (event, data) => configureProtectedRegistry(event.sender.id, data?.pin, data?.pinConfirmation));
+  handleTrustedIpc('protectedRegistry:configure', (event, data) => authenticate(() => configureProtectedRegistry(event.sender.id, data?.pin, data?.pinConfirmation)));
   handleTrustedIpc('protectedRegistry:unlock', async (event, pin) => {
-    const result = await unlockProtectedRegistry(event.sender.id, pin);
+    const result = await authenticate(() => unlockProtectedRegistry(event.sender.id, pin));
     if (!result.readOnly && await resumeProtectedTransfers(event.sender.id)) void backupDb();
     scheduleProtectedBillingPublication();
     return result;
   });
   handleTrustedIpc('protectedRegistry:lock', (event) => lockProtectedRegistry(event.sender.id));
   handleTrustedIpc('protectedRegistry:touch', (event) => touchProtectedRegistrySession(event.sender.id));
-  handleTrustedIpc('protectedRegistry:recover', (event, data) => recoverProtectedRegistry(event.sender.id, data?.recoveryKey, data?.newPin, data?.newPinConfirmation));
-  handleTrustedIpc('protectedRegistry:changePin', (event, data) => changeProtectedRegistryPin(event.sender.id, data?.currentPin, data?.newPin, data?.newPinConfirmation));
-  handleTrustedIpc('protectedRegistry:rotateRecoveryKey', (event, data) => rotateProtectedRecoveryKey(event.sender.id, data?.currentPin, data?.confirmed));
+  handleTrustedIpc('protectedRegistry:recover', (event, data) => authenticate(() => recoverProtectedRegistry(event.sender.id, data?.recoveryKey, data?.newPin, data?.newPinConfirmation)));
+  handleTrustedIpc('protectedRegistry:changePin', (event, data) => authenticate(() => changeProtectedRegistryPin(event.sender.id, data?.currentPin, data?.newPin, data?.newPinConfirmation)));
+  handleTrustedIpc('protectedRegistry:rotateRecoveryKey', (event, data) => authenticate(() => rotateProtectedRecoveryKey(event.sender.id, data?.currentPin, data?.confirmed)));
   handleTrustedIpc('protectedRegistry:getOverview', (event, data) => getProtectedRegistryOverview(event.sender.id, data?.from, data?.to));
   handleTrustedIpc('protectedRegistry:getCompanies', (event) => listProtectedRegistryCompanies(event.sender.id));
   handleTrustedIpc('protectedRegistry:setAssignment', async (event, data) => {

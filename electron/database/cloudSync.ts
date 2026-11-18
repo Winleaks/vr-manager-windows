@@ -681,6 +681,13 @@ export async function readProtectedViewerVault(): Promise<VerifiedCloudBuffer | 
   return readVerifiedPrivateCloudFileInternal(['Duplicat'], 'registru-separat.vault');
 }
 
+export const VIEWER_ACCESS_FILE = 'registru-separat.viewer-access';
+
+export async function readProtectedViewerAccess(): Promise<VerifiedCloudBuffer | null> {
+  if (getDeviceRole() !== 'viewer') throw new Error('Operațiune disponibilă numai pe Viewer.');
+  return readVerifiedPrivateCloudFileInternal(['Duplicat'], VIEWER_ACCESS_FILE);
+}
+
 let protectedAccount: { grant: string; scope: string } | null = null;
 function protectedCloudGrant() {
   if (getDeviceRole() !== 'writer' || !loadTokens()) throw Error('Google Drive nu este conectat pe Writer.');

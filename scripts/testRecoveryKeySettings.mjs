@@ -4,7 +4,7 @@ export async function testRecoveryKeySettings(page, open) {
   await open('protected');
   const sidebar = page.locator('aside');
   await sidebar.getByRole('button', { name: 'Setări', exact: true }).click();
-  const section = page.getByRole('region', { name: 'Cheie de recuperare / activare Viewer' });
+  const section = page.getByRole('region', { name: 'Cheie de recuperare' });
   const generate = () => section.getByRole('button', { name: 'Generează o cheie nouă de recuperare', exact: true });
   const key = () => section.getByLabel('Cheie nouă de recuperare', { exact: true });
   assert.equal(await generate().isDisabled(), true);

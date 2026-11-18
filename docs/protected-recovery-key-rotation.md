@@ -16,7 +16,7 @@ No plaintext replay cache exists. Concurrent generation is rejected. An ambiguou
 
 The recovery string exists only in transient process/UI memory and the intended one-time Writer display. It is not written to browser storage, navigation preferences, logs, downloads, clipboard or local business data. The input PIN is cleared on submission. The key disappears on acknowledgement, settings unmount, registry lock or after two minutes. A status check also clears it if access expires. JavaScript string cleanup is logical, not a claim of guaranteed physical memory zeroization.
 
-On Writer: Registru separat → Setări → Generează o cheie nouă de recuperare. Store the displayed string securely outside the synchronized folder. On Viewer, connected to the same Drive, enter it at activation and choose a local PIN. Do not send the key through support chat.
+On Writer: Registru separat → Setări → Generează o cheie nouă de recuperare. Store the displayed string securely outside the synchronized folder. On an updated Viewer connected to the same Drive, unlock with the current Writer PIN. Do not send the key through support chat.
 
 ## Verification and release limits
 

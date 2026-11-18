@@ -45,6 +45,7 @@ export function protectedOutboxHarness(t: any, previous?: any, initialVault?: an
     withPrivateCloudOperation: (operation: () => Promise<unknown>) => operation(),
     setSession: (session: any) => { session.role ??= state.role; sessions.set(session.webContentsId, session); },
     lockProtectedRegistry: (id: number) => sessions.delete(id),
+    publishViewerAccess: async () => {},
     readAuthState: () => ({ pin: {}, failedAttempts: 0, lockUntil: null }), saveAuthState: () => {}, verifyPin: () => true,
     isProtectedRegistryEnabled: () => true, protectedRegistryStatus: () => ({ unlocked: sessions.has(1) }),
     probeProtectedCloudFile: async (fileId: string, expectedScope: string) => {

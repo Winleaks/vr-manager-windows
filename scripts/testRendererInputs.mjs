@@ -298,11 +298,13 @@ if (serveOnly) {
     console.log('PASS protected payment recipients, keyboard profile navigation, scoped invoices/credit notes/payments, credit and stores');
 
     await open('protected', '&role=viewer&activation=1');
-    await page.getByLabel('Cheie de recuperare', { exact: true }).fill('synthetic-recovery-not-a-real-key');
-    assert.equal(await page.getByLabel('Cheie de recuperare', { exact: true }).getAttribute('type'), 'password');
-    await page.getByLabel('PIN nou', { exact: true }).fill('482719');
-    await page.getByLabel('Confirmă PIN-ul', { exact: true }).fill('482719');
-    await page.getByRole('button', { name: 'Activează accesul Viewer' }).click();
+    assert.equal(await page.getByText(/cheie de recuperare/i).count(), 0);
+    assert.equal(await page.getByLabel('Confirmă PIN-ul').count(), 0);
+    await page.getByLabel('PIN', { exact: true }).fill('000000');
+    await page.getByRole('button', { name: 'Deblochează' }).click();
+    await page.getByText(/PIN incorect/).waitFor();
+    await page.getByLabel('PIN', { exact: true }).fill('482719');
+    await page.getByRole('button', { name: 'Deblochează' }).click();
     await page.getByText('#TEST-P1', { exact: true }).waitFor();
     for (const name of ['Editează factura', 'Schimbă emitentul', 'Înregistrează plata', 'Emite Credit Note', 'Anulează factura', 'Setări', 'Comenzi', 'Factură manuală']) {
       assert.equal(await page.getByRole('button', { name, exact: true }).count(), 0, name + ' hidden on Viewer');
@@ -313,14 +315,14 @@ if (serveOnly) {
     await page.getByRole('button', { name: 'Istoric Plăți', exact: true }).click();
     await page.getByText('TEST-P1 · Fixture Store', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Reversează', exact: true }).count(), 0);
-    assert.deepEqual(await page.evaluate(() => window.__inputTest.calls), ['activate-viewer', 'protected-open', 'protected-print', 'protected-share']);
+    assert.deepEqual(await page.evaluate(() => window.__inputTest.calls), ['unlock', 'protected-open', 'protected-print', 'protected-share']);
     await page.getByRole('button', { name: 'Clienți & Entități', exact: true }).click();
     await page.getByLabel('Caută companie sau magazin', { exact: true }).fill('Fixture');
     await page.getByRole('button', { name: 'Fixture Company', exact: true }).click();
     await page.getByText('#TEST-P1', { exact: true }).waitFor();
     assert.equal(await page.getByText('#OTHER-2', { exact: true }).count(), 0);
     if (process.env.VR_PROFILE_SCREENSHOT_DIR) await page.screenshot({ path: process.env.VR_PROFILE_SCREENSHOT_DIR + '/viewer.png' });
-    console.log('PASS Viewer activation, read-only navigation, no mutation controls, scoped documents and recipient history');
+    console.log('PASS Viewer Writer PIN, read-only navigation, no mutation controls, scoped documents and recipient history');
 
     await testProtectedStatement(page, open);
     await open('settings');
